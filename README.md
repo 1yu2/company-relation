@@ -39,6 +39,36 @@
 | 存储 | PostgreSQL · Redis · MinIO · Milvus · Neo4j |
 | 文档解析 | MinerU · PaddleX · RapidOCR |
 | 部署 | Docker Compose |
+
+## 企业尽调智能体（建设中）
+
+本仓库正在基于 Yuxi 增加广东企业尽调场景：以现有广东企业 MySQL 作为**只读事实主库**，统一提供企业基本信息、股东出资、产品、融资、财务、风险、知识产权、新闻证据和多跳关系查询，并逐步补齐完整尽调报告、结果质量评测和系统性能评测。
+
+核心边界：
+
+- 不修改或补充原广东企业数据库表。
+- MySQL 保存事实，Neo4j 和 Milvus 只保存可重建的关系与文本索引。
+- AkShare 默认不参与主查询，仅保留为公开公告、最新披露核验和回归基线。
+- 缺失、过期、冲突和低置信度关系必须显式返回，LLM 不生成无来源企业事实。
+
+当前进度：
+
+| 阶段 | 状态 | 交付内容 |
+| --- | --- | --- |
+| 数据审计与方案 | 已完成 | 924 家企业及股东、产品、融资、风险、知识产权数据只读审计 |
+| 数据接入 | 待实现 | 只读连接池、企业身份解析、统一 DTO、来源与时效输出 |
+| 查询与报告 | 待实现 | 企业查询 API、完整尽调报告、Neo4j 多跳关系和文本证据 |
+| 结果质量评测 | 待实现 | 人工 Golden、字段/路径/证据/拒答/报告完整性评测 |
+| 系统性能评测 | 待实现 | P50/P95/P99、并发、吞吐、错误率和连接池观测 |
+
+相关文档：
+
+- [企业尽调智能体总体方案](docs/agents/company-due-diligence-system.md)
+- [企业尽调智能体实现逐字稿](docs/agents/company-due-diligence-implementation-guide.md)
+- [企业尽调智能体任务清单](tasks/company-due-diligence/README.md)
+- [现有公开企业关系评测基线](docs/agents/company-relation-evaluation.md)
+- 本地开发审计与架构图：`docs/vibe/2026-08-10-guangdong-enterprise-data-audit.md`、`docs/vibe/2026-08-10-enterprise-due-diligence-architecture.drawio`（`docs/vibe` 默认不提交）
+
 ## 快速开始
 
 **前置要求**：已安装 [Docker](https://docs.docker.com/get-docker/) 与 Docker Compose，并准备至少一个兼容 OpenAI 接口的大模型 API。

@@ -6,6 +6,7 @@
 
 ## v0.7.2 (current)
 
+- 补充企业尽调智能体总体方案、数据库审计和实现逐字稿：明确广东企业 MySQL 只读事实主库、Neo4j/Milvus 可重建投影与 AkShare 补充边界，拆分只读接入、问答、多跳、报告、质量/性能评测及前端工作台的 12 个串并行任务和验收口径。
 - 新增企业股权关联图谱与可重复评测链路：公开数据快照可校验并导入 Neo4j，提供带来源证据的自然语言查询 API，对同一冻结题库执行 TF-IDF 向量基线、确定性 GraphRAG 与 Cypher 对照，输出逐题和汇总报告、性能探针及回归门禁。
 - 精简知识库文档内容接口响应：`GET /api/knowledge/databases/{kb_id}/documents/{doc_id}/content` 不再返回分块内部的实体 ID 与抽取结果，避免向文档预览请求传输仅供知识图谱构建使用的数据。
 - 收敛消息型 AgentRun 提交：Web Chat 与 Agent Call/Eval 共用 `run_submission_service.submit_run_command`，Call/Eval 拆为独立 Router；Request/Run 固化 `source/channel/external_id/origin_metadata` 来源快照，Eval 评估上下文继续透传到 worker 与 Langfuse，保留现有接口与响应兼容性，Resume、Subagent 生命周期不变。
