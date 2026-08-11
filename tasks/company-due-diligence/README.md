@@ -1,6 +1,6 @@
 # 企业尽调智能体任务清单
 
-本目录把企业尽调智能体拆成 12 个可独立验收的任务。Wave 1～Wave 6 形成基础版；2026 年 8 月 11 日已按 Wave 7 完成领域智能体统一输入输出升级。当前自动链路已完成，正式发布仍受缺少 `human_verified` 广东企业 Golden 阻塞。
+本目录把企业尽调智能体拆成 13 个可独立验收的任务。Wave 1～Wave 6 形成基础版；2026 年 8 月 11 日已按 Wave 7 完成领域智能体统一输入输出升级。Wave 8 进一步改造为全局共享智能体、无企业名称必填和全局自动评测。当前自动链路已完成，正式发布仍受缺少 `human_verified` 广东企业 Golden 阻塞。
 
 实现逐字稿见 [`docs/agents/company-due-diligence-implementation-guide.md`](../../docs/agents/company-due-diligence-implementation-guide.md)，输入、处理、输出和效果证据的完整链路逐字稿见 [`docs/agents/company-due-diligence-end-to-end-script.md`](../../docs/agents/company-due-diligence-end-to-end-script.md)。
 
@@ -30,6 +30,7 @@ flowchart TD
     T010[TASK-010 前端智能体调查工作台]
     T011[TASK-011 前端全链路评测工作台]
     T012[TASK-012 端到端回归与发布]
+    T013[TASK-013 全局共享与自动评测]
 
     T001 --> T002
     T002 --> T003
@@ -54,6 +55,13 @@ flowchart TD
     T011 --> T012
     T008 --> T012
     T009 --> T012
+    T006 --> T013
+    T007 --> T013
+    T008 --> T013
+    T009 --> T013
+    T010 --> T013
+    T011 --> T013
+    T012 --> T013
 ```
 
 ## 并行波次
@@ -67,6 +75,7 @@ flowchart TD
 | Wave 5 | `TASK-008`、`TASK-009`、`TASK-011` | 质量、性能和评测前端可并行；前端联调依赖评测 API | 质量和性能结果可在前端查看与导出 |
 | Wave 6 | `TASK-012` | 串行收口 | 关键链路 E2E、回归门禁和文档全部通过 |
 | Wave 7 | `TASK-006`、`TASK-007`、`TASK-008`、`TASK-010`、`TASK-011`、`TASK-012` 升级项 | 先冻结意图/响应契约，再并行改后端编排、报告和前端，最后补评测与发布门禁 | 领域智能体统一入口、输入输出一致性和动态展示通过新 Golden |
+| Wave 8 | `TASK-013` | 依赖 Wave 7，统一改造 Agent 注册、无企业输入、自动评测和全局性能聚合 | 全局共享智能体、无企业名称必填、自动数据评测和全局性能看板通过回归 |
 
 ## 任务索引
 
@@ -84,6 +93,7 @@ flowchart TD
 | [`TASK-010`](TASK-010-frontend-query-and-report.md) | 前端智能体调查工作台 | 条件并行 | 统一意图/响应契约，联调依赖 `TASK-006`、`TASK-007` | 已完成 |
 | [`TASK-011`](TASK-011-frontend-evaluation-workbench.md) | 前端全链路评测工作台 | 条件并行 | `TASK-008`、`TASK-009` API 契约 | 已完成 |
 | [`TASK-012`](TASK-012-e2e-regression-and-release.md) | 端到端回归与发布门禁 | 串行收口 | `TASK-006` 至 `TASK-011` | 自动门禁已完成；正式发布受人工 Golden 阻塞 |
+| [`TASK-013`](TASK-013-global-shared-auto-evaluation.md) | 全局共享智能体与无企业必填的自动评测 | 横切升级 | `TASK-006` 至 `TASK-012` | 待开始 |
 
 ## 当前验收摘要
 
@@ -106,11 +116,12 @@ flowchart TD
 4. 不记录密码、Token、完整 DSN、个人明细或可反推连接信息。
 5. LLM 不执行任意 SQL，不生成无来源企业事实。
 6. 普通用户不填写内部 `eid`，不选择结构化查询、图路径或证据检索等内部工具。
-7. 自然语言报告意图和报告按钮必须归一到同一领域智能体链路。
-8. 新增后端函数和类包含凝练中文 docstring，关键约束使用原因型注释。
-9. 新增前端 API 统一放在 `web/src/apis`，样式使用 `base.css` 颜色变量。
-10. 测试遵守 `docs/develop-guides/testing-guidelines.md`，开发和验证在 Docker 容器中完成。
-11. 任务完成时更新 `docs/develop-guides/changelog.md` 和受影响正式文档。
+7. `company_ref` 不是查询、评测或性能运行的必填项；企业信息可从自然语言或可选上下文解析。
+8. 自然语言报告意图和报告按钮必须归一到同一领域智能体链路。
+9. 新增后端函数和类包含凝练中文 docstring，关键约束使用原因型注释。
+10. 新增前端 API 统一放在 `web/src/apis`，样式使用 `base.css` 颜色变量。
+11. 测试遵守 `docs/develop-guides/testing-guidelines.md`，开发和验证在 Docker 容器中完成。
+12. 任务完成时更新 `docs/develop-guides/changelog.md` 和受影响正式文档。
 
 ## 公共输出契约
 
