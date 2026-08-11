@@ -59,3 +59,5 @@ COPY backend/server /app/server
 
 # 企业关系查询与评测接口依赖冻结快照、题库和基准报告
 COPY backend/data/company_relation /app/data/company_relation
+# 企业尽调质量评测依赖脱敏冻结数据集。
+COPY backend/data/company_due_diligence /app/data/company_due_diligence

@@ -2,7 +2,7 @@
 
 | 属性 | 内容 |
 | --- | --- |
-| 状态 | 待开始 |
+| 状态 | 已完成 |
 | 类型 | Wave 3 并行任务 |
 | 优先级 | P1 |
 | 依赖 | `TASK-002` |
@@ -73,13 +73,22 @@
 
 ## 验收标准
 
-- [ ] 同一源记录重复索引不会产生重复文档。
-- [ ] 每个证据片段可以追溯到 MySQL 来源记录。
-- [ ] 查询必须先按企业和类型过滤，不能跨企业混入证据。
-- [ ] 新闻等映射失败记录不会自动归属企业。
-- [ ] 索引版本可以删除并从 MySQL 重建。
-- [ ] Milvus 不可用时返回来源不可用，不伪装为无文本证据。
-- [ ] 不新增 Milvus、MinIO 或 embedding 基础设施镜像。
+- [x] 同一源记录重复索引不会产生重复文档。
+- [x] 每个证据片段可以追溯到 MySQL 来源记录。
+- [x] 查询必须先按企业和类型过滤，不能跨企业混入证据。
+- [x] 新闻等映射失败记录不会自动归属企业。
+- [x] 索引版本可以删除并从 MySQL 重建。
+- [x] Milvus 不可用时返回来源不可用，不伪装为无文本证据。
+- [x] 不新增 Milvus、MinIO 或 embedding 基础设施镜像。
+
+## 完成记录
+
+- 六类来源按主键游标和可选 `eid` 白名单只读抽取；新闻仅通过企业标准全称精确映射，新闻解读保留独立来源记录。
+- SQLite 快照完成内容去重、稳定文档/分块 ID、checksum 和统计后，写入版本化 Milvus collection；MinIO 保存 `documents.jsonl`、`manifest.json` 和原子 `current.json` 指针。
+- embedding 模型或维度变化会生成不同版本；发布失败会删除半成品 collection，不切换当前版本；同版本重复执行不重复写向量。
+- 查询构造 `eid + 文档类型 + 日期` 标量过滤后再向量召回，并校验企业、来源键和投影版本；基础设施或模型不可用时返回 `unavailable`。
+- 管理接口：`POST /api/company-due-diligence/evidence/indexes`、`GET /evidence/indexes/{task_id}`、`GET /evidence/info`、`POST /evidence/query`、`DELETE /evidence/versions/{projection_version}`。
+- Docker 验证：六类真实 MySQL 文本抽取、真实 Milvus/MinIO 幂等索引、企业/类型/日期隔离、来源回查、删除重建和连接释放均通过；`TASK-001`～`TASK-005` 回归 `79 passed`。
 
 ## 测试范围
 

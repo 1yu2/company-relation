@@ -1,8 +1,8 @@
 # 企业尽调智能体任务清单
 
-本目录把企业尽调智能体拆成 12 个可独立验收的任务。任务可以按波次并行，但不能跳过依赖；每个任务完成后都要更新本文件状态，并在 Docker 容器中执行对应检查、测试和 Lint。
+本目录把企业尽调智能体拆成 12 个可独立验收的任务。Wave 1～Wave 6 已形成当前基础版；2026 年 8 月 11 日方案修订后，`TASK-006`、`TASK-007`、`TASK-008`、`TASK-010`、`TASK-011` 和 `TASK-012` 增加领域智能体统一输入输出升级项。本次只修改方案和验收口径，不代表升级代码已经完成。
 
-实现逐字稿见 [`docs/agents/company-due-diligence-implementation-guide.md`](../../docs/agents/company-due-diligence-implementation-guide.md)。
+实现逐字稿见 [`docs/agents/company-due-diligence-implementation-guide.md`](../../docs/agents/company-due-diligence-implementation-guide.md)，输入、处理、输出和效果证据的完整链路逐字稿见 [`docs/agents/company-due-diligence-end-to-end-script.md`](../../docs/agents/company-due-diligence-end-to-end-script.md)。
 
 ## 状态约定
 
@@ -12,6 +12,7 @@
 - `待验收`：代码和测试已完成，等待整体检查。
 - `已完成`：验收标准和测试全部通过。
 - `阻塞`：存在明确外部依赖，必须记录阻塞原因。
+- `基础版已完成，升级待实现`：原验收已通过，但本次方案新增的领域智能体能力尚未开发。
 
 ## 总体任务图
 
@@ -22,12 +23,12 @@ flowchart TD
     T003[TASK-003 结构化查询服务]
     T004[TASK-004 Neo4j 关系投影]
     T005[TASK-005 文本证据索引]
-    T006[TASK-006 简单问答与多跳 API]
-    T007[TASK-007 完整尽调报告]
-    T008[TASK-008 结果质量评测]
+    T006[TASK-006 统一调查意图与工具编排]
+    T007[TASK-007 统一报告意图与工作流]
+    T008[TASK-008 全链路质量评测]
     T009[TASK-009 系统性能评测]
-    T010[TASK-010 前端查询与报告]
-    T011[TASK-011 前端评测工作台]
+    T010[TASK-010 前端智能体调查工作台]
+    T011[TASK-011 前端全链路评测工作台]
     T012[TASK-012 端到端回归与发布]
 
     T001 --> T002
@@ -62,26 +63,37 @@ flowchart TD
 | Wave 1 | `TASK-001` | 串行起点 | 只读连接池、健康检查和安全测试通过 |
 | Wave 2 | `TASK-002` | 依赖 Wave 1 | DTO、来源契约和身份解析冻结 |
 | Wave 3 | `TASK-003`、`TASK-004`、`TASK-005` | 三个任务写入范围分离，可并行 | SQL、图谱、文本三种检索服务可独立测试 |
-| Wave 4 | `TASK-006`、`TASK-007`、`TASK-010` | 后端问答和报告可并行；前端先按冻结契约 mock，联调依赖后端 | 简单问答、多跳、报告和前端主工作台可用 |
+| Wave 4 | `TASK-006`、`TASK-007`、`TASK-010` | 后端调查编排和报告可并行；前端先按冻结契约 mock，联调依赖后端 | 企业上下文、统一意图、动态输出和报告工作台可用 |
 | Wave 5 | `TASK-008`、`TASK-009`、`TASK-011` | 质量、性能和评测前端可并行；前端联调依赖评测 API | 质量和性能结果可在前端查看与导出 |
 | Wave 6 | `TASK-012` | 串行收口 | 关键链路 E2E、回归门禁和文档全部通过 |
+| Wave 7 | `TASK-006`、`TASK-007`、`TASK-008`、`TASK-010`、`TASK-011`、`TASK-012` 升级项 | 先冻结意图/响应契约，再并行改后端编排、报告和前端，最后补评测与发布门禁 | 领域智能体统一入口、输入输出一致性和动态展示通过新 Golden |
 
 ## 任务索引
 
-| 任务 | 标题 | 类型 | 直接依赖 | 初始状态 |
+| 任务 | 标题 | 类型 | 直接依赖 | 当前状态 |
 | --- | --- | --- | --- | --- |
-| [`TASK-001`](TASK-001-readonly-mysql-access.md) | 只读 MySQL 接入 | 串行 | 无 | 可开始 |
-| [`TASK-002`](TASK-002-canonical-contract-and-entity-resolution.md) | 统一契约与企业身份解析 | 串行 | `TASK-001` | 待开始 |
-| [`TASK-003`](TASK-003-structured-query-service.md) | 结构化查询服务 | 并行 | `TASK-002` | 待开始 |
-| [`TASK-004`](TASK-004-neo4j-graph-projection.md) | Neo4j 关系投影 | 并行 | `TASK-002` | 待开始 |
-| [`TASK-005`](TASK-005-text-evidence-index.md) | 文本证据索引 | 并行 | `TASK-002` | 待开始 |
-| [`TASK-006`](TASK-006-question-answering-api.md) | 简单问答与多跳 API | 并行 | `TASK-003`、`TASK-004`、`TASK-005` | 待开始 |
-| [`TASK-007`](TASK-007-due-diligence-report-workflow.md) | 完整尽调报告工作流 | 并行 | `TASK-003`、`TASK-004`、`TASK-005` | 待开始 |
-| [`TASK-008`](TASK-008-quality-evaluation.md) | 结果质量评测 | 并行 | `TASK-006`、`TASK-007` | 待开始 |
-| [`TASK-009`](TASK-009-performance-evaluation.md) | 系统性能评测 | 并行 | `TASK-006`、`TASK-007` | 待开始 |
-| [`TASK-010`](TASK-010-frontend-query-and-report.md) | 前端查询与报告工作台 | 条件并行 | `TASK-002` 契约，联调依赖 `TASK-006`、`TASK-007` | 待开始 |
-| [`TASK-011`](TASK-011-frontend-evaluation-workbench.md) | 前端评测工作台 | 条件并行 | `TASK-008`、`TASK-009` API 契约 | 待开始 |
-| [`TASK-012`](TASK-012-e2e-regression-and-release.md) | 端到端回归与发布门禁 | 串行收口 | `TASK-006` 至 `TASK-011` | 待开始 |
+| [`TASK-001`](TASK-001-readonly-mysql-access.md) | 只读 MySQL 接入 | 串行 | 无 | 已完成 |
+| [`TASK-002`](TASK-002-canonical-contract-and-entity-resolution.md) | 统一契约与企业身份解析 | 串行 | `TASK-001` | 已完成 |
+| [`TASK-003`](TASK-003-structured-query-service.md) | 结构化查询服务 | 并行 | `TASK-002` | 已完成 |
+| [`TASK-004`](TASK-004-neo4j-graph-projection.md) | Neo4j 关系投影 | 并行 | `TASK-002` | 已完成 |
+| [`TASK-005`](TASK-005-text-evidence-index.md) | 文本证据索引 | 并行 | `TASK-002` | 已完成 |
+| [`TASK-006`](TASK-006-question-answering-api.md) | 统一调查意图与工具编排 | 并行 | `TASK-003`、`TASK-004`、`TASK-005` | 基础版已完成，升级待实现 |
+| [`TASK-007`](TASK-007-due-diligence-report-workflow.md) | 统一报告意图与工作流 | 并行 | `TASK-003`、`TASK-004`、`TASK-005`、升级后的 `TASK-006` 契约 | 基础版已完成，升级待实现 |
+| [`TASK-008`](TASK-008-quality-evaluation.md) | 全链路质量评测 | 并行 | `TASK-006`、`TASK-007` | 基础版框架完成；人工 Golden 阻塞，升级指标待实现 |
+| [`TASK-009`](TASK-009-performance-evaluation.md) | 系统性能评测 | 并行 | `TASK-006`、`TASK-007` | 已完成 |
+| [`TASK-010`](TASK-010-frontend-query-and-report.md) | 前端智能体调查工作台 | 条件并行 | 统一意图/响应契约，联调依赖 `TASK-006`、`TASK-007` | 基础版已完成，升级待实现 |
+| [`TASK-011`](TASK-011-frontend-evaluation-workbench.md) | 前端全链路评测工作台 | 条件并行 | `TASK-008`、`TASK-009` API 契约 | 基础版已完成，升级待实现 |
+| [`TASK-012`](TASK-012-e2e-regression-and-release.md) | 端到端回归与发布门禁 | 串行收口 | `TASK-006` 至 `TASK-011` | 当前发布受人工 Golden 阻塞；升级门禁待实现 |
+
+## 当前验收摘要
+
+截至 2026 年 8 月 11 日：
+
+- 当前基础版的 `TASK-001`～`TASK-007`、`TASK-009`～`TASK-011` 已完成；后端单元/路由 `111 passed`、真实集成 `26 passed`、管理员部署态 HTTP E2E `1 passed`，前端单元测试 `17 passed`，ESLint 和生产构建通过。
+- `TASK-008` 的评测格式、指标、运行、导出和自动烟测完成，但当前没有 `human_verified` 广东企业 Golden，不能冻结正式质量阈值。
+- `TASK-012` 自动门禁和管理员部署态 HTTP E2E 已通过，但发布状态仍为 `blocked`；唯一阻塞项是人工 Golden，在线 LLM 未启用作为非阻塞限制展示。
+- 最新发布验收报告由 `backend/scripts/company_due_diligence/generate_release_gate.py` 生成到 `saves/company_due_diligence/release/`，生成文件不提交 Git。
+- 本次方案新增 `CompanyDueDiligenceAgent`、统一意图、Claim Ledger、动态 `presentation`、单输入框和输入输出一致性评测，均属于后续升级项。
 
 ## 公共实现约束
 
@@ -92,15 +104,20 @@ flowchart TD
 3. MySQL 是唯一事实主库；Neo4j、Milvus 和快照必须可重建。
 4. 不记录密码、Token、完整 DSN、个人明细或可反推连接信息。
 5. LLM 不执行任意 SQL，不生成无来源企业事实。
-6. 新增后端函数和类包含凝练中文 docstring，关键约束使用原因型注释。
-7. 新增前端 API 统一放在 `web/src/apis`，样式使用 `base.css` 颜色变量。
-8. 测试遵守 `docs/develop-guides/testing-guidelines.md`，开发和验证在 Docker 容器中完成。
-9. 任务完成时更新 `docs/develop-guides/changelog.md` 和受影响正式文档。
+6. 普通用户不填写内部 `eid`，不选择结构化查询、图路径或证据检索等内部工具。
+7. 自然语言报告意图和报告按钮必须归一到同一领域智能体链路。
+8. 新增后端函数和类包含凝练中文 docstring，关键约束使用原因型注释。
+9. 新增前端 API 统一放在 `web/src/apis`，样式使用 `base.css` 颜色变量。
+10. 测试遵守 `docs/develop-guides/testing-guidelines.md`，开发和验证在 Docker 容器中完成。
+11. 任务完成时更新 `docs/develop-guides/changelog.md` 和受影响正式文档。
 
 ## 公共输出契约
 
-简单问答、多跳查询和报告统一返回或引用以下对象：
+工作台输入、主智能体调用、关系调查和报告统一使用或引用以下对象：
 
+- `CompanyContext`：当前会话中已确认的主企业和其他被提及企业；
+- `InvestigationIntent`：主题、时间、深度、展示形式、交付方式和执行约束；
+- `UnderstoodRequest`：返回给用户确认的意图摘要；
 - `Entity`：企业、股东、投资人、风险事件等主体；
 - `Fact`：结构化事实及规范化值；
 - `Relation`：有方向、有类型、有来源的关系；
@@ -109,17 +126,19 @@ flowchart TD
 - `Source`：来源表、记录键、业务日期和查询时间；
 - `DataQuality`：缺失、过期、冲突和最低置信度；
 - `LatencyBreakdown`：身份、MySQL、Neo4j、Milvus、LLM 和总耗时。
+- `Presentation`：摘要、列表、关系结果、专题报告或完整报告的动态展示描述；
+- `Task`：仅在异步专题报告、完整报告或评测中返回。
 
-公共契约在 `TASK-002` 冻结。后续任务如需修改，必须同步更新后端模型、前端类型、Golden 数据和本文依赖说明。
+当前事实契约在 `TASK-002` 已冻结；新增智能体意图和展示契约由升级后的 `TASK-006` 冻结。后续修改必须同步更新后端模型、前端类型、Golden 数据和本文依赖说明。
 
 ## 并行开发规则
 
 - `TASK-003` 只写 MySQL 结构化查询域。
 - `TASK-004` 只写 Neo4j 投影和路径查询域。
 - `TASK-005` 只写文本抽取、索引和证据检索域。
-- `TASK-006` 只组合查询服务并开放问答 API，不重写三个底层服务。
-- `TASK-007` 只实现报告任务、章节聚合和报告产物。
-- `TASK-010` 可以先使用契约 mock，但不得自行发明与后端不同的字段。
+- `TASK-006` 组合现有查询服务形成领域智能体，不重写三个底层服务。
+- `TASK-007` 复用统一意图实现报告任务、章节聚合和报告产物，不另建身份解析链路。
+- `TASK-010` 可以先使用契约 mock，但不得自行发明与后端不同的意图或展示字段。
 - `TASK-008` 与 `TASK-009` 使用独立评测命名空间和运行记录，避免互相覆盖。
 - `TASK-011` 只消费质量和性能评测 API，不把评测计算放到浏览器。
 

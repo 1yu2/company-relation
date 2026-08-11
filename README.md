@@ -40,9 +40,9 @@
 | 文档解析 | MinerU · PaddleX · RapidOCR |
 | 部署 | Docker Compose |
 
-## 企业尽调智能体（建设中）
+## 企业尽调智能体
 
-本仓库正在基于 Yuxi 增加广东企业尽调场景：以现有广东企业 MySQL 作为**只读事实主库**，统一提供企业基本信息、股东出资、产品、融资、财务、风险、知识产权、新闻证据和多跳关系查询，并逐步补齐完整尽调报告、结果质量评测和系统性能评测。
+本仓库基于 Yuxi 提供广东企业尽调领域智能体方案：以现有广东企业 MySQL 作为**只读事实主库**，由 `CompanyDueDiligenceAgent` 统一理解企业上下文和调查意图，内部组合结构化查询、最多三跳关系、文本证据与报告工具，并按用户要求动态输出摘要、列表、关系结果、专题报告或完整报告。
 
 核心边界：
 
@@ -50,24 +50,32 @@
 - MySQL 保存事实，Neo4j 和 Milvus 只保存可重建的关系与文本索引。
 - AkShare 默认不参与主查询，仅保留为公开公告、最新披露核验和回归基线。
 - 缺失、过期、冲突和低置信度关系必须显式返回，LLM 不生成无来源企业事实。
+- 普通用户不需要填写内部 `eid`，也不选择简单问答、多跳关系或证据检索等内部模式。
+- 自然语言报告要求和报告按钮归一到同一个领域智能体链路。
 
 当前进度：
 
 | 阶段 | 状态 | 交付内容 |
 | --- | --- | --- |
 | 数据审计与方案 | 已完成 | 924 家企业及股东、产品、融资、风险、知识产权数据只读审计 |
-| 数据接入 | 待实现 | 只读连接池、企业身份解析、统一 DTO、来源与时效输出 |
-| 查询与报告 | 待实现 | 企业查询 API、完整尽调报告、Neo4j 多跳关系和文本证据 |
-| 结果质量评测 | 待实现 | 人工 Golden、字段/路径/证据/拒答/报告完整性评测 |
-| 系统性能评测 | 待实现 | P50/P95/P99、并发、吞吐、错误率和连接池观测 |
+| 数据接入 | 已完成 | 只读连接池、双层 SQL 守卫、企业身份解析、统一 DTO、来源与时效输出 |
+| 查询与报告 | 已完成 | 17 类结构化查询、最多三跳、文本证据、十二章节报告和 JSON/Markdown 产物；管理员部署态 HTTP E2E 已通过 |
+| 结果质量评测 | 阻塞 | 严格指标、逐题差异、导出和烟测已完成；缺少 `human_verified` 广东企业 Golden |
+| 系统性能评测 | 已完成 | 安全/受控真实库模式、P50/P95/P99、吞吐、错误率、阶段耗时和连接池观测 |
+| 前端工作台 | 已完成 | 查询/报告与质量/性能评测两个管理员工作台，前端单测、Lint、构建和部署态接口联调通过 |
+| 发布门禁 | 阻塞 | 自动门禁与管理员 HTTP E2E 通过；仅缺少人工 `human_verified` Golden，在线 LLM 未启用作为非阻塞限制展示 |
+| 智能体输入输出升级 | 方案完成，待实现 | 统一企业上下文、调查意图、Claim Ledger、动态 `presentation`、单输入框和输入输出一致性评测 |
+
+管理员登录后可访问 `/company-due-diligence` 和 `/company-due-diligence-evaluations`。本地开发直接使用不提交的 `.env`，仓库只提交脱敏 `.env.template`；发布报告生成到 `saves/company_due_diligence/release/`，不提交运行产物。
 
 相关文档：
 
 - [企业尽调智能体总体方案](docs/agents/company-due-diligence-system.md)
 - [企业尽调智能体实现逐字稿](docs/agents/company-due-diligence-implementation-guide.md)
+- [企业尽调智能体全链路与效果论证逐字稿](docs/agents/company-due-diligence-end-to-end-script.md)
 - [企业尽调智能体任务清单](tasks/company-due-diligence/README.md)
 - [现有公开企业关系评测基线](docs/agents/company-relation-evaluation.md)
-- 本地开发审计与架构图：`docs/vibe/2026-08-10-guangdong-enterprise-data-audit.md`、`docs/vibe/2026-08-10-enterprise-due-diligence-architecture.drawio`（`docs/vibe` 默认不提交）
+- 本地开发审计与架构图：`docs/vibe/2026-08-10-guangdong-enterprise-data-audit.md`、`docs/vibe/2026-08-11-company-due-diligence-end-to-end.drawio`（`docs/vibe` 默认不提交）
 
 ## 快速开始
 

@@ -1,0 +1,76 @@
+"""企业尽调质量评测 JSON、JSONL 和 Markdown 导出。"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+
+from yuxi.company_due_diligence.evaluation.runner import QualityEvaluationReport
+
+
+def render_quality_json(report: QualityEvaluationReport) -> bytes:
+    """渲染不包含 artifact 自引用的稳定 JSON。"""
+    payload = report.model_dump(mode="json", exclude={"artifacts"})
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2).encode()
+
+
+def render_quality_jsonl(report: QualityEvaluationReport) -> bytes:
+    """逐样本输出 JSONL 便于差异审阅。"""
+    lines = []
+    for sample in report.samples:
+        lines.append(json.dumps(sample.model_dump(mode="json"), ensure_ascii=False, sort_keys=True))
+    return ("\n".join(lines) + "\n").encode()
+
+
+def render_quality_markdown(report: QualityEvaluationReport) -> bytes:
+    """渲染数据集、指标、门禁和失败样本摘要。"""
+    strict = report.strict_metrics
+    lines = [
+        "# 企业尽调质量评测报告",
+        "",
+        f"- 运行 ID：`{report.run_id}`",
+        f"- 数据集：`{report.dataset_id}` / `{report.dataset_version}`",
+        f"- 数据集类别：`{report.dataset_source_kind}`",
+        f"- checksum：`{report.dataset_checksum}`",
+        f"- 人工复核样本：{strict.human_verified_count}",
+        f"- 严格门禁：{'通过' if report.regression_gate.passed else '未通过'}",
+        "",
+        "## 严格指标",
+        "",
+        f"- 字段准确率：{_rate(strict.field_accuracy.rate)}",
+        f"- 关系准确率：{_rate(strict.relation_accuracy.rate)}",
+        f"- 路径准确率：{_rate(strict.path_accuracy.rate)}",
+        f"- 证据覆盖率：{_rate(strict.evidence_coverage.rate)}",
+        f"- 拒答准确率：{_rate(strict.refusal_accuracy.rate)}",
+        f"- 报告完整率：{_rate(strict.report_completeness.rate)}",
+        f"- 时效声明准确率：{_rate(strict.freshness_accuracy.rate)}",
+        f"- 幻觉率：{strict.hallucination_rate:.2%}",
+        "",
+        "## 门禁说明",
+        "",
+    ]
+    lines.extend(f"- {reason}" for reason in report.regression_gate.reasons)
+    failures = [sample for sample in report.samples if _is_failure(sample)]
+    lines.extend(["", "## 失败与待复核样本", ""])
+    if not failures:
+        lines.append("- 无")
+    for sample in failures:
+        first_error = sample.error or (sample.metrics.first_error if sample.metrics else "unknown")
+        lines.append(f"- `{sample.sample_id}`：{first_error}")
+    lines.append("")
+    return "\n".join(lines).encode()
+
+
+def checksum(content: bytes) -> str:
+    """返回导出文件 SHA256。"""
+    return hashlib.sha256(content).hexdigest()
+
+
+def _rate(value: float | None) -> str:
+    """格式化可能不适用的指标比率。"""
+    return "不适用" if value is None else f"{value:.2%}"
+
+
+def _is_failure(sample) -> bool:
+    """判断逐题结果是否需要进入失败审阅列表。"""
+    return bool(sample.error or not sample.metrics or not sample.metrics.strict_passed)

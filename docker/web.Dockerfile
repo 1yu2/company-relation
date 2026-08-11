@@ -4,7 +4,7 @@ WORKDIR /app
 ENV TZ=Asia/Shanghai
 
 # 安装 pnpm
-RUN npm install -g pnpm@latest
+RUN npm install -g pnpm@10.11.0
 
 # 复制 package.json 和 pnpm-lock.yaml
 COPY ./web/package*.json ./
@@ -26,7 +26,7 @@ FROM node:24-alpine AS build-stage
 WORKDIR /app
 
 # 安装 pnpm
-RUN npm install -g pnpm@latest
+RUN npm install -g pnpm@10.11.0
 
 # 复制依赖文件
 COPY ./web/package*.json ./

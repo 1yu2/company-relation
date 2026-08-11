@@ -49,6 +49,8 @@ router.include_router(workspace)  # /api/workspace/* 用户个人工作区
 router.include_router(mention_router)  # /api/mention/* 提及文件搜索接口
 
 if not _LITE_MODE:
+    from server.routers.company_due_diligence_evaluation_router import company_due_diligence_evaluation_router
+    from server.routers.company_due_diligence_router import company_due_diligence_router
     from server.routers.company_relation_router import company_relation
     from server.routers.external_kb_router import external_kb
     from server.routers.graph_router import graph
@@ -61,3 +63,7 @@ if not _LITE_MODE:
     router.include_router(evaluation)  # /api/evaluation/* 知识库评估
     router.include_router(graph)  # /api/graph/* 图谱查询与管理
     router.include_router(company_relation)  # /api/company-relations/* 企业关系查询与评测
+    router.include_router(company_due_diligence_router)  # /api/company-due-diligence/* 企业尽调
+    router.include_router(
+        company_due_diligence_evaluation_router
+    )  # /api/company-due-diligence/evaluations/* 质量与性能评测

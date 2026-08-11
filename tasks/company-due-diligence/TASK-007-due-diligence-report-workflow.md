@@ -1,41 +1,108 @@
-# TASK-007：完整尽调报告工作流
+# TASK-007：统一报告意图与工作流
 
 | 属性 | 内容 |
 | --- | --- |
-| 状态 | 待开始 |
-| 类型 | Wave 4 并行任务 |
+| 状态 | 基础版已完成，统一报告意图升级待实现 |
+| 类型 | Wave 4 基础任务 / Wave 7 升级任务 |
 | 优先级 | P0 |
-| 依赖 | `TASK-003`、`TASK-004`、`TASK-005` |
-| 可并行任务 | `TASK-006`、`TASK-010` |
+| 依赖 | `TASK-003`、`TASK-004`、`TASK-005`、升级后的 `TASK-006` 契约 |
+| 可并行任务 | 契约冻结后可与 `TASK-006`、`TASK-010` 并行 |
 
 ## 目标
 
-实现按章节并行聚合事实、关系和证据的完整企业尽调报告工作流，输出可追溯 JSON 和 Markdown，并提供任务进度、章节状态、取消、重试和下载能力。
+将当前完整尽调报告工作流升级为 `CompanyDueDiligenceAgent` 的 `ReportGenerationTool`。报告既可以由自然语言意图触发，也可以由“生成报告”快捷按钮触发；两种入口必须归一到同一个 `InvestigationIntent`，复用相同企业上下文、工具计划、Claim Ledger、来源校验和任务交付链路。
 
-## 交付物
+报告分为专题报告和完整报告。用户只要求关系与风险时，不自动加入无关章节；只有明确要求完整尽调或点击完整报告按钮时才生成标准全量章节。
 
-- 报告请求、章节、状态和结果模型。
-- 报告数据聚合服务和 LangGraph 工作流。
-- 后台任务、进度事件和取消机制。
-- JSON、Markdown 报告产物及 checksum。
-- 报告创建、列表、详情、重试、取消和下载 API。
-- 单元测试、API 集成测试和报告 E2E。
+## 当前基础版
+
+当前报告工作流已实现：
+
+- 十二章节并行聚合。
+- 企业、代码、配置、Neo4j 和证据索引版本锁定。
+- Tasker/PostgreSQL 任务进度、取消和单章节重试。
+- MinIO JSON、Markdown、record 产物与 checksum 下载校验。
+- 章节部分失败和整体 `partial` 状态。
+- 无在线 LLM 时的确定性模板报告。
+- `2026-08-11` 管理员部署态 HTTP E2E 通过。
+
+这些能力继续复用，升级重点是统一入口和报告范围一致性，不重写成熟任务基础设施。
+
+## 升级交付物
+
+- `ReportGenerationTool` 领域智能体工具适配。
+- 专题报告、完整报告的统一意图和章节映射。
+- 自然语言报告要求与报告按钮的等价意图转换。
+- 基于 Claim Ledger 的章节输入和范围校验。
+- 统一响应中的 `presentation=topic_report|full_report` 与 `task`。
+- 报告范围一致性和输入输出一致性测试。
 
 ## 预计修改范围
 
-- `backend/package/yuxi/company_due_diligence/report/models.py`
-- `backend/package/yuxi/company_due_diligence/report/graph.py`
-- `backend/package/yuxi/company_due_diligence/report/service.py`
-- `backend/package/yuxi/company_due_diligence/report/renderers.py`
-- `backend/package/yuxi/storage/postgres/` 中必要的报告运行模型与迁移
+- `backend/package/yuxi/company_due_diligence/agent/`
+- `backend/package/yuxi/company_due_diligence/report/`
 - `backend/server/routers/company_due_diligence_router.py`
 - `backend/test/unit/company_due_diligence/report/`
 - `backend/test/integration/company_due_diligence/test_report_api.py`
-- `backend/test/e2e/company_due_diligence/test_report_workflow.py`
+- `backend/test/e2e/company_due_diligence/`
 
-报告运行元数据可以写入 Yuxi PostgreSQL；企业事实仍只来自广东企业 MySQL。文件产物复用现有 MinIO，不新增存储服务。
+## 统一报告意图
 
-## 报告章节
+专题报告示例：
+
+```json
+{
+  "entities": [
+    {"eid": "系统已确认企业", "role": "primary_company"}
+  ],
+  "intent": {
+    "topics": ["relations", "risks"],
+    "presentation": "topic_report",
+    "delivery": "async_task",
+    "time_scope": {"type": "recent_years", "years": 3},
+    "depth": "detailed",
+    "evidence_required": true
+  }
+}
+```
+
+完整报告按钮生成标准意图：
+
+```json
+{
+  "entities": [
+    {"eid": "当前企业上下文", "role": "primary_company"}
+  ],
+  "intent": {
+    "topics": ["full_due_diligence"],
+    "presentation": "full_report",
+    "delivery": "async_task",
+    "time_scope": {"type": "latest_available"},
+    "depth": "detailed",
+    "evidence_required": true
+  }
+}
+```
+
+按钮不得直接跳过 `CompanyDueDiligenceAgent` 调用旧报告服务。按钮和自然语言入口经过意图归一后，再共同调用 `ReportGenerationTool`。
+
+## 报告范围映射
+
+### 专题报告
+
+根据 `topics` 只选择必要章节：
+
+| 主题 | 主要章节 | 必要工具 |
+| --- | --- | --- |
+| `shareholders` | 企业身份、股权结构、出资、数据质量 | 结构化查询 |
+| `relations` | 企业身份、多跳关联、关系来源、数据质量 | 图路径 |
+| `risks` | 合规、处罚、异常、许可、风险证据、数据质量 | 结构化查询 + 证据检索 |
+| `financing` | 融资历程、投资机构、必要关系、数据质量 | 结构化查询 + 可选图路径 |
+| `intellectual_property` | 专利、商标、著作权、必要证据、数据质量 | 结构化查询 + 可选证据 |
+
+### 完整报告
+
+标准章节：
 
 1. `identity`：企业身份确认。
 2. `business`：工商基本信息。
@@ -50,33 +117,52 @@
 11. `risks`：关键风险和待核验事项。
 12. `data_quality`：来源、时效、缺失、冲突和置信度声明。
 
-## API 契约
-
-建议接口：
+## 目标执行链路
 
 ```text
-POST /api/company-due-diligence/reports
-GET  /api/company-due-diligence/reports
-GET  /api/company-due-diligence/reports/{report_id}
-POST /api/company-due-diligence/reports/{report_id}/cancel
-POST /api/company-due-diligence/reports/{report_id}/sections/{section}/retry
-GET  /api/company-due-diligence/reports/{report_id}/download?format=json|markdown
+自然语言报告要求 / 报告快捷按钮
+  → CompanyDueDiligenceAgent 归一报告意图
+  → 确认企业与必要目标企业
+  → 将 topics 映射为专题或完整章节
+  → 锁定代码、配置、数据、图谱和证据索引版本
+  → 调用结构化、图路径和证据工具
+  → 形成报告 Claim Ledger
+  → 校验主题范围、来源、时效、冲突和版本
+  → 创建或更新 Tasker 报告任务
+  → 生成 JSON 报告
+  → 模板或受约束 LLM 生成 Markdown
+  → 保存 checksum 与产物
+  → 统一响应返回 task 和 presentation
 ```
 
-创建请求必须包含企业身份、章节、数据时点、是否包含低置信度线索和输出格式。
+LLM 只能读取通过校验的报告 Claim Ledger。无法映射到 `source_id` 的企业事实不得进入报告；后置校验失败时保留结构化 JSON 并回退模板 Markdown。
 
-## 实现步骤
+## 目标统一响应
 
-1. 创建任务前解析唯一企业并锁定企业身份快照。
-2. 记录代码版本、配置版本、图谱版本、文本索引版本和数据业务时点。
-3. 根据章节构建查询计划，独立章节并行执行。
-4. 结构化事实来自 `TASK-003`，多跳路径来自 `TASK-004`，文本证据来自 `TASK-005`。
-5. 每个章节先形成结构化数据包，再做章节质量检查。
-6. 先输出 JSON；Markdown 只能引用 JSON 数据包中的事实和来源。
-7. LLM 不可用时使用模板生成基础 Markdown，不影响 JSON 产物。
-8. 通过现有 Tasker/worker 模式发布进度、取消信号和终态。
-9. 将报告文件、checksum 和导出元数据保存到既有 MinIO。
-10. 失败章节标记为 `failed`，整体报告使用 `partial`，不能伪装完整成功。
+```json
+{
+  "status": "accepted",
+  "understood_request": {
+    "topics": ["relations", "risks"],
+    "presentation": "topic_report",
+    "delivery": "async_task",
+    "time_scope": {"type": "recent_years", "years": 3}
+  },
+  "entities": [],
+  "summary": "已开始生成近三年关系与风险专题报告",
+  "presentation": {
+    "type": "topic_report",
+    "components": ["report_progress", "relations", "risks", "sources"]
+  },
+  "task": {
+    "id": "报告任务标识",
+    "status": "pending",
+    "progress": 0
+  }
+}
+```
+
+现有报告创建、列表、详情、取消、重试和下载接口可继续作为任务资源 API；报告创建入口需要与统一意图适配，不再要求普通用户手工提交内部 `eid` 和章节数组。
 
 ## 章节状态
 
@@ -90,40 +176,62 @@ GET  /api/company-due-diligence/reports/{report_id}/download?format=json|markdow
 - `failed`
 - `cancelled`
 
-## 验收标准
+## 实现步骤
 
-- [ ] 任意唯一 `eid` 可以创建报告任务。
-- [ ] 报告进度可以看到当前章节和完成比例。
-- [ ] JSON 报告不依赖在线 LLM 即可生成。
-- [ ] Markdown 中的企业事实全部可映射到 JSON `source_id`。
+1. 冻结专题报告和完整报告的意图到章节映射。
+2. 将现有报告服务封装成 `ReportGenerationTool`。
+3. 让自然语言报告意图和报告按钮生成相同内部对象。
+4. 使用 `TASK-006` 企业上下文，不重复实现企业解析。
+5. 将工具结果汇总为报告 Claim Ledger。
+6. 增加主题范围、时间范围和无关章节校验。
+7. 统一同步接受响应、异步任务进度和最终产物描述。
+8. 保持现有版本锁定、取消、重试、部分失败和 checksum 行为。
+9. 接入 LLM 时增加报告事实和来源后置校验。
+10. 增加专题报告、按钮等价和输入输出一致性回归。
+
+## 基础版完成记录
+
+- 十二章节、Tasker/PostgreSQL、MinIO 双格式产物、checksum、取消和重试已完成。
+- 单章节失败保留 `failed`，整体返回 `partial`，不使用 LLM 补写。
+- 当前报告主链路使用确定性模板，`report_with_llm` 明确标记为 `unavailable`。
+
+## 升级验收标准
+
+- [ ] 自然语言可触发专题报告和完整报告。
+- [ ] 报告按钮与等价自然语言产生相同内部意图和章节计划。
+- [ ] 专题报告只包含用户要求的主题和必要质量声明。
+- [ ] 普通用户不需要提交内部 `eid`、章节数组或查询模式。
+- [ ] 报告与同步调查复用同一企业上下文、工具和 Claim Ledger 契约。
+- [ ] `presentation` 和 `task` 足以驱动前端动态展示和轮询。
 - [ ] 章节无数据、过期、冲突和失败状态被明确展示。
-- [ ] 单章节失败不会丢失其他成功章节。
-- [ ] 任务可以取消，取消后连接和 worker 资源正常释放。
-- [ ] JSON 和 Markdown 文件 checksum 可验证。
-- [ ] 不修改原 MySQL，不新增 MinIO 或 PostgreSQL 容器。
+- [ ] LLM 不可用或校验失败时仍生成可追溯 JSON 和模板 Markdown。
+- [ ] JSON/Markdown 中的企业事实全部可映射到有效 `source_id`。
+- [ ] 版本锁定、取消、重试、部分失败和 checksum 现有能力不回归。
 
 ## 测试范围
 
 ### 单元测试
 
-- 章节计划、状态机、事实引用和 Markdown 渲染。
-- 部分失败、取消、单章节重试和 LLM 降级。
-- 文件名、checksum 和敏感信息清理。
+- 报告意图到章节映射。
+- 专题范围和无关章节检查。
+- 报告按钮与自然语言等价转换。
+- Claim Ledger、来源校验和模板回退。
 
 ### 集成测试
 
-- 报告任务 API、进度、取消、重试和下载。
-- PostgreSQL 运行元数据与 MinIO 文件产物一致。
-- 数据源部分不可用时的章节状态。
+- 关系、风险和关系+风险专题报告。
+- 完整报告任务、版本锁定、取消、重试和下载。
+- 服务部分不可用时的章节状态和整体状态。
 
 ### E2E 测试
 
-- 选择固定企业生成全部章节报告。
-- 验证关键事实、来源、数据质量声明和两个导出格式。
+- 自然语言专题报告从输入到任务产物。
+- 报告按钮与自然语言等价性。
+- 专题范围一致性、完整报告完整性和部分失败各至少一条。
 
 ## 非目标
 
-- 不输出法律、投资或信用评级结论。
-- 不把缺失章节交给 LLM 自由补写。
-- 不实现前端页面，该部分由 `TASK-010` 完成。
-- 不生成 PDF；首版只要求 JSON 和 Markdown。
+- 不另建一套企业解析或事实来源规则。
+- 不用长提示词替代结构化报告数据包。
+- 不要求专题报告固定包含全部十二章节。
+- 不在本次文档修订中实现上述升级代码。

@@ -20,6 +20,8 @@ from yuxi.config import config
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """FastAPI lifespan事件管理器"""
+    company_due_diligence_mysql = None
+
     # 初始化数据库连接
     try:
         pg_manager.initialize()
@@ -90,6 +92,15 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Failed to initialize knowledge base manager: {e}")
 
+        try:
+            from yuxi.company_due_diligence.mysql import company_due_diligence_mysql
+
+            health = await company_due_diligence_mysql.health()
+            if health.configured and not health.reachable:
+                logger.warning("企业尽调 MySQL 已配置但当前不可连接")
+        except Exception as e:
+            logger.error(f"企业尽调 MySQL 初始化失败: {type(e).__name__}")
+
     # 预热 Redis（run 队列）
     try:
         redis = await get_redis_client()
@@ -130,4 +141,6 @@ async def lifespan(app: FastAPI):
     shutdown_sandbox_provider()
     await close_queue_clients()
     close_shared_neo4j_connection()
+    if company_due_diligence_mysql is not None:
+        await company_due_diligence_mysql.close()
     await pg_manager.close()

@@ -4,7 +4,9 @@ import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { GithubOutlined } from '@ant-design/icons-vue'
 import {
   BarChart3,
+  Building2,
   ClipboardList,
+  FlaskConical,
   LibraryBig,
   Box,
   FolderKanban,
@@ -155,6 +157,21 @@ const mainList = computed(() => {
     icon: LibraryBig,
     activeIcon: LibraryBig
   })
+
+  if (userStore.isAdmin) {
+    items.push({
+      name: '企业尽调',
+      path: '/company-due-diligence',
+      icon: Building2,
+      activeIcon: Building2
+    })
+    items.push({
+      name: '尽调评测',
+      path: '/company-due-diligence-evaluations',
+      icon: FlaskConical,
+      activeIcon: FlaskConical
+    })
+  }
 
   if (userStore.isSuperAdmin) {
     items.push({

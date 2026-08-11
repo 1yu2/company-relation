@@ -49,6 +49,7 @@ export default defineConfig({
           { text: '智能体评估', link: '/agents/agent-evaluation' },
           { text: '企业尽调智能体', link: '/agents/company-due-diligence-system' },
           { text: '企业尽调实现逐字稿', link: '/agents/company-due-diligence-implementation-guide' },
+          { text: '企业尽调全链路逐字稿', link: '/agents/company-due-diligence-end-to-end-script' },
           { text: '企业关系图谱评测', link: '/agents/company-relation-evaluation' },
           { text: '沙盒架构与设计', link: '/agents/sandbox-architecture' },
           { text: 'MCP 集成', link: '/agents/mcp-integration' },

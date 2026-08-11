@@ -1,0 +1,27 @@
+{
+  "dataset_id": "guangdong-development-smoke-v1",
+  "name": "广东企业尽调开发烟测",
+  "version": "1.0.0",
+  "source_kind": "guangdong_enterprise",
+  "business_as_of": "2026-08-10",
+  "created_at": "2026-08-10T00:00:00Z",
+  "description": "仅用于验证拒答链路和评测基础设施，不属于人工 Golden，不进入严格发布门禁。",
+  "samples": [
+    {
+      "sample_id": "unknown-company-refusal",
+      "sample_type": "qa",
+      "domain": "entity_resolution",
+      "review_status": "source_derived_unreviewed",
+      "qa_request": {
+        "company_ref": {
+          "name": "__企业尽调评测不存在企业__"
+        },
+        "question": "该企业的注册资本是多少？"
+      },
+      "expected": {
+        "refused": true
+      },
+      "reviewer_note": "稳定的不存在企业标识，仅验证拒答和评测任务基础设施。"
+    }
+  ]
+}

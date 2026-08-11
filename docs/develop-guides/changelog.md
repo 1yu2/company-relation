@@ -6,7 +6,15 @@
 
 ## v0.7.2 (current)
 
-- 补充企业尽调智能体总体方案、数据库审计和实现逐字稿：明确广东企业 MySQL 只读事实主库、Neo4j/Milvus 可重建投影与 AkShare 补充边界，拆分只读接入、问答、多跳、报告、质量/性能评测及前端工作台的 12 个串并行任务和验收口径。
+- 新增企业尽调数据基础与结构化查询：安全解析本地 `mysql+aiomysql` 配置并强制只读；冻结统一 DTO、来源键和企业解析，提供 17 类参数化查询、分页、时间范围、JSON 出资/投资人解析及财务覆盖警告。
+- 新增企业尽调 Neo4j 可重建投影：MySQL 游标分批生成 SQLite checksum 快照，按独立版本幂等写入并校验后切换；提供 Tasker 管理接口、统计、删除重建及最多三跳高置信度路径服务。
+- 新增企业尽调文本证据索引：六类 MySQL 文本经去重分块写入版本化 Milvus，并归档至 MinIO；查询强制按企业、类型和日期过滤并校验来源，支持 Tasker、统计、幂等发布和删除重建。
+- 新增企业尽调统一问答：确定性白名单计划组合 MySQL、Neo4j 和 Milvus，支持身份拒答、最多三跳、来源完整性检查和无需 LLM 的引用式模板答案；无激活图投影时明确降级为来源不可用。
+- 新增企业尽调报告任务：十二章节并行聚合并锁定派生版本，复用 Tasker/PostgreSQL 进度与取消，MinIO 输出可校验 JSON/Markdown，支持列表、详情、章节重试和下载。
+- 新增企业尽调质量与性能评测：人工 Golden 强制复核人、时间、说明和冻结 checksum，输出逐题差异、分组指标与三种质量报告；提供六类性能场景、分位数、阶段耗时和连接池门禁。
+- 新增企业尽调查询/报告与评测两个管理员工作台：支持企业确认、事实/路径/证据、报告任务、质量错误筛选、性能运行对比和导出，统一复用前端 API 与任务轮询。
+- 新增企业尽调发布门禁：串联 `137` 项后端回归、临时容器管理员 E2E、AkShare 120 题、敏感审计、质量/性能和前端构建；自动门禁与管理员 E2E 已通过，仅缺少冻结人工 Golden，在线 LLM 单列限制。
+- 调整企业尽调智能体方案与 12 个任务口径：模块归入 `CompanyDueDiligenceAgent`，用户只提供企业上下文和调查要求；查询、图路径、证据与报告作为内部工具，统一意图、Claim Ledger、动态输出和输入输出一致性评测列为后续升级。
 - 新增企业股权关联图谱与可重复评测链路：公开数据快照可校验并导入 Neo4j，提供带来源证据的自然语言查询 API，对同一冻结题库执行 TF-IDF 向量基线、确定性 GraphRAG 与 Cypher 对照，输出逐题和汇总报告、性能探针及回归门禁。
 - 精简知识库文档内容接口响应：`GET /api/knowledge/databases/{kb_id}/documents/{doc_id}/content` 不再返回分块内部的实体 ID 与抽取结果，避免向文档预览请求传输仅供知识图谱构建使用的数据。
 - 收敛消息型 AgentRun 提交：Web Chat 与 Agent Call/Eval 共用 `run_submission_service.submit_run_command`，Call/Eval 拆为独立 Router；Request/Run 固化 `source/channel/external_id/origin_metadata` 来源快照，Eval 评估上下文继续透传到 worker 与 Langfuse，保留现有接口与响应兼容性，Resume、Subagent 生命周期不变。

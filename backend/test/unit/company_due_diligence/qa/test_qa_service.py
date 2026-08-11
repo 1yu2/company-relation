@@ -1,0 +1,276 @@
+"""企业尽调统一问答装配与拒答单元测试。"""
+
+from datetime import UTC, datetime
+
+import pytest
+
+from yuxi.company_due_diligence.models import (
+    CompanyResolutionResult,
+    ConfidenceLevel,
+    DataQuality,
+    Entity,
+    EntityType,
+    Fact,
+    LatencyBreakdown,
+    MatchMethod,
+    Pagination,
+    ResolutionStatus,
+    Relation,
+    ResolvedCompany,
+    Source,
+    SourceStatus,
+    StructuredQueryResult,
+    StructuredQueryType,
+    Path,
+    build_source_id,
+)
+from yuxi.company_due_diligence.graph.schema import GraphPathResult
+from yuxi.company_due_diligence.qa.graph import QAWorkflowResult
+from yuxi.company_due_diligence.qa.models import (
+    CompanyQuestionRequest,
+    QueryStep,
+    QueryStepStatus,
+)
+from yuxi.company_due_diligence.qa.service import CompanyQuestionService, SourceIntegrityError
+
+pytestmark = pytest.mark.asyncio
+
+
+def _company() -> ResolvedCompany:
+    """构造带事实主库来源的标准企业身份。"""
+    source_id = build_source_id("t_enterprise", "eid-1")
+    return ResolvedCompany(
+        eid="eid-1",
+        name="示例企业",
+        normalized_name="示例企业",
+        credit_code="credit-1",
+        stock_code="000001.SZ",
+        stock_abbreviation="示例",
+        match_method=MatchMethod.EID,
+        confidence=ConfidenceLevel.HIGH,
+        source_ids=[source_id],
+    )
+
+
+def _resolution(status: ResolutionStatus = ResolutionStatus.RESOLVED) -> CompanyResolutionResult:
+    """构造成功或未找到的企业解析结果。"""
+    company = _company() if status == ResolutionStatus.RESOLVED else None
+    source_id = build_source_id("t_enterprise", "eid-1")
+    return CompanyResolutionResult(
+        status=status,
+        reference={"eid": "eid-1"},
+        company=company,
+        sources=(
+            [
+                Source(
+                    source_id=source_id,
+                    table="t_enterprise",
+                    record_key="eid-1",
+                    queried_at=datetime.now(UTC),
+                )
+            ]
+            if company
+            else []
+        ),
+        data_quality=DataQuality(),
+        latency=LatencyBreakdown(total_ms=1),
+    )
+
+
+class FakeResolver:
+    """返回固定企业解析状态。"""
+
+    def __init__(self, result) -> None:
+        self.result = result
+        self.calls = 0
+
+    async def resolve(self, _reference):
+        """记录解析调用并返回固定结果。"""
+        self.calls += 1
+        return self.result
+
+
+class FakeWorkflow:
+    """返回固定受控查询数据包。"""
+
+    def __init__(self, source_id: str, *, unavailable_graph: bool = False) -> None:
+        self.source_id = source_id
+        self.unavailable_graph = unavailable_graph
+        self.calls = 0
+
+    async def execute(self, **_kwargs):
+        """返回注册资本事实和可选图源不可用步骤。"""
+        self.calls += 1
+        structured = StructuredQueryResult(
+            query_type=StructuredQueryType.REGISTERED_CAPITAL,
+            eid="eid-1",
+            facts=[
+                Fact(
+                    fact_id="fact-1",
+                    subject_id="eid-1",
+                    fact_type="registered_capital",
+                    normalized_value=1000,
+                    display_value="1000 万元",
+                    source_id=self.source_id,
+                )
+            ],
+            sources=[
+                Source(
+                    source_id=self.source_id,
+                    table="t_enterprise",
+                    record_key="eid-1",
+                    queried_at=datetime.now(UTC),
+                )
+            ],
+            data_quality=DataQuality(),
+            pagination=Pagination(page=1, page_size=10, returned=1),
+            latency=LatencyBreakdown(mysql_ms=2, total_ms=2),
+        )
+        steps = [
+            QueryStep(
+                source="mysql",
+                operation="registered_capital",
+                status=QueryStepStatus.COMPLETE,
+                item_count=1,
+            )
+        ]
+        if self.unavailable_graph:
+            steps.append(
+                QueryStep(
+                    source="neo4j",
+                    operation="path_query",
+                    status=QueryStepStatus.UNAVAILABLE,
+                    message="Neo4j 关系投影不可用",
+                )
+            )
+        return QAWorkflowResult(structured=[structured], graph=None, evidence=None, steps=steps)
+
+
+class GraphWorkflow:
+    """返回固定两跳共同股东路径。"""
+
+    async def execute(self, **_kwargs):
+        """构造带方向、置信度和事实主库来源的图路径。"""
+        source_id = build_source_id("t_partners_alls", "partner-1")
+        company = Entity(entity_id="eid-1", entity_type=EntityType.COMPANY, name="示例企业")
+        shareholder = Entity(entity_id="shareholder-1", entity_type=EntityType.SHAREHOLDER, name="示例股东")
+        target = Entity(entity_id="eid-2", entity_type=EntityType.COMPANY, name="目标企业")
+        first = Relation(
+            relation_id="relation-1",
+            source_entity_id="shareholder-1",
+            target_entity_id="eid-1",
+            relation_type="HOLDS",
+            properties={"source_table": "t_partners_alls", "source_record_key": "partner-1"},
+            confidence=ConfidenceLevel.HIGH,
+            source_ids=[source_id],
+        )
+        second = Relation(
+            relation_id="relation-2",
+            source_entity_id="shareholder-1",
+            target_entity_id="eid-2",
+            relation_type="HOLDS",
+            properties={"source_table": "t_partners_alls", "source_record_key": "partner-1"},
+            confidence=ConfidenceLevel.HIGH,
+            source_ids=[source_id],
+        )
+        path = Path(
+            path_id="path-1",
+            nodes=[company, shareholder, target],
+            edges=[first, second],
+            hop_count=2,
+            confidence=ConfidenceLevel.HIGH,
+            source_ids=[source_id],
+        )
+        graph = GraphPathResult(
+            projection_version="cdd-test",
+            paths=[path],
+            data_quality=DataQuality(minimum_confidence=ConfidenceLevel.HIGH),
+            latency=LatencyBreakdown(neo4j_ms=3, total_ms=3),
+        )
+        return QAWorkflowResult(
+            structured=[],
+            graph=graph,
+            evidence=None,
+            steps=[
+                QueryStep(
+                    source="neo4j",
+                    operation="path_query",
+                    status=QueryStepStatus.COMPLETE,
+                    item_count=1,
+                )
+            ],
+        )
+
+
+async def test_unresolved_company_stops_before_downstream_query():
+    """企业不唯一时必须拒答且不执行任何底层查询。"""
+    resolver = FakeResolver(_resolution(ResolutionStatus.NOT_FOUND))
+    workflow = FakeWorkflow(build_source_id("t_enterprise", "eid-1"))
+    service = CompanyQuestionService(resolver=resolver, workflow=workflow)
+
+    result = await service.query(CompanyQuestionRequest(company_ref={"eid": "eid-1"}, question="注册资本？"))
+
+    assert result.resolution_status == ResolutionStatus.NOT_FOUND
+    assert workflow.calls == 0
+    assert "未执行后续查询" in result.answer
+
+
+async def test_template_answer_cites_every_fact_source_and_keeps_latency():
+    """LLM 不可用时模板答案仍应引用事实来源并返回分段耗时。"""
+    source_id = build_source_id("t_enterprise", "eid-1")
+    service = CompanyQuestionService(
+        resolver=FakeResolver(_resolution()),
+        workflow=FakeWorkflow(source_id),
+    )
+
+    result = await service.query(CompanyQuestionRequest(company_ref={"eid": "eid-1"}, question="注册资本？"))
+
+    assert result.resolution_status == ResolutionStatus.RESOLVED
+    assert result.facts[0].source_id == source_id
+    assert f"[{source_id}]" in result.answer
+    assert result.latency.mysql_ms == 2
+    assert result.latency.llm_ms == 0
+    assert result.latency.total_ms >= 0
+
+
+async def test_partial_source_failure_is_distinct_from_no_data():
+    """有 MySQL 事实但 Neo4j 不可用时应返回 partial。"""
+    source_id = build_source_id("t_enterprise", "eid-1")
+    service = CompanyQuestionService(
+        resolver=FakeResolver(_resolution()),
+        workflow=FakeWorkflow(source_id, unavailable_graph=True),
+    )
+
+    result = await service.query(CompanyQuestionRequest(company_ref={"eid": "eid-1"}, question="注册资本和关联关系？"))
+
+    assert result.data_quality.source_status == SourceStatus.PARTIAL
+    assert result.facts
+    assert any("Neo4j" in warning for warning in result.data_quality.warnings)
+
+
+async def test_missing_source_is_rejected():
+    """事实引用未登记来源时不得进入最终回答。"""
+    service = CompanyQuestionService(
+        resolver=FakeResolver(_resolution()),
+        workflow=FakeWorkflow("source:missing"),
+    )
+
+    with pytest.raises(SourceIntegrityError):
+        await service.query(CompanyQuestionRequest(company_ref={"eid": "eid-1"}, question="注册资本？"))
+
+
+async def test_multi_hop_response_keeps_nodes_edge_direction_and_source():
+    """多跳问题应返回完整节点、边方向、跳数、置信度和来源。"""
+    service = CompanyQuestionService(
+        resolver=FakeResolver(_resolution()),
+        workflow=GraphWorkflow(),
+    )
+
+    result = await service.query(CompanyQuestionRequest(company_ref={"eid": "eid-1"}, question="企业有哪些关联路径？"))
+
+    assert result.paths[0].hop_count == 2
+    assert [edge.source_entity_id for edge in result.paths[0].edges] == ["shareholder-1", "shareholder-1"]
+    assert [edge.target_entity_id for edge in result.paths[0].edges] == ["eid-1", "eid-2"]
+    assert result.data_quality.minimum_confidence == ConfidenceLevel.HIGH
+    assert build_source_id("t_partners_alls", "partner-1") in {source.source_id for source in result.sources}
+    assert result.projection_versions == {"neo4j": "cdd-test"}
