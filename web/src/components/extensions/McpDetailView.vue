@@ -9,7 +9,7 @@
         <span>返回</span>
       </button>
       <div class="detail-title-area">
-        <span class="detail-icon">{{ server?.icon || '🔌' }}</span>
+        <span class="detail-icon">{{ server?.icon || '🐟' }}</span>
         <div class="detail-title-text">
           <h2>{{ server?.name || name }}</h2>
           <span class="detail-subtitle">{{ server?.transport || '' }}</span>
@@ -99,7 +99,7 @@
                         <a-form-item label="图标" class="form-item">
                           <a-input
                             v-model:value="editForm.icon"
-                            placeholder="输入 emoji，如 🧠"
+                            placeholder="输入 emoji，如 🐟"
                             :maxlength="2"
                           />
                         </a-form-item>

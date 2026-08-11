@@ -6,6 +6,7 @@
 
 ## v0.7.2 (current)
 
+- 品牌改造：用户可见的 "Yuxi/语析" 统一改为 "la-platform"（系统信息接口、发现接口、内置 Chatbot 提示词、CLI 授权凭据名、登录页与布局兜底品牌名、知识库类型标签），Logo 更换为 🐟 emoji SVG favicon，主题色由青蓝绿色阶改为浅紫色阶（`--main-700` 为 #7c6aef），深色模式同步反转为主色紫色阶；替换前端默认头像、登录背景与 Agent 占位图为浅紫渐变 + 🐟 主题，文件夹 SVG 图标主色改为 #7c6aef，MCP 默认图标与 placeholder 改为 🐟；清理 GraphCanvas、图表调色板与 TodoListTool 中残留的青色硬编码。移除前端指向默认 GitHub 仓库的 Star 入口、star 徽章卡片、GitHub 图标与实时 stars 统计及各处文档外链。Python 包名、localStorage key 等内部标识保持不变。
 - 新增企业尽调数据基础与结构化查询：安全解析本地 `mysql+aiomysql` 配置并强制只读；冻结统一 DTO、来源键和企业解析，提供 17 类参数化查询、分页、时间范围、JSON 出资/投资人解析及财务覆盖警告。
 - 新增企业尽调 Neo4j 可重建投影：MySQL 游标分批生成 SQLite checksum 快照，按独立版本幂等写入并校验后切换；提供 Tasker 管理接口、统计、删除重建及最多三跳高置信度路径服务。
 - 新增企业尽调文本证据索引：六类 MySQL 文本经去重分块写入版本化 Milvus，并归档至 MinIO；查询强制按企业、类型和日期过滤并校验来源，支持 Tasker、统计、幂等发布和删除重建。

@@ -1,27 +1,27 @@
 /* 深色模式 */
 :root.dark {
-  --main-1000: #e1f6fb;
-  --main-900: #c4eaf5;
-  --main-800: #a3d8e8;
-  --main-700: #82c3d6;
-  --main-600: #5faec2;
-  --main-500: #4a9fb8;
-  --main-400: #3996ae;
-  --main-300: #24839a;
-  --main-200: #046a82;
-  --main-100: #035065;
-  --main-50: #023944;
-  --main-40: #01151f;
-  --main-30: #010d14;
-  --main-20: #010a0f;
-  --main-10: #00070a;
-  --main-5: #000405;
-  --main-1: #000102;
+  --main-1000: #f3f1fe;
+  --main-900: #e3dcfd;
+  --main-800: #c7bafb;
+  --main-700: #a99bf9;
+  --main-600: #8f7ff5;
+  --main-500: #7c6aef;
+  --main-400: #6a57d6;
+  --main-300: #5543b4;
+  --main-200: #3f318f;
+  --main-100: #2e236b;
+  --main-50: #1f164a;
+  --main-40: #171034;
+  --main-30: #120c29;
+  --main-20: #0d091e;
+  --main-10: #080513;
+  --main-5: #04030a;
+  --main-1: #020105;
   --main-0: #000000;
 
   /* 保留原有的 main 变量 */
-  --main-color: #4a9fb8;
-  --main-bright: #5faec2;
+  --main-color: #7c6aef;
+  --main-bright: #a99bf9;
 
   --gray-10000: #fafafa;
   --gray-2000: #f8fafa;
@@ -77,11 +77,11 @@
   --color-accent-900: #5cdbd3; /* 强调色-最浅 */
 
   --chart-palette-1: var(--main-300);
-  --chart-palette-2: #3ea896;
+  --chart-palette-2: var(--main-500);
   --chart-palette-3: #d6ad37;
   --chart-palette-4: #cf6666;
-  --chart-palette-5: #8672b4;
-  --chart-palette-6: #529ab8;
+  --chart-palette-5: #a394f7;
+  --chart-palette-6: var(--main-700);
   --chart-palette-7: #d48242;
   --chart-palette-8: #82b354;
   --chart-palette-9: #c46e9e;

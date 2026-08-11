@@ -35,7 +35,7 @@
         </a-col>
         <a-col :span="12">
           <a-form-item label="图标" class="form-item">
-            <a-input v-model:value="form.icon" placeholder="输入 emoji，如 🧠" :maxlength="2" />
+            <a-input v-model:value="form.icon" placeholder="输入 emoji，如 🐟" :maxlength="2" />
           </a-form-item>
         </a-col>
       </a-row>

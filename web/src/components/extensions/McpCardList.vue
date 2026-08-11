@@ -36,7 +36,7 @@
           @click="handleCardClick(server)"
         >
           <template #icon>
-            <span class="info-card-emoji-icon">{{ server.icon || '🔌' }}</span>
+            <span class="info-card-emoji-icon">{{ server.icon || '🐟' }}</span>
           </template>
           <template #action>
             <button
@@ -64,7 +64,7 @@
           @click="openBasicInfo(server)"
         >
           <template #icon>
-            <span class="info-card-emoji-icon">{{ server.icon || '🔌' }}</span>
+            <span class="info-card-emoji-icon">{{ server.icon || '🐟' }}</span>
           </template>
           <template #action>
             <button
@@ -92,7 +92,7 @@
       <div v-if="previewServer" class="mcp-basic-info-panel">
         <div class="mcp-basic-info-header">
           <div class="mcp-basic-info-icon">
-            <span>{{ previewServer.icon || '🔌' }}</span>
+            <span>{{ previewServer.icon || '🐟' }}</span>
           </div>
           <div class="mcp-basic-info-title-area">
             <div class="mcp-basic-info-title">

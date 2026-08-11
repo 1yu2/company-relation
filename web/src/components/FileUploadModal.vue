@@ -2,9 +2,6 @@
   <a-modal v-model:open="visible" title="添加文件" width="800px" @cancel="handleCancel">
     <template #footer>
       <div class="footer-container">
-        <a-button type="link" class="help-link-btn" @click="openDocLink">
-          <CircleHelp :size="14" /> 文档处理说明
-        </a-button>
         <div class="footer-buttons">
           <a-button key="back" @click="handleCancel">取消</a-button>
           <a-button
@@ -352,7 +349,6 @@ import {
   FolderOpen,
   ArrowLeft,
   RotateCw,
-  CircleHelp,
   Info,
   Download,
   Trash2,
@@ -1214,14 +1210,6 @@ const getAuthHeaders = () => {
   return userStore.getAuthHeaders()
 }
 
-const openDocLink = () => {
-  window.open(
-    'https://xerrors.github.io/Yuxi/advanced/document-processing.html',
-    '_blank',
-    'noopener'
-  )
-}
-
 const chunkData = async () => {
   if (!kbId.value) {
     message.error('请先选择知识库')
@@ -1471,19 +1459,6 @@ const chunkData = async () => {
     font-size: 13px;
     color: var(--gray-600);
     font-weight: 500;
-  }
-}
-
-.help-link-btn {
-  color: var(--gray-600);
-  font-size: 13px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0;
-
-  &:hover {
-    color: var(--main-color);
   }
 }
 
