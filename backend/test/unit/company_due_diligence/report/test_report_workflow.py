@@ -108,3 +108,5 @@ async def test_single_section_failure_keeps_successful_sections_and_marks_partia
     assert report.sections[ReportSection.RELATIONS.value].status == ReportSectionStatus.FAILED
     assert report.sections[ReportSection.DATA_QUALITY.value].status == ReportSectionStatus.PARTIAL
     assert report.sources[0].source_id == company.source_ids[0]
+    assert report.claim_ledger.validated is True
+    assert report.claim_ledger.claims[0].result_id == "fact-1"

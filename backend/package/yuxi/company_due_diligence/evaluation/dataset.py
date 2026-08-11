@@ -11,6 +11,14 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, JsonValue, model_validator
 
+from yuxi.company_due_diligence.agent.models import (
+    CompanyInvestigationRequest,
+    DeliveryMethod,
+    InvestigationDepth,
+    InvestigationTopic,
+    PresentationType,
+    TimeScope,
+)
 from yuxi.company_due_diligence.qa.models import CompanyQuestionRequest
 from yuxi.company_due_diligence.report.models import DueDiligenceReportRequest, ReportSection
 
@@ -34,6 +42,7 @@ class EvaluationSampleType(StrEnum):
 
     QA = "qa"
     REPORT = "report"
+    INVESTIGATION = "investigation"
 
 
 class ExpectedFact(BaseModel):
@@ -79,7 +88,19 @@ class GoldenExpected(BaseModel):
     paths: list[ExpectedPath] | None = None
     evidence_source_ids: list[str] | None = None
     required_report_sections: list[ReportSection] | None = None
+    forbidden_report_sections: list[ReportSection] | None = None
     expect_stale_declaration: bool | None = None
+    entity_eids: list[str] | None = None
+    topics: list[InvestigationTopic] | None = None
+    time_scope: TimeScope | None = None
+    depth: InvestigationDepth | None = None
+    presentation: PresentationType | None = None
+    delivery: DeliveryMethod | None = None
+    required_tools: list[str] | None = None
+    forbidden_tools: list[str] | None = None
+    claim_ledger_consistent: bool | None = None
+    required_topics: list[InvestigationTopic] | None = None
+    forbidden_topics: list[InvestigationTopic] | None = None
 
     @model_validator(mode="after")
     def require_metric_target(self):
@@ -93,7 +114,19 @@ class GoldenExpected(BaseModel):
                 self.paths,
                 self.evidence_source_ids,
                 self.required_report_sections,
+                self.forbidden_report_sections,
                 self.expect_stale_declaration,
+                self.entity_eids,
+                self.topics,
+                self.time_scope,
+                self.depth,
+                self.presentation,
+                self.delivery,
+                self.required_tools,
+                self.forbidden_tools,
+                self.claim_ledger_consistent,
+                self.required_topics,
+                self.forbidden_topics,
             )
         ):
             raise ValueError("Golden 至少需要一个严格评测目标")
@@ -109,6 +142,7 @@ class EvaluationSample(BaseModel):
     review_status: ReviewStatus
     qa_request: CompanyQuestionRequest | None = None
     report_request: DueDiligenceReportRequest | None = None
+    investigation_request: CompanyInvestigationRequest | None = None
     expected: GoldenExpected
     reviewer_note: str | None = Field(default=None, max_length=2000)
     reviewed_by: str | None = Field(default=None, min_length=1, max_length=128)
@@ -117,12 +151,19 @@ class EvaluationSample(BaseModel):
     @model_validator(mode="after")
     def validate_request_type(self):
         """确保样本类型和请求对象严格一一对应。"""
-        if self.sample_type == EvaluationSampleType.QA and (self.qa_request is None or self.report_request is not None):
+        requests = [self.qa_request, self.report_request, self.investigation_request]
+        if self.sample_type == EvaluationSampleType.QA and (
+            self.qa_request is None or any(request is not None for request in requests[1:])
+        ):
             raise ValueError("qa 样本必须且只能提供 qa_request")
         if self.sample_type == EvaluationSampleType.REPORT and (
-            self.report_request is None or self.qa_request is not None
+            self.report_request is None or self.qa_request is not None or self.investigation_request is not None
         ):
             raise ValueError("report 样本必须且只能提供 report_request")
+        if self.sample_type == EvaluationSampleType.INVESTIGATION and (
+            self.investigation_request is None or self.qa_request is not None or self.report_request is not None
+        ):
+            raise ValueError("investigation 样本必须且只能提供 investigation_request")
         if self.review_status == ReviewStatus.HUMAN_VERIFIED:
             if self.reviewed_by is None or self.reviewed_at is None:
                 raise ValueError("human_verified 样本必须记录 reviewed_by 和 reviewed_at")

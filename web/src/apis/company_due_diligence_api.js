@@ -21,6 +21,10 @@ export const companyDueDiligenceApi = {
     return apiAdminPost(`${BASE_URL}/query`, payload)
   },
 
+  investigateCompany(payload) {
+    return apiAdminPost(`${BASE_URL}/investigations`, payload)
+  },
+
   createReport(payload) {
     return apiAdminPost(`${BASE_URL}/reports`, payload)
   },
@@ -97,7 +101,10 @@ export const companyDueDiligenceApi = {
   },
 
   cancelPerformanceRun(runId) {
-    return apiAdminPost(`${EVALUATION_URL}/performance-runs/${encodeURIComponent(runId)}/cancel`, {})
+    return apiAdminPost(
+      `${EVALUATION_URL}/performance-runs/${encodeURIComponent(runId)}/cancel`,
+      {}
+    )
   },
 
   downloadPerformanceRun(runId, format) {

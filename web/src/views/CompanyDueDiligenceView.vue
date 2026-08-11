@@ -8,21 +8,23 @@ import CompanyResolver from '@/components/company-due-diligence/CompanyResolver.
 import QueryResult from '@/components/company-due-diligence/QueryResult.vue'
 import QuestionPanel from '@/components/company-due-diligence/QuestionPanel.vue'
 import ReportWorkspace from '@/components/company-due-diligence/ReportWorkspace.vue'
-import { buildQuestionPayload, describeApiError } from '@/utils/companyDueDiligence'
+import { buildInvestigationPayload, describeApiError } from '@/utils/companyDueDiligence'
 
 const company = ref(null)
-const queryResult = ref(null)
+const investigationResult = ref(null)
 const querying = ref(false)
 
 const handleResolved = (resolvedCompany) => {
   company.value = resolvedCompany
-  queryResult.value = null
+  investigationResult.value = null
 }
 
-const queryCompany = async (form) => {
+const investigateCompany = async (form) => {
   querying.value = true
   try {
-    queryResult.value = await companyDueDiligenceApi.queryCompany(buildQuestionPayload(company.value, form))
+    investigationResult.value = await companyDueDiligenceApi.investigateCompany(
+      buildInvestigationPayload(company.value, form)
+    )
   } catch (error) {
     message.error(describeApiError(error))
   } finally {
@@ -37,7 +39,7 @@ const queryCompany = async (form) => {
       <div class="hero-icon"><Building2 size="28" /></div>
       <div>
         <h1>企业尽调工作台</h1>
-        <p>基于只读企业主库、关系投影与文本证据，完成可追溯问答和完整报告。</p>
+        <p>确认企业后直接描述调查要求，系统自动拆解意图、调用工具并选择输出形式。</p>
       </div>
     </header>
 
@@ -47,21 +49,27 @@ const queryCompany = async (form) => {
       </aside>
 
       <section class="workspace-card query-pane">
-        <div class="panel-heading"><SearchCheck size="18" /><h2>企业查询</h2></div>
-        <QuestionPanel :disabled="!company" :loading="querying" @submit="queryCompany" />
+        <div class="panel-heading">
+          <SearchCheck size="18" />
+          <h2>智能调查</h2>
+        </div>
+        <QuestionPanel :disabled="!company" :loading="querying" @submit="investigateCompany" />
       </section>
     </div>
 
     <section v-if="querying" class="workspace-card loading-card">
-      <a-spin size="large" tip="正在查询结构化事实、关系和证据…" />
+      <a-spin size="large" tip="正在理解意图并执行受控调查工具…" />
     </section>
-    <section v-else-if="queryResult" class="workspace-card">
-      <QueryResult :result="queryResult" />
+    <section v-else-if="investigationResult" class="workspace-card">
+      <QueryResult :result="investigationResult" />
     </section>
 
     <section class="workspace-card">
-      <div class="panel-heading"><FileStack size="18" /><h2>报告任务</h2></div>
-      <ReportWorkspace :company="company" />
+      <div class="panel-heading">
+        <FileStack size="18" />
+        <h2>报告任务</h2>
+      </div>
+      <ReportWorkspace :investigation="investigationResult" />
     </section>
   </main>
 </template>

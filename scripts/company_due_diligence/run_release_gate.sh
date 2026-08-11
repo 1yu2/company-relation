@@ -32,6 +32,7 @@ test_compose() {
 
 compose exec -T api uv run --no-sync pytest \
   test/unit/company_due_diligence \
+  test/unit/toolkits/test_company_due_diligence_tool.py \
   test/unit/routers/test_company_due_diligence_router.py \
   test/unit/routers/test_company_due_diligence_evaluation_router.py -q
 

@@ -5,6 +5,8 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from server.utils.auth_middleware import get_admin_user
+from yuxi.company_due_diligence.agent.models import CompanyInvestigationRequest, CompanyInvestigationResponse
+from yuxi.company_due_diligence.agent.service import company_due_diligence_agent
 from yuxi.company_due_diligence.evidence.indexer import EvidenceIndexUnavailableError
 from yuxi.company_due_diligence.evidence.models import (
     EvidenceIndexInfo,
@@ -93,6 +95,16 @@ async def query_company(
     """执行简单企业问答或最多三跳关系查询。"""
     del current_user
     return await company_question_service.query(request)
+
+
+@company_due_diligence_router.post("/investigations", response_model=CompanyInvestigationResponse)
+async def investigate_company(
+    request: CompanyInvestigationRequest,
+    current_user: User = Depends(get_admin_user),
+) -> CompanyInvestigationResponse:
+    """执行统一企业调查，并按意图返回同步结果或异步报告任务。"""
+    del current_user
+    return await company_due_diligence_agent.investigate(request, tasker=tasker)
 
 
 @company_due_diligence_router.post("/reports", status_code=status.HTTP_202_ACCEPTED)

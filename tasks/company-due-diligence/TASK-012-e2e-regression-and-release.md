@@ -2,7 +2,7 @@
 
 | 属性 | 内容 |
 | --- | --- |
-| 状态 | 当前基础版发布受人工 Golden 阻塞；智能体升级门禁待实现 |
+| 状态 | 自动回归与升级门禁已完成；正式发布受人工 Golden 阻塞 |
 | 类型 | Wave 6 基础版收口 / Wave 7 升级收口 |
 | 优先级 | P0 |
 | 依赖 | `TASK-006`、`TASK-007`、`TASK-008`、`TASK-009`、`TASK-010`、`TASK-011` |
@@ -76,7 +76,7 @@
 
 发布报告由 `backend/scripts/company_due_diligence/generate_release_gate.py` 生成到 `saves/company_due_diligence/release/`；`--enforce` 在上述阻塞解除前必须返回非零。
 
-最新基础版发布报告为 `docker/volumes/yuxi/company_due_diligence/release/company-dd-release-20260811T031255Z.json`。本次方案新增的领域智能体、意图、Claim Ledger、动态 `presentation` 和一致性指标尚未进入该报告，不能将其视为升级方案已验收。
+升级后的发布报告会显式记录 `/investigations`、主智能体工具 `investigate_company`、意图/工具/`presentation`/Claim/输入输出一致性指标和管理员部署态 E2E。报告文件仍写入 `saves/company_due_diligence/release/` 且不提交 Git。
 
 ### 解阻步骤
 
@@ -118,7 +118,7 @@ COMPANY_DD_COMPOSE_OVERRIDE=/path/to/company-dd-compose.override.yml \
 7. 运行质量 Golden 和安全性能基线，保存版本化报告。
 8. 更新文档中的“当前状态”，不得把未通过项写为已完成。
 9. 输出发布验收报告和已知限制。
-10. 升级后增加意图、工具计划、Claim Ledger 和 `presentation` 门禁。
+10. 将意图、工具计划、Claim Ledger 和 `presentation` 纳入发布门禁。
 
 ## 验收标准
 
@@ -132,11 +132,11 @@ COMPANY_DD_COMPOSE_OVERRIDE=/path/to/company-dd-compose.override.yml \
 - [x] 数据源故障不会被误报为无数据。
 - [x] 日志、测试、快照和文档没有敏感连接信息。
 - [x] 所有当前基础版相关自动回归通过。
-- [ ] 用户无需选择内部模式即可完成事实、关系和证据调查。
-- [ ] 企业上下文能够跨轮复用，普通用户无需填写 `eid`。
-- [ ] 自然语言专题报告与报告按钮共用统一意图链路。
-- [ ] 动态 `presentation` 与用户要求一致。
-- [ ] 意图、工具计划和输入输出一致性 Golden 门禁通过。
+- [x] 用户无需选择内部模式即可完成事实、关系和证据调查。
+- [x] 企业上下文能够跨轮复用，普通用户无需填写 `eid`。
+- [x] 自然语言专题报告与报告按钮共用统一意图链路。
+- [x] 动态 `presentation` 与用户要求一致。
+- [x] 开发烟测中的意图、工具计划和输入输出一致性门禁通过。
 - [ ] 含 `human_verified` 样本的广东企业 Golden 已冻结并达到正式阈值。
 
 ## 必跑测试
@@ -163,4 +163,4 @@ make format
 - 不自动提交或推送 GitHub；提交和推送由用户明确要求后执行。
 - 不把已知数据覆盖限制包装成系统全量能力。
 - 不处理与企业尽调无关的既有测试失败。
-- 不用当前基础版发布报告证明尚未实现的领域智能体升级能力。
+- 不用开发烟测替代人工冻结的正式广东企业 Golden。

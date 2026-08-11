@@ -43,8 +43,13 @@ class CompanyQuestionService:
         self._planner = planner or question_planner
         self._workflow = workflow or QAWorkflow()
 
-    async def query(self, request: CompanyQuestionRequest) -> CompanyQuestionResponse:
-        """执行企业问答；身份不唯一时不调用任何下游查询。"""
+    async def query(
+        self,
+        request: CompanyQuestionRequest,
+        *,
+        plan: QueryPlan | None = None,
+    ) -> CompanyQuestionResponse:
+        """执行企业问答；可复用领域智能体已校验的受控计划。"""
         started_at = time.perf_counter()
         resolution = await self._resolver.resolve(request.company_ref)
         if resolution.status != ResolutionStatus.RESOLVED or resolution.company is None:
@@ -61,7 +66,7 @@ class CompanyQuestionService:
                     "目标企业无法唯一解析，未执行后续查询。",
                 )
 
-        plan = self._planner.plan(request.question)
+        plan = plan or self._planner.plan(request.question)
         workflow_result = await self._workflow.execute(
             eid=resolution.company.eid,
             target_eid=target_resolution.company.eid if target_resolution and target_resolution.company else None,

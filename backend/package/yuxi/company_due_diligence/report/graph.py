@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime
 
+from yuxi.company_due_diligence.agent.quality import ClaimValidationError, build_claim_ledger
 from yuxi.company_due_diligence.models import DataQuality, SourceStatus
 from yuxi.company_due_diligence.qa.models import CompanyQuestionRequest
 from yuxi.company_due_diligence.qa.service import CompanyQuestionService, company_question_service
@@ -115,6 +116,7 @@ class DueDiligenceReportWorkflow:
                 CompanyQuestionRequest(
                     company_ref={"eid": company.eid},
                     question=question,
+                    start_date=request.start_date,
                     as_of=request.as_of,
                     hop_limit=3,
                     top_k=20,
@@ -181,11 +183,34 @@ def _assemble_report(
     stale_fields = []
     conflicts = []
     business_dates: list[date] = []
+    facts = {}
+    relations = {}
+    paths = {}
+    evidence = {}
     for result in sections.values():
         if result.error:
             warnings.append(f"{result.section.value}：{result.error}")
         if result.query_result is None:
             continue
+        try:
+            build_claim_ledger(
+                facts=result.query_result.facts,
+                relations=result.query_result.relations,
+                paths=result.query_result.paths,
+                evidence=result.query_result.evidence,
+                sources=result.query_result.sources,
+            )
+        except ClaimValidationError:
+            result.status = ReportSectionStatus.FAILED
+            result.summary = "本章节来源校验失败，未输出未经验证事实。"
+            result.error = "ClaimValidationError"
+            result.query_result = None
+            warnings.append(f"{result.section.value}：ClaimValidationError")
+            continue
+        facts.update({item.fact_id: item for item in result.query_result.facts})
+        relations.update({item.relation_id: item for item in result.query_result.relations})
+        paths.update({item.path_id: item for item in result.query_result.paths})
+        evidence.update({item.evidence_id: item for item in result.query_result.evidence})
         sources.update({source.source_id: source for source in result.query_result.sources})
         quality = result.query_result.data_quality
         warnings.extend(quality.warnings)
@@ -213,6 +238,13 @@ def _assemble_report(
         if report_status == ReportStatus.PARTIAL
         else SourceStatus.AVAILABLE
     )
+    claim_ledger = build_claim_ledger(
+        facts=list(facts.values()),
+        relations=list(relations.values()),
+        paths=list(paths.values()),
+        evidence=list(evidence.values()),
+        sources=list(sources.values()),
+    )
     return DueDiligenceReport(
         report_id=report_id,
         status=report_status,
@@ -224,6 +256,7 @@ def _assemble_report(
         data_as_of=request.as_of or max(business_dates, default=None),
         sections=sections,
         sources=list(sources.values()),
+        claim_ledger=claim_ledger,
         data_quality=DataQuality(
             source_status=source_status,
             missing_fields=list(dict.fromkeys(missing_fields)),

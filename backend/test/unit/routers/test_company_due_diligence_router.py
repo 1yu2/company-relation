@@ -6,6 +6,14 @@ from httpx import ASGITransport, AsyncClient
 
 from server.routers.company_due_diligence_router import company_due_diligence_router
 from server.utils.auth_middleware import get_admin_user
+from yuxi.company_due_diligence.agent.models import (
+    CompanyInvestigationResponse,
+    InvestigationStatus,
+    Presentation,
+    PresentationType,
+    UnderstoodRequest,
+)
+from yuxi.company_due_diligence.agent.service import company_due_diligence_agent
 from yuxi.company_due_diligence.entity_resolution import entity_resolution_service
 from yuxi.company_due_diligence.evidence.models import EvidenceIndexInfo, EvidenceQueryResult
 from yuxi.company_due_diligence.evidence.query_service import evidence_query_service
@@ -145,6 +153,51 @@ async def test_company_routes_delegate_to_resolution_service(monkeypatch):
     assert structured_response.json()["query_type"] == StructuredQueryType.ENTERPRISE_PROFILE
     assert question_response.status_code == 200
     assert question_response.json()["resolution_status"] == ResolutionStatus.NOT_FOUND
+
+
+async def test_investigation_route_uses_unified_agent_contract(monkeypatch):
+    """统一调查路由应接收企业上下文和自然语言并返回动态展示契约。"""
+
+    async def override_admin():
+        """绕过持久化用户，仅验证路由装配。"""
+        return object()
+
+    async def fake_investigate(request, *, tasker):
+        """返回固定统一智能体响应。"""
+        assert request.company_context.name == "示例企业有限公司"
+        assert request.message == "股东有哪些？"
+        assert tasker is not None
+        return CompanyInvestigationResponse(
+            status=InvestigationStatus.COMPLETE,
+            understood_request=UnderstoodRequest(
+                topics=["shareholders"],
+                presentation=PresentationType.SUMMARY_WITH_LIST,
+                delivery="sync",
+                time_scope={"type": "latest_available"},
+                depth="standard",
+            ),
+            summary="返回股东列表。",
+            data_quality=DataQuality(),
+            presentation=Presentation(
+                type=PresentationType.SUMMARY_WITH_LIST,
+                components=["summary", "fact_table", "sources"],
+            ),
+        )
+
+    monkeypatch.setattr(company_due_diligence_agent, "investigate", fake_investigate)
+    app = FastAPI()
+    app.include_router(company_due_diligence_router, prefix="/api")
+    app.dependency_overrides[get_admin_user] = override_admin
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/company-due-diligence/investigations",
+            json={"company_context": {"name": "示例企业有限公司"}, "message": "股东有哪些？"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["presentation"]["type"] == "summary_with_list"
+    assert response.json()["claim_ledger"] == {"claims": [], "validated": True}
 
 
 async def test_graph_projection_routes_delegate_to_task_service(monkeypatch):

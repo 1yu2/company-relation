@@ -7,6 +7,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator
 
+from yuxi.company_due_diligence.agent.models import ClaimLedger
 from yuxi.company_due_diligence.models import CompanyReference, DataQuality, ResolvedCompany, Source
 from yuxi.company_due_diligence.qa.models import CompanyQuestionResponse
 
@@ -67,6 +68,7 @@ class DueDiligenceReportRequest(BaseModel):
         min_length=1,
         max_length=len(ReportSection),
     )
+    start_date: date | None = None
     as_of: date | None = None
     include_low_confidence: bool = False
     output_formats: list[ReportFormat] = Field(
@@ -80,6 +82,15 @@ class DueDiligenceReportRequest(BaseModel):
     def deduplicate_values(cls, value):
         """按请求顺序去重章节和输出格式。"""
         return list(dict.fromkeys(value))
+
+    @field_validator("as_of")
+    @classmethod
+    def validate_date_range(cls, value, info):
+        """拒绝早于开始日期的报告业务时点。"""
+        start_date = info.data.get("start_date")
+        if start_date and value and value < start_date:
+            raise ValueError("as_of 不能早于 start_date")
+        return value
 
 
 class ReportVersions(BaseModel):
@@ -125,5 +136,6 @@ class DueDiligenceReport(BaseModel):
     data_as_of: date | None = None
     sections: dict[str, ReportSectionResult]
     sources: list[Source] = Field(default_factory=list)
+    claim_ledger: ClaimLedger = Field(default_factory=ClaimLedger)
     data_quality: DataQuality
     artifacts: list[ReportArtifact] = Field(default_factory=list)

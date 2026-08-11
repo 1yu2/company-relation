@@ -2,13 +2,15 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  buildInvestigationPayload,
   buildCompanySearchUrl,
   companyRefsFromDataset,
   filterQualitySamples,
-  buildQuestionPayload,
   dataQualityItems,
   describeApiError,
+  FULL_REPORT_SHORTCUT,
   metricPercent,
+  presentationSections,
   REAL_DATABASE_CONFIRMATION,
   reportProgress,
   validatePerformanceForm,
@@ -22,23 +24,28 @@ test('company resolution states distinguish resolved ambiguous and not found', (
   assert.deepEqual(statusMeta('source_unavailable'), { label: '来源不可用', color: 'error' })
 })
 
-test('question payload keeps only backend contract fields', () => {
+test('investigation payload keeps company context and natural language contract', () => {
   assert.deepEqual(
-    buildQuestionPayload(
-      { eid: 'eid-1', name: '测试企业' },
+    buildInvestigationPayload(
+      { eid: 'eid-1', name: '测试企业', credit_code: 'credit-1' },
       {
-        question: ' 当前股东有哪些？ ',
+        message: ' 当前股东有哪些？ ',
+        startDate: '2023-08-10',
         asOf: '2026-08-10',
         hopLimit: 2,
         topK: 8,
-        includeLowConfidence: true,
-        mode: 'graph'
+        includeLowConfidence: true
       }
     ),
     {
-      company_ref: { eid: 'eid-1' },
-      question: '当前股东有哪些？',
-      mode: 'qa',
+      company_context: {
+        eid: 'eid-1',
+        name: '测试企业',
+        credit_code: 'credit-1',
+        stock_code: null
+      },
+      message: '当前股东有哪些？',
+      start_date: '2023-08-10',
       as_of: '2026-08-10',
       hop_limit: 2,
       top_k: 8,
@@ -47,18 +54,58 @@ test('question payload keeps only backend contract fields', () => {
   )
 })
 
-test('question payload rejects unresolved company and empty question', () => {
-  assert.throws(() => buildQuestionPayload(null, { question: '测试' }), /请先确认唯一企业/)
-  assert.throws(() => buildQuestionPayload({ eid: 'eid-1' }, { question: '   ' }), /请输入问题/)
+test('investigation payload supports report shortcut and rejects empty intent', () => {
+  assert.deepEqual(
+    buildInvestigationPayload(
+      { eid: 'eid-1', name: '测试企业' },
+      { shortcut: FULL_REPORT_SHORTCUT, hopLimit: 3, topK: 10 }
+    ),
+    {
+      company_context: { eid: 'eid-1', name: '测试企业', credit_code: null, stock_code: null },
+      shortcut: FULL_REPORT_SHORTCUT,
+      hop_limit: 3,
+      top_k: 10,
+      include_low_confidence: false
+    }
+  )
+  assert.throws(() => buildInvestigationPayload(null, { message: '测试' }), /请先确认唯一企业/)
+  assert.throws(
+    () => buildInvestigationPayload({ eid: 'eid-1' }, { message: '   ' }),
+    /请输入调查要求/
+  )
+})
+
+test('presentation routes only relevant result components', () => {
+  assert.deepEqual(
+    presentationSections({
+      presentation: {
+        type: 'relation_result',
+        components: ['summary', 'paths', 'relations', 'sources']
+      }
+    }),
+    {
+      clarification: false,
+      report: false,
+      facts: false,
+      relations: true,
+      evidence: false,
+      quality: true,
+      sources: true
+    }
+  )
+  assert.equal(presentationSections({ presentation: { type: 'topic_report' } }).report, true)
 })
 
 test('report progress distinguishes active terminal and failed states', () => {
-  assert.deepEqual(reportProgress({ task: { status: 'running', progress: 48, message: '运行中' } }), {
-    status: 'running',
-    progress: 48,
-    message: '运行中',
-    terminal: false
-  })
+  assert.deepEqual(
+    reportProgress({ task: { status: 'running', progress: 48, message: '运行中' } }),
+    {
+      status: 'running',
+      progress: 48,
+      message: '运行中',
+      terminal: false
+    }
+  )
   assert.equal(reportProgress({ task: { status: 'success', progress: 100 } }).terminal, true)
   assert.equal(reportProgress({ task: { status: 'cancelled' } }).terminal, true)
 })
@@ -139,7 +186,12 @@ test('performance form enforces safe limits and real database confirmation', () 
 
 test('quality result filters errors and formats backend metric rates', () => {
   const samples = [
-    { sample_id: 'pass', domain: 'identity', review_status: 'human_verified', metrics: { strict_passed: true } },
+    {
+      sample_id: 'pass',
+      domain: 'identity',
+      review_status: 'human_verified',
+      metrics: { strict_passed: true }
+    },
     {
       sample_id: 'fail',
       domain: 'graph',
@@ -147,7 +199,10 @@ test('quality result filters errors and formats backend metric rates', () => {
       metrics: { strict_passed: false, first_error: 'graph_projection' }
     }
   ]
-  assert.deepEqual(filterQualitySamples(samples, { errorOnly: true }).map((item) => item.sample_id), ['fail'])
+  assert.deepEqual(
+    filterQualitySamples(samples, { errorOnly: true }).map((item) => item.sample_id),
+    ['fail']
+  )
   assert.deepEqual(
     filterQualitySamples(samples, { firstError: 'graph_projection' }).map((item) => item.sample_id),
     ['fail']

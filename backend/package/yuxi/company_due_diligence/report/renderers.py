@@ -43,6 +43,7 @@ def render_report_markdown(report: DueDiligenceReport) -> bytes:
 
     lines.extend(["## 数据质量声明", ""])
     lines.append(f"- 来源状态：`{report.data_quality.source_status.value}`")
+    lines.append(f"- Claim Ledger：已校验 {len(report.claim_ledger.claims)} 条结果声明")
     for warning in report.data_quality.warnings:
         lines.append(f"- 警告：{warning}")
     for conflict in report.data_quality.conflicts:

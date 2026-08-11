@@ -2,7 +2,7 @@
 
 | 属性 | 内容 |
 | --- | --- |
-| 状态 | 基础版框架完成；人工 Golden 阻塞，智能体升级指标待实现 |
+| 状态 | 自动评测升级已完成；正式门禁受人工 Golden 阻塞 |
 | 类型 | Wave 5 基础任务 / Wave 7 升级任务 |
 | 优先级 | P0 |
 | 依赖 | `TASK-006`、`TASK-007` |
@@ -143,9 +143,9 @@ GET  /api/company-due-diligence/evaluations/runs/{run_id}/download?format=json|j
 - [x] 支持取消运行和断点查看已完成样本。
 - [x] 支持 JSON、JSONL 和 Markdown 导出。
 - [x] 30 家 AkShare 基线与广东企业新 Golden 分开报告。
-- [ ] Golden 可以标注企业上下文、统一意图、必要/禁止工具和 `presentation`。
-- [ ] 评测器可以计算意图理解、工具计划和输入输出一致性指标。
-- [ ] 专题报告遗漏主题或加入无关章节时严格判失败。
+- [x] Golden 可以标注企业上下文、统一意图、必要/禁止工具和 `presentation`。
+- [x] 评测器可以计算意图理解、工具计划和输入输出一致性指标。
+- [x] 专题报告遗漏主题或加入无关章节时严格判失败。
 - [ ] LLM 接入后可以区分意图错误、Claim 错误和表达错误。
 
 ## 当前验收记录
@@ -156,7 +156,9 @@ GET  /api/company-due-diligence/evaluations/runs/{run_id}/download?format=json|j
 - 发布门禁固定运行开发烟测，并独立选择最新的已冻结、含 `human_verified` 样本的广东企业数据集；可通过 `COMPANY_DD_HUMAN_QUALITY_DATASET` 显式指定，未冻结数据不得进入正式门禁。
 - Docker 自动烟测与真实 MySQL、报告、PostgreSQL Tasker、MinIO 集成测试通过；同一冻结数据集重复运行结果一致。
 - 阻塞原因：当前仓库只有 `source_derived_unreviewed` 开发烟测样本，尚无 `human_verified` 广东企业 Golden，因此严格发布门禁不具备资格。
-- 本次方案新增的企业上下文、意图、工具计划、Claim Ledger 和 `presentation` 指标尚未实现，不能用当前基础版评测结果替代。
+- 已新增 `investigation` Golden 类型，支持企业解析、主题、时间、深度、展示、交付、必要/禁止工具、Claim Ledger、主题覆盖和无关主题规避严格指标。
+- 发布门禁已单独展示统一智能体入口、意图、工具、`presentation`、Claim 和输入输出一致性结果。
+- 在线 LLM 尚未接入，因此表达质量与“意图错误/Claim 错误/表达错误”三分评测保留为后续项。
 
 ## 测试范围
 

@@ -1,6 +1,6 @@
 # 企业尽调智能体任务清单
 
-本目录把企业尽调智能体拆成 12 个可独立验收的任务。Wave 1～Wave 6 已形成当前基础版；2026 年 8 月 11 日方案修订后，`TASK-006`、`TASK-007`、`TASK-008`、`TASK-010`、`TASK-011` 和 `TASK-012` 增加领域智能体统一输入输出升级项。本次只修改方案和验收口径，不代表升级代码已经完成。
+本目录把企业尽调智能体拆成 12 个可独立验收的任务。Wave 1～Wave 6 形成基础版；2026 年 8 月 11 日已按 Wave 7 完成领域智能体统一输入输出升级。当前自动链路已完成，正式发布仍受缺少 `human_verified` 广东企业 Golden 阻塞。
 
 实现逐字稿见 [`docs/agents/company-due-diligence-implementation-guide.md`](../../docs/agents/company-due-diligence-implementation-guide.md)，输入、处理、输出和效果证据的完整链路逐字稿见 [`docs/agents/company-due-diligence-end-to-end-script.md`](../../docs/agents/company-due-diligence-end-to-end-script.md)。
 
@@ -12,7 +12,7 @@
 - `待验收`：代码和测试已完成，等待整体检查。
 - `已完成`：验收标准和测试全部通过。
 - `阻塞`：存在明确外部依赖，必须记录阻塞原因。
-- `基础版已完成，升级待实现`：原验收已通过，但本次方案新增的领域智能体能力尚未开发。
+- `自动验收完成，正式发布阻塞`：代码和自动回归已完成，但仍缺人工业务门禁。
 
 ## 总体任务图
 
@@ -77,23 +77,24 @@ flowchart TD
 | [`TASK-003`](TASK-003-structured-query-service.md) | 结构化查询服务 | 并行 | `TASK-002` | 已完成 |
 | [`TASK-004`](TASK-004-neo4j-graph-projection.md) | Neo4j 关系投影 | 并行 | `TASK-002` | 已完成 |
 | [`TASK-005`](TASK-005-text-evidence-index.md) | 文本证据索引 | 并行 | `TASK-002` | 已完成 |
-| [`TASK-006`](TASK-006-question-answering-api.md) | 统一调查意图与工具编排 | 并行 | `TASK-003`、`TASK-004`、`TASK-005` | 基础版已完成，升级待实现 |
-| [`TASK-007`](TASK-007-due-diligence-report-workflow.md) | 统一报告意图与工作流 | 并行 | `TASK-003`、`TASK-004`、`TASK-005`、升级后的 `TASK-006` 契约 | 基础版已完成，升级待实现 |
-| [`TASK-008`](TASK-008-quality-evaluation.md) | 全链路质量评测 | 并行 | `TASK-006`、`TASK-007` | 基础版框架完成；人工 Golden 阻塞，升级指标待实现 |
+| [`TASK-006`](TASK-006-question-answering-api.md) | 统一调查意图与工具编排 | 并行 | `TASK-003`、`TASK-004`、`TASK-005` | 已完成；在线 LLM 为非阻塞后续项 |
+| [`TASK-007`](TASK-007-due-diligence-report-workflow.md) | 统一报告意图与工作流 | 并行 | `TASK-003`、`TASK-004`、`TASK-005`、升级后的 `TASK-006` 契约 | 已完成 |
+| [`TASK-008`](TASK-008-quality-evaluation.md) | 全链路质量评测 | 并行 | `TASK-006`、`TASK-007` | 自动评测升级已完成；人工 Golden 阻塞正式门禁 |
 | [`TASK-009`](TASK-009-performance-evaluation.md) | 系统性能评测 | 并行 | `TASK-006`、`TASK-007` | 已完成 |
-| [`TASK-010`](TASK-010-frontend-query-and-report.md) | 前端智能体调查工作台 | 条件并行 | 统一意图/响应契约，联调依赖 `TASK-006`、`TASK-007` | 基础版已完成，升级待实现 |
-| [`TASK-011`](TASK-011-frontend-evaluation-workbench.md) | 前端全链路评测工作台 | 条件并行 | `TASK-008`、`TASK-009` API 契约 | 基础版已完成，升级待实现 |
-| [`TASK-012`](TASK-012-e2e-regression-and-release.md) | 端到端回归与发布门禁 | 串行收口 | `TASK-006` 至 `TASK-011` | 当前发布受人工 Golden 阻塞；升级门禁待实现 |
+| [`TASK-010`](TASK-010-frontend-query-and-report.md) | 前端智能体调查工作台 | 条件并行 | 统一意图/响应契约，联调依赖 `TASK-006`、`TASK-007` | 已完成 |
+| [`TASK-011`](TASK-011-frontend-evaluation-workbench.md) | 前端全链路评测工作台 | 条件并行 | `TASK-008`、`TASK-009` API 契约 | 已完成 |
+| [`TASK-012`](TASK-012-e2e-regression-and-release.md) | 端到端回归与发布门禁 | 串行收口 | `TASK-006` 至 `TASK-011` | 自动门禁已完成；正式发布受人工 Golden 阻塞 |
 
 ## 当前验收摘要
 
 截至 2026 年 8 月 11 日：
 
-- 当前基础版的 `TASK-001`～`TASK-007`、`TASK-009`～`TASK-011` 已完成；后端单元/路由 `111 passed`、真实集成 `26 passed`、管理员部署态 HTTP E2E `1 passed`，前端单元测试 `17 passed`，ESLint 和生产构建通过。
-- `TASK-008` 的评测格式、指标、运行、导出和自动烟测完成，但当前没有 `human_verified` 广东企业 Golden，不能冻结正式质量阈值。
-- `TASK-012` 自动门禁和管理员部署态 HTTP E2E 已通过，但发布状态仍为 `blocked`；唯一阻塞项是人工 Golden，在线 LLM 未启用作为非阻塞限制展示。
+- `POST /api/company-due-diligence/investigations`、`CompanyDueDiligenceAgent` 和主智能体工具 `investigate_company` 已共用同一领域服务；旧 `/query`、`/reports` 保持兼容。
+- 独立工作台已改为企业确认加单一自然语言输入，完整报告按钮与自然语言报告意图共用同一内部链路，结果按 `presentation` 动态展示。
+- `TASK-008` 已增加企业解析、主题、时间、深度、展示、交付、必要/禁止工具、Claim Ledger、主题覆盖和无关主题规避指标；当前没有 `human_verified` 广东企业 Golden，不能冻结正式质量阈值。
+- `TASK-012` 的统一智能体 E2E 和升级发布门禁已完成；发布状态仍为 `blocked`，唯一业务阻塞项是人工 Golden，在线 LLM 未启用作为非阻塞限制展示。
 - 最新发布验收报告由 `backend/scripts/company_due_diligence/generate_release_gate.py` 生成到 `saves/company_due_diligence/release/`，生成文件不提交 Git。
-- 本次方案新增 `CompanyDueDiligenceAgent`、统一意图、Claim Ledger、动态 `presentation`、单输入框和输入输出一致性评测，均属于后续升级项。
+- 最新发布验收报告会同时记录 REST 入口、主智能体工具、意图/工具/展示/Claim/输入输出一致性指标和管理员部署态 E2E 状态。
 
 ## 公共实现约束
 
@@ -129,7 +130,7 @@ flowchart TD
 - `Presentation`：摘要、列表、关系结果、专题报告或完整报告的动态展示描述；
 - `Task`：仅在异步专题报告、完整报告或评测中返回。
 
-当前事实契约在 `TASK-002` 已冻结；新增智能体意图和展示契约由升级后的 `TASK-006` 冻结。后续修改必须同步更新后端模型、前端类型、Golden 数据和本文依赖说明。
+当前事实契约在 `TASK-002` 已冻结；智能体意图和展示契约已由 `TASK-006` 冻结。后续修改必须同步更新后端模型、前端类型、Golden 数据和本文依赖说明。
 
 ## 并行开发规则
 

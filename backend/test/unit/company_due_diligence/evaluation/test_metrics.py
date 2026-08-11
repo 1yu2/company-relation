@@ -12,6 +12,15 @@ from yuxi.company_due_diligence.evaluation.dataset import (
     GoldenExpected,
     ReviewStatus,
 )
+from yuxi.company_due_diligence.agent.models import (
+    CompanyInvestigationRequest,
+    DeliveryMethod,
+    InvestigationDepth,
+    InvestigationTopic,
+    PresentationType,
+    TimeScope,
+    TimeScopeType,
+)
 from yuxi.company_due_diligence.evaluation.metrics import aggregate_metrics, evaluate_sample
 from yuxi.company_due_diligence.models import build_source_id
 from yuxi.company_due_diligence.qa.models import CompanyQuestionRequest
@@ -103,6 +112,75 @@ def test_fact_comparison_ignores_order_duplicates_and_display_text():
 
     assert result.field_exact is True
     assert result.hallucination_count == 0
+    assert result.strict_passed is True
+
+
+def test_investigation_metrics_cover_intent_tools_and_claim_ledger():
+    """统一调查样本应同时评估意图、工具边界和 Claim Ledger。"""
+    sample = EvaluationSample(
+        sample_id="investigation-sample",
+        sample_type=EvaluationSampleType.INVESTIGATION,
+        domain="intent",
+        review_status=ReviewStatus.HUMAN_VERIFIED,
+        investigation_request=CompanyInvestigationRequest(
+            company_context={"eid": "eid-1", "name": "示例企业"},
+            message="当前股东有哪些？",
+        ),
+        reviewer_note="已核对意图与工具计划",
+        reviewed_by="reviewer-1",
+        reviewed_at=datetime(2026, 8, 10, tzinfo=UTC),
+        expected=GoldenExpected(
+            entity_eids=["eid-1"],
+            topics=[InvestigationTopic.SHAREHOLDERS],
+            time_scope=TimeScope(type=TimeScopeType.LATEST_AVAILABLE),
+            depth=InvestigationDepth.STANDARD,
+            presentation=PresentationType.SUMMARY_WITH_LIST,
+            delivery=DeliveryMethod.SYNC,
+            required_tools=["entity_resolution", "structured_query", "quality_validation"],
+            forbidden_tools=["graph_path", "evidence_search"],
+            claim_ledger_consistent=True,
+            required_topics=[InvestigationTopic.SHAREHOLDERS],
+            forbidden_topics=[InvestigationTopic.RELATIONS],
+        ),
+    )
+    prediction = {
+        "status": "complete",
+        "company_context": {"eid": "eid-1", "name": "示例企业"},
+        "understood_request": {
+            "topics": ["shareholders"],
+            "presentation": "summary_with_list",
+            "delivery": "sync",
+            "time_scope": {
+                "type": "latest_available",
+                "years": None,
+                "start_date": None,
+                "end_date": None,
+            },
+            "depth": "standard",
+        },
+        "plan": {
+            "structured_queries": ["current_shareholders"],
+            "use_graph": False,
+            "evidence_types": [],
+        },
+        "facts": [],
+        "relations": [],
+        "paths": [],
+        "evidence": [],
+        "sources": [],
+        "claim_ledger": {"claims": [], "validated": True},
+        "data_quality": {},
+    }
+
+    result = evaluate_sample(sample, prediction)
+
+    assert result.entity_resolution_correct is True
+    assert result.topic_exact is True
+    assert result.presentation_match is True
+    assert result.required_tool_recall is True
+    assert result.forbidden_tool_avoidance is True
+    assert result.claim_ledger_consistent is True
+    assert result.topic_coverage is True
     assert result.strict_passed is True
 
 

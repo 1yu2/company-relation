@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import text
 
 from yuxi.company_due_diligence.mysql import CompanyDueDiligenceMySQL
+from yuxi.company_due_diligence.report.models import ReportSection
 from yuxi.storage.minio import get_minio_client
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e]
@@ -26,8 +27,8 @@ async def _wait_for_detail(client, headers, path: str) -> dict:
     raise AssertionError(f"任务未在预期时间内完成: {path}")
 
 
-async def test_admin_can_complete_query_report_quality_and_performance_e2e(e2e_client, e2e_headers):
-    """管理员应通过真实 HTTP 完成查询、报告、质量、性能和导出闭环。"""
+async def test_admin_can_complete_investigation_report_quality_and_performance_e2e(e2e_client, e2e_headers):
+    """管理员应通过真实 HTTP 完成统一调查、报告、评测和导出闭环。"""
     mysql = CompanyDueDiligenceMySQL()
     minio = get_minio_client()
     task_ids = []
@@ -40,8 +41,28 @@ async def test_admin_can_complete_query_report_quality_and_performance_e2e(e2e_c
         assert me_response.json()["role"] in {"admin", "superadmin"}
 
         async with mysql.connection() as connection:
-            row = (await connection.execute(text("SELECT eid, name FROM t_enterprise ORDER BY eid LIMIT 1"))).one()
+            row = (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT p.eid, e.name
+                        FROM t_partners_alls p
+                        JOIN t_enterprise e ON e.eid = p.eid
+                        WHERE p.is_history = 0
+                        ORDER BY p.eid
+                        LIMIT 1
+                        """
+                    )
+                )
+            ).one()
+            target_row = (
+                await connection.execute(
+                    text("SELECT eid, name FROM t_enterprise WHERE eid != :eid ORDER BY eid LIMIT 1"),
+                    {"eid": row.eid},
+                )
+            ).one()
         eid, company_name = row
+        target_eid, target_company_name = target_row
 
         search_response = await e2e_client.get(
             "/api/company-due-diligence/companies/search",
@@ -50,6 +71,120 @@ async def test_admin_can_complete_query_report_quality_and_performance_e2e(e2e_c
         )
         assert search_response.status_code == 200, search_response.text
         assert any(candidate["eid"] == eid for candidate in search_response.json()["candidates"])
+
+        shareholder_response = await e2e_client.post(
+            "/api/company-due-diligence/investigations",
+            json={
+                "company_context": {"eid": eid, "name": company_name},
+                "message": "这家企业的股东有哪些？",
+            },
+            headers=e2e_headers,
+        )
+        assert shareholder_response.status_code == 200, shareholder_response.text
+        shareholder = shareholder_response.json()
+        assert shareholder["status"] == "complete"
+        assert shareholder["company_context"]["eid"] == eid
+        assert shareholder["understood_request"]["topics"] == ["shareholders"]
+        assert shareholder["presentation"]["type"] == "summary_with_list"
+        assert shareholder["facts"]
+        assert shareholder["plan"]["structured_queries"] == ["current_shareholders"]
+        assert shareholder["plan"]["use_graph"] is False
+        assert shareholder["plan"]["evidence_types"] == []
+        assert {step["source"] for step in shareholder["steps"]} == {"mysql"}
+        assert shareholder["claim_ledger"]["validated"] is True
+        assert len(shareholder["claim_ledger"]["claims"]) == len(shareholder["facts"]) + len(shareholder["relations"])
+        source_ids = {source["source_id"] for source in shareholder["sources"]}
+        assert all(
+            source_id in source_ids
+            for claim in shareholder["claim_ledger"]["claims"]
+            for source_id in claim["source_ids"]
+        )
+
+        relation_response = await e2e_client.post(
+            "/api/company-due-diligence/investigations",
+            json={
+                "company_context": shareholder["company_context"],
+                "target_company_context": {"eid": target_eid, "name": target_company_name},
+                "message": "这两家企业有什么关系？",
+            },
+            headers=e2e_headers,
+        )
+        assert relation_response.status_code == 200, relation_response.text
+        relation = relation_response.json()
+        assert relation["company_context"] == shareholder["company_context"]
+        assert relation["target_company_context"]["eid"] == target_eid
+        assert relation["understood_request"]["topics"] == ["relations"]
+        assert relation["presentation"]["type"] == "relation_result"
+        assert relation["plan"]["use_graph"] is True
+        assert relation["plan"]["structured_queries"] == []
+        assert any(step["source"] == "neo4j" for step in relation["steps"])
+
+        topic_report_response = await e2e_client.post(
+            "/api/company-due-diligence/investigations",
+            json={
+                "company_context": shareholder["company_context"],
+                "message": "请用报告形式分析这家企业近三年的企业关系和风险",
+            },
+            headers=e2e_headers,
+        )
+        assert topic_report_response.status_code == 200, topic_report_response.text
+        topic_report = topic_report_response.json()
+        assert topic_report["status"] == "accepted"
+        assert topic_report["understood_request"]["topics"] == ["relations", "risks"]
+        assert topic_report["understood_request"]["time_scope"]["type"] == "recent_years"
+        assert topic_report["understood_request"]["time_scope"]["years"] == 3
+        assert topic_report["presentation"]["type"] == "topic_report"
+        topic_report_id = topic_report["task"]["id"]
+        task_ids.append(topic_report_id)
+        report_ids.append(topic_report_id)
+        topic_report_detail = await _wait_for_detail(
+            e2e_client,
+            e2e_headers,
+            f"/api/company-due-diligence/reports/{topic_report_id}",
+        )
+        assert topic_report_detail["task"]["status"] == "success"
+        assert set(topic_report_detail["report"]["sections"]) == {
+            "identity",
+            "relations",
+            "compliance",
+            "risks",
+            "data_quality",
+        }
+
+        natural_full_report_response = await e2e_client.post(
+            "/api/company-due-diligence/investigations",
+            json={
+                "company_context": shareholder["company_context"],
+                "message": "请生成这家企业的完整尽调报告",
+            },
+            headers=e2e_headers,
+        )
+        shortcut_full_report_response = await e2e_client.post(
+            "/api/company-due-diligence/investigations",
+            json={
+                "company_context": shareholder["company_context"],
+                "shortcut": "generate_full_due_diligence_report",
+            },
+            headers=e2e_headers,
+        )
+        assert natural_full_report_response.status_code == 200, natural_full_report_response.text
+        assert shortcut_full_report_response.status_code == 200, shortcut_full_report_response.text
+        natural_full_report = natural_full_report_response.json()
+        shortcut_full_report = shortcut_full_report_response.json()
+        assert natural_full_report["understood_request"] == shortcut_full_report["understood_request"]
+        assert natural_full_report["presentation"] == shortcut_full_report["presentation"]
+        assert natural_full_report["presentation"]["type"] == "full_report"
+        full_report_ids = [natural_full_report["task"]["id"], shortcut_full_report["task"]["id"]]
+        task_ids.extend(full_report_ids)
+        report_ids.extend(full_report_ids)
+        for full_report_id in full_report_ids:
+            full_report_detail = await _wait_for_detail(
+                e2e_client,
+                e2e_headers,
+                f"/api/company-due-diligence/reports/{full_report_id}",
+            )
+            assert full_report_detail["task"]["status"] == "success"
+            assert set(full_report_detail["report"]["sections"]) == {section.value for section in ReportSection}
 
         profile_response = await e2e_client.post(
             "/api/company-due-diligence/query",

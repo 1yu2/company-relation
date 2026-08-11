@@ -2,28 +2,16 @@ export const TERMINAL_TASK_STATUSES = new Set(['success', 'failed', 'cancelled']
 export const REAL_DATABASE_CONFIRMATION = 'CONFIRM_READONLY_REAL_DATABASE_LOAD'
 const BASE_URL = '/api/company-due-diligence'
 
-export const REPORT_SECTIONS = [
-  ['identity', '企业身份'],
-  ['business', '经营概况'],
-  ['shareholders', '股东与出资'],
-  ['relations', '关联关系'],
-  ['products', '产品与业务'],
-  ['financing', '融资情况'],
-  ['financials', '财务指标'],
-  ['compliance', '合规情况'],
-  ['intellectual_property', '知识产权'],
-  ['news', '新闻舆情'],
-  ['risks', '风险事项'],
-  ['data_quality', '数据质量']
-]
-
 export const QUICK_QUESTIONS = [
   '企业基本信息、注册资本、法定代表人和经营状态是什么？',
   '当前股东和出资情况有哪些？',
+  '该企业有哪些关联关系和最多三跳路径？',
   '融资情况有哪些？',
-  '行政处罚、环保处罚和经营异常风险有哪些？',
+  '近三年的行政处罚、环保处罚和经营异常风险有哪些？',
   '专利、商标和软件著作权情况如何？'
 ]
+
+export const FULL_REPORT_SHORTCUT = 'generate_full_due_diligence_report'
 
 const STATUS_META = {
   available: ['可用', 'success'],
@@ -33,6 +21,8 @@ const STATUS_META = {
   not_found: ['未找到', 'default'],
   source_unavailable: ['来源不可用', 'error'],
   complete: ['完成', 'success'],
+  accepted: ['任务已接受', 'processing'],
+  clarification: ['需要确认', 'warning'],
   partial: ['部分完成', 'warning'],
   no_data: ['无数据', 'default'],
   stale: ['数据过期', 'warning'],
@@ -55,18 +45,43 @@ export function buildCompanySearchUrl(query, limit = 10) {
   return `${BASE_URL}/companies/search?${params}`
 }
 
-export function buildQuestionPayload(company, form) {
-  if (!company?.eid) throw new Error('请先确认唯一企业')
-  const question = String(form.question || '').trim()
-  if (!question) throw new Error('请输入问题')
-  return {
-    company_ref: { eid: company.eid },
-    question,
-    mode: 'qa',
-    as_of: form.asOf || null,
+export function buildInvestigationPayload(company, form) {
+  if (!company?.eid && !company?.name) throw new Error('请先确认唯一企业')
+  const message = String(form.message || '').trim()
+  const shortcut = form.shortcut || null
+  if (!message && !shortcut) throw new Error('请输入调查要求')
+
+  const payload = {
+    company_context: {
+      eid: company.eid || null,
+      name: company.name || null,
+      credit_code: company.credit_code || null,
+      stock_code: company.stock_code || null
+    },
     hop_limit: Number(form.hopLimit || 3),
     top_k: Number(form.topK || 10),
     include_low_confidence: Boolean(form.includeLowConfidence)
+  }
+  if (message) payload.message = message
+  if (shortcut) payload.shortcut = shortcut
+  if (form.startDate) payload.start_date = form.startDate
+  if (form.asOf) payload.as_of = form.asOf
+  return payload
+}
+
+export function presentationSections(result = {}) {
+  const type = result.presentation?.type
+  const components = new Set(result.presentation?.components || [])
+  return {
+    clarification: type === 'clarification',
+    report: type === 'topic_report' || type === 'full_report',
+    facts: components.has('facts') || components.has('fact_table') || components.has('findings'),
+    relations: components.has('relations') || components.has('paths'),
+    evidence: components.has('evidence'),
+    quality:
+      components.has('data_quality') ||
+      !['clarification', 'topic_report', 'full_report'].includes(type),
+    sources: components.has('sources')
   }
 }
 

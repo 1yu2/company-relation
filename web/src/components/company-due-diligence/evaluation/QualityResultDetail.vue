@@ -21,11 +21,23 @@ const metricCards = computed(() => [
   ['拒答准确率', strict.value.refusal_accuracy],
   ['章节完整率', strict.value.report_completeness],
   ['时效准确率', strict.value.freshness_accuracy],
+  ['企业解析准确率', strict.value.entity_resolution_accuracy],
+  ['意图主题准确率', strict.value.topic_accuracy],
+  ['展示形式匹配率', strict.value.presentation_accuracy],
+  ['必要工具召回率', strict.value.tool_recall],
+  ['无关工具规避率', strict.value.forbidden_tool_avoidance],
+  ['Claim Ledger 一致率', strict.value.claim_ledger_consistency],
+  ['主题覆盖率', strict.value.topic_coverage],
+  ['无关主题规避率', strict.value.irrelevant_topic_avoidance],
   ['严格通过率', strict.value.strict_pass_rate]
 ])
 const domains = computed(() => Object.keys(props.report.metrics_by_domain || {}))
 const firstErrors = computed(() =>
-  [...new Set((props.report.samples || []).map((sample) => sample.metrics?.first_error).filter(Boolean))].sort()
+  [
+    ...new Set(
+      (props.report.samples || []).map((sample) => sample.metrics?.first_error).filter(Boolean)
+    )
+  ].sort()
 )
 const filtered = computed(() =>
   filterQualitySamples(props.report.samples || [], {
@@ -35,19 +47,24 @@ const filtered = computed(() =>
     domain: domain.value
   })
 )
-const paged = computed(() => filtered.value.slice((page.value - 1) * pageSize, page.value * pageSize))
+const paged = computed(() =>
+  filtered.value.slice((page.value - 1) * pageSize, page.value * pageSize)
+)
 </script>
 
 <template>
   <div class="quality-detail">
     <div class="gate-banner" :class="{ passed: report.regression_gate.passed }">
       <strong>严格门禁：{{ report.regression_gate.passed ? '通过' : '未通过' }}</strong>
-      <span>{{ report.strategy_label }} · 人工样本 {{ strict.human_verified_count || 0 }} · 幻觉率 {{ (strict.hallucination_rate * 100).toFixed(2) }}%</span>
+      <span
+        >{{ report.strategy_label }} · 人工样本 {{ strict.human_verified_count || 0 }} · 幻觉率
+        {{ (strict.hallucination_rate * 100).toFixed(2) }}%</span
+      >
       <small v-for="reason in report.regression_gate.reasons" :key="reason">{{ reason }}</small>
     </div>
 
     <div class="metric-grid">
-      <article v-for="([label, metric]) in metricCards" :key="label">
+      <article v-for="[label, metric] in metricCards" :key="label">
         <span>{{ label }}</span>
         <strong>{{ metricPercent(metric) }}</strong>
         <small>{{ metric?.passed || 0 }} / {{ metric?.total || 0 }}</small>
@@ -57,12 +74,19 @@ const paged = computed(() => filtered.value.slice((page.value - 1) * pageSize, p
     <a-collapse>
       <a-collapse-panel key="groups" header="分类指标（后端聚合）">
         <div class="group-tables">
-          <table v-for="(groups, title) in {
-            '数据域': report.metrics_by_domain,
-            '样本类型': report.metrics_by_sample_type,
-            '复核状态': report.metrics_by_review_status
-          }" :key="title">
-            <caption>{{ title }}</caption>
+          <table
+            v-for="(groups, title) in {
+              数据域: report.metrics_by_domain,
+              样本类型: report.metrics_by_sample_type,
+              复核状态: report.metrics_by_review_status
+            }"
+            :key="title"
+          >
+            <caption>
+              {{
+                title
+              }}
+            </caption>
             <tbody>
               <tr v-for="(metrics, name) in groups" :key="name">
                 <td>{{ name }}</td>
@@ -79,34 +103,69 @@ const paged = computed(() => filtered.value.slice((page.value - 1) * pageSize, p
     <div class="sample-filters">
       <a-checkbox v-model:checked="errorOnly">只看错误</a-checkbox>
       <a-select v-model:value="firstError" allow-clear placeholder="首错阶段" style="width: 160px">
-        <a-select-option v-for="item in firstErrors" :key="item" :value="item">{{ item }}</a-select-option>
+        <a-select-option v-for="item in firstErrors" :key="item" :value="item">{{
+          item
+        }}</a-select-option>
       </a-select>
       <a-select v-model:value="domain" allow-clear placeholder="数据域" style="width: 150px">
-        <a-select-option v-for="item in domains" :key="item" :value="item">{{ item }}</a-select-option>
+        <a-select-option v-for="item in domains" :key="item" :value="item">{{
+          item
+        }}</a-select-option>
       </a-select>
-      <a-select v-model:value="reviewStatus" allow-clear placeholder="复核状态" style="width: 210px">
+      <a-select
+        v-model:value="reviewStatus"
+        allow-clear
+        placeholder="复核状态"
+        style="width: 210px"
+      >
         <a-select-option value="human_verified">人工复核</a-select-option>
         <a-select-option value="source_derived_unreviewed">程序派生未复核</a-select-option>
       </a-select>
     </div>
 
     <div class="sample-results">
-      <details v-for="sample in paged" :key="sample.sample_id" :class="{ failed: sample.error || !sample.metrics?.strict_passed }">
+      <details
+        v-for="sample in paged"
+        :key="sample.sample_id"
+        :class="{ failed: sample.error || !sample.metrics?.strict_passed }"
+      >
         <summary>
-          <span><strong>{{ sample.sample_id }}</strong> · {{ sample.domain }} · {{ sample.sample_type }}</span>
+          <span
+            ><strong>{{ sample.sample_id }}</strong> · {{ sample.domain }} ·
+            {{ sample.sample_type }}</span
+          >
           <a-tag :color="sample.metrics?.strict_passed ? 'green' : 'red'">
             {{ sample.error || sample.metrics?.first_error || 'passed' }}
           </a-tag>
         </summary>
         <div class="sample-json-grid">
-          <section><h4>输入</h4><pre>{{ JSON.stringify(sample.input, null, 2) }}</pre></section>
-          <section><h4>Golden</h4><pre>{{ JSON.stringify(sample.expected, null, 2) }}</pre></section>
-          <section><h4>预测</h4><pre>{{ JSON.stringify(sample.prediction, null, 2) }}</pre></section>
-          <section><h4>差异</h4><pre>{{ JSON.stringify(sample.metrics?.differences || { error: sample.error }, null, 2) }}</pre></section>
+          <section>
+            <h4>输入</h4>
+            <pre>{{ JSON.stringify(sample.input, null, 2) }}</pre>
+          </section>
+          <section>
+            <h4>Golden</h4>
+            <pre>{{ JSON.stringify(sample.expected, null, 2) }}</pre>
+          </section>
+          <section>
+            <h4>预测</h4>
+            <pre>{{ JSON.stringify(sample.prediction, null, 2) }}</pre>
+          </section>
+          <section>
+            <h4>差异</h4>
+            <pre>{{
+              JSON.stringify(sample.metrics?.differences || { error: sample.error }, null, 2)
+            }}</pre>
+          </section>
         </div>
       </details>
     </div>
-    <a-pagination v-model:current="page" :page-size="pageSize" :total="filtered.length" :show-size-changer="false" />
+    <a-pagination
+      v-model:current="page"
+      :page-size="pageSize"
+      :total="filtered.length"
+      :show-size-changer="false"
+    />
   </div>
 </template>
 

@@ -7,19 +7,16 @@ import { companyDueDiligenceApi } from '@/apis/company_due_diligence_api'
 import { taskerApi } from '@/apis/tasker'
 import { useTaskPolling } from '@/composables/useTaskPolling'
 import {
-  REPORT_SECTIONS,
   TERMINAL_TASK_STATUSES,
   describeApiError,
   reportProgress,
   statusMeta
 } from '@/utils/companyDueDiligence'
 
-const props = defineProps({ company: { type: Object, default: null } })
+const props = defineProps({ investigation: { type: Object, default: null } })
 
-const selectedSections = ref(REPORT_SECTIONS.map(([value]) => value))
 const reports = ref([])
 const reportId = ref(null)
-const creating = ref(false)
 
 const reportPoll = useTaskPolling(companyDueDiligenceApi.getReport, {
   isTerminal: (detail) => reportProgress(detail).terminal
@@ -29,9 +26,13 @@ const retryPoll = useTaskPolling(taskerApi.fetchTaskDetail, {
 })
 
 const detail = computed(() => reportPoll.detail.value)
-const taskState = computed(() => reportProgress(detail.value))
+const initialTask = computed(() => props.investigation?.task || null)
+const taskState = computed(() => reportProgress(detail.value || { task: initialTask.value }))
 const report = computed(() => detail.value?.report || null)
 const taskStatus = computed(() => statusMeta(taskState.value.status))
+const reportType = computed(() =>
+  props.investigation?.presentation?.type === 'topic_report' ? '专题尽调报告' : '完整尽调报告'
+)
 
 const loadReports = async () => {
   try {
@@ -39,24 +40,6 @@ const loadReports = async () => {
     reports.value = result.reports || []
   } catch (error) {
     message.error(describeApiError(error))
-  }
-}
-
-const createReport = async () => {
-  if (!props.company?.eid) return message.warning('请先确认唯一企业')
-  creating.value = true
-  try {
-    const result = await companyDueDiligenceApi.createReport({
-      company_ref: { eid: props.company.eid },
-      sections: selectedSections.value
-    })
-    reportId.value = result.report_id
-    await reportPoll.start(reportId.value)
-    await loadReports()
-  } catch (error) {
-    message.error(describeApiError(error))
-  } finally {
-    creating.value = false
   }
 }
 
@@ -86,6 +69,16 @@ const retrySection = async (section) => {
 }
 
 watch(
+  () => props.investigation?.task?.id,
+  async (id) => {
+    if (!id) return
+    await openReport(id)
+    await loadReports()
+  },
+  { immediate: true }
+)
+
+watch(
   () => retryPoll.detail.value?.task?.status,
   async (status) => {
     if (TERMINAL_TASK_STATUSES.has(status) && reportId.value) await openReport(reportId.value)
@@ -112,39 +105,42 @@ onMounted(loadReports)
 
 <template>
   <section class="report-workspace">
-    <div class="report-controls">
+    <div class="report-heading">
       <div>
-        <h3><FileStack size="18" /> 完整尽调报告</h3>
-        <p>选择章节后生成版本锁定、可追溯的报告。</p>
+        <h3><FileStack size="18" /> 报告任务与产物</h3>
+        <p>专题报告和完整报告都由上方自然语言调查入口创建。</p>
       </div>
-      <a-button type="primary" :disabled="!company || !selectedSections.length" :loading="creating" @click="createReport">
-        生成报告
-      </a-button>
+      <a-button type="text" size="small" @click="loadReports"><RefreshCw size="14" />刷新</a-button>
     </div>
-
-    <a-checkbox-group v-model:value="selectedSections" class="section-selector">
-      <a-checkbox v-for="([value, label]) in REPORT_SECTIONS" :key="value" :value="value">{{ label }}</a-checkbox>
-    </a-checkbox-group>
 
     <div v-if="reports.length" class="recent-reports">
       <span>最近报告</span>
-      <button v-for="item in reports.slice(0, 6)" :key="item.id" type="button" @click="openReport(item.id)">
+      <button
+        v-for="item in reports.slice(0, 6)"
+        :key="item.id"
+        type="button"
+        @click="openReport(item.id)"
+      >
         {{ item.id.slice(0, 8) }} · {{ statusMeta(item.status).label }}
       </button>
-      <a-button type="text" size="small" @click="loadReports"><RefreshCw size="14" /></a-button>
     </div>
 
     <div v-if="reportId" class="report-status-card">
       <header>
         <div>
-          <strong>报告 {{ reportId }}</strong>
-          <span>{{ taskState.message }}</span>
+          <strong>{{ reportType }} {{ reportId }}</strong>
+          <span>{{ taskState.message || '报告任务已提交' }}</span>
         </div>
         <a-tag :color="taskStatus.color">{{ taskStatus.label }}</a-tag>
       </header>
-      <a-progress :percent="Math.round(taskState.progress)" :status="taskState.status === 'failed' ? 'exception' : 'active'" />
+      <a-progress
+        :percent="Math.round(taskState.progress)"
+        :status="taskState.status === 'failed' ? 'exception' : 'active'"
+      />
       <div class="report-actions">
-        <a-button v-if="!taskState.terminal" danger @click="cancelReport"><Square size="14" />取消</a-button>
+        <a-button v-if="!taskState.terminal" danger @click="cancelReport"
+          ><Square size="14" />取消</a-button
+        >
         <template v-if="report">
           <a-button @click="downloadReport('json')"><Download size="14" />JSON</a-button>
           <a-button @click="downloadReport('markdown')"><Download size="14" />Markdown</a-button>
@@ -152,12 +148,16 @@ onMounted(loadReports)
       </div>
     </div>
 
+    <a-empty v-else description="在上方输入报告要求，或点击生成完整尽调报告" />
+
     <div v-if="report" class="report-sections">
       <article v-for="(section, name) in report.sections" :key="name">
         <header>
           <div>
             <strong>{{ section.title }}</strong>
-            <a-tag :color="statusMeta(section.status).color">{{ statusMeta(section.status).label }}</a-tag>
+            <a-tag :color="statusMeta(section.status).color">{{
+              statusMeta(section.status).label
+            }}</a-tag>
           </div>
           <a-button v-if="section.status === 'failed'" size="small" @click="retrySection(name)">
             <RotateCcw size="13" />重试
@@ -165,8 +165,10 @@ onMounted(loadReports)
         </header>
         <p>{{ section.summary }}</p>
         <small v-if="section.query_result">
-          事实 {{ section.query_result.facts?.length || 0 }} · 路径 {{ section.query_result.paths?.length || 0 }} ·
-          证据 {{ section.query_result.evidence?.length || 0 }} · 来源 {{ section.query_result.sources?.length || 0 }}
+          事实 {{ section.query_result.facts?.length || 0 }} · 路径
+          {{ section.query_result.paths?.length || 0 }} · 证据
+          {{ section.query_result.evidence?.length || 0 }} · 来源
+          {{ section.query_result.sources?.length || 0 }}
         </small>
         <a-alert v-if="section.error" type="error" :message="section.error" show-icon />
       </article>
@@ -180,7 +182,7 @@ onMounted(loadReports)
   gap: 16px;
 }
 
-.report-controls,
+.report-heading,
 .report-status-card header,
 .report-sections article header {
   display: flex;
@@ -189,7 +191,7 @@ onMounted(loadReports)
   gap: 12px;
 }
 
-.report-controls {
+.report-heading {
   h3 {
     display: flex;
     align-items: center;
@@ -202,16 +204,6 @@ onMounted(loadReports)
     margin: 4px 0 0;
     color: var(--gray-600);
   }
-}
-
-.section-selector {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  padding: 13px;
-  border: 1px solid var(--gray-200);
-  border-radius: 10px;
-  background: var(--gray-0);
 }
 
 .recent-reports {
@@ -291,21 +283,15 @@ onMounted(loadReports)
 }
 
 @media (max-width: 900px) {
-  .section-selector,
   .report-sections {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
   }
 }
 
 @media (max-width: 600px) {
-  .report-controls {
+  .report-heading {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .section-selector,
-  .report-sections {
-    grid-template-columns: 1fr;
   }
 }
 </style>

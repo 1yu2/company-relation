@@ -100,6 +100,7 @@ class QAWorkflow:
                     eid=eid,
                     query=request.question,
                     document_types=plan.evidence_types,
+                    start_date=request.start_date,
                     end_date=request.as_of,
                     top_k=request.top_k,
                 )
@@ -129,6 +130,7 @@ class QAWorkflow:
             StructuredQueryRequest(
                 eid=eid,
                 query_type=query_type,
+                start_date=request.start_date,
                 end_date=request.as_of,
                 page_size=min(request.top_k, 100),
             )

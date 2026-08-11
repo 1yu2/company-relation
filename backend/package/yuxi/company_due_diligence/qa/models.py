@@ -57,6 +57,7 @@ class CompanyQuestionRequest(BaseModel):
     target_company_ref: CompanyReference | None = None
     question: str = Field(min_length=1, max_length=2000)
     mode: QuestionMode = QuestionMode.QA
+    start_date: date | None = None
     as_of: date | None = None
     hop_limit: int = Field(default=3, ge=1, le=3)
     top_k: int = Field(default=10, ge=1, le=50)
@@ -67,6 +68,15 @@ class CompanyQuestionRequest(BaseModel):
     def normalize_question(cls, value):
         """去除问题两端空白并拒绝空问题。"""
         return str(value).strip()
+
+    @field_validator("as_of")
+    @classmethod
+    def validate_date_range(cls, value, info):
+        """拒绝早于开始日期的业务时点。"""
+        start_date = info.data.get("start_date")
+        if start_date and value and value < start_date:
+            raise ValueError("as_of 不能早于 start_date")
+        return value
 
 
 class QueryPlan(BaseModel):

@@ -10,11 +10,13 @@ from pathlib import Path
 
 from sqlalchemy import text
 
+from yuxi.agents.toolkits import get_extra_metadata
 from yuxi.company_due_diligence.evaluation.dataset import (
     DatasetSourceKind,
     EvaluationDataset,
     EvaluationDatasetRepository,
 )
+from yuxi.company_due_diligence.evaluation.metrics import AggregateMetric, QualityMetrics
 from yuxi.company_due_diligence.evaluation.runner import QualityEvaluationRunner
 from yuxi.company_due_diligence.mysql import CompanyDueDiligenceMySQL, company_due_diligence_mysql
 from yuxi.company_due_diligence.performance.models import PerformanceRunRequest, PerformanceScenario
@@ -74,10 +76,14 @@ async def main() -> None:
         (os.getenv("E2E_USERNAME") or os.getenv("TEST_USERNAME"))
         and (os.getenv("E2E_PASSWORD") or os.getenv("TEST_PASSWORD"))
     )
+    agent_entry_gate = _agent_entry_gate(quality, args.admin_e2e_passed)
+    investigation_quality_gate = _investigation_quality_gate(quality.all_metrics)
     automated_passed = bool(
         akshare_passed
         and quality.all_metrics.strict_pass_rate.rate == 1
         and quality.all_metrics.source_integrity.rate == 1
+        and agent_entry_gate["passed"]
+        and investigation_quality_gate["passed"]
         and performance.regression_gate.passed
         and not performance.pool.leak_detected
     )
@@ -103,6 +109,8 @@ async def main() -> None:
                 "dataset_checksum": quality.dataset_checksum,
                 "configuration_checksum": quality.configuration_checksum,
             },
+            "company_investigation_agent_entry": agent_entry_gate,
+            "investigation_quality": investigation_quality_gate,
             "human_verified_quality_gate": human_quality_gate,
             "safe_performance": {
                 "passed": performance.regression_gate.passed,
@@ -123,7 +131,11 @@ async def main() -> None:
                 "reason": ONLINE_LLM_LIMITATION,
             },
         },
-        "blockers": _blockers(human_quality_gate, args.admin_e2e_passed),
+        "blockers": _blockers(
+            human_quality_gate,
+            args.admin_e2e_passed,
+            automated_passed=automated_passed,
+        ),
         "limitations": [ONLINE_LLM_LIMITATION],
     }
     json_path = output_dir / f"{run_id}.json"
@@ -203,9 +215,77 @@ def _human_quality_gate(dataset: EvaluationDataset | None, quality) -> dict:
     }
 
 
-def _blockers(human_quality_gate: dict, admin_e2e_passed: bool) -> list[str]:
+def _agent_entry_gate(quality, admin_e2e_passed: bool) -> dict:
+    """检查 REST 工作台与系统主智能体是否复用统一领域服务。"""
+    tool_metadata = get_extra_metadata("investigate_company")
+    investigation_samples = [sample for sample in quality.samples if sample.sample_type == "investigation"]
+    quality_passed = bool(
+        investigation_samples
+        and all(sample.metrics is not None and sample.metrics.strict_passed for sample in investigation_samples)
+    )
+    tool_registered = bool(tool_metadata and tool_metadata.category == "company_due_diligence")
+    return {
+        "passed": tool_registered and quality_passed and admin_e2e_passed,
+        "rest_endpoint": "/api/company-due-diligence/investigations",
+        "main_agent_tool": "investigate_company",
+        "shared_domain_service": "CompanyDueDiligenceAgent.investigate",
+        "tool_registered": tool_registered,
+        "quality_sample_count": len(investigation_samples),
+        "quality_samples_passed": quality_passed,
+        "admin_http_e2e_passed": admin_e2e_passed,
+    }
+
+
+def _investigation_quality_gate(metrics: QualityMetrics) -> dict:
+    """汇总领域智能体意图、工具、展示、Claim 和一致性指标。"""
+    checks = {
+        "intent": {
+            "entity_resolution_accuracy": _metric_gate(metrics.entity_resolution_accuracy),
+            "topic_accuracy": _metric_gate(metrics.topic_accuracy),
+            "time_scope_accuracy": _metric_gate(metrics.time_scope_accuracy),
+            "depth_accuracy": _metric_gate(metrics.depth_accuracy),
+            "delivery_accuracy": _metric_gate(metrics.delivery_accuracy),
+        },
+        "tools": {
+            "required_tool_recall": _metric_gate(metrics.tool_recall),
+            "forbidden_tool_avoidance": _metric_gate(metrics.forbidden_tool_avoidance),
+        },
+        "presentation": {
+            "presentation_accuracy": _metric_gate(metrics.presentation_accuracy),
+        },
+        "claims": {
+            "claim_ledger_consistency": _metric_gate(metrics.claim_ledger_consistency),
+            "source_integrity": _metric_gate(metrics.source_integrity),
+        },
+        "input_output_consistency": {
+            "topic_coverage": _metric_gate(metrics.topic_coverage),
+            "irrelevant_topic_avoidance": _metric_gate(metrics.irrelevant_topic_avoidance),
+        },
+    }
+    return {
+        "passed": all(metric["passed"] for group in checks.values() for metric in group.values()),
+        **checks,
+    }
+
+
+def _metric_gate(metric: AggregateMetric) -> dict:
+    """把聚合指标转换为要求有样本且满分的发布检查。"""
+    return {
+        **metric.model_dump(mode="json"),
+        "passed": metric.total > 0 and metric.rate == 1,
+    }
+
+
+def _blockers(
+    human_quality_gate: dict,
+    admin_e2e_passed: bool,
+    *,
+    automated_passed: bool = True,
+) -> list[str]:
     """返回不得被自动化结果掩盖的发布阻塞项。"""
     blockers = []
+    if not automated_passed:
+        blockers.append("企业尽调自动回归、智能体入口或性能门禁未通过")
     if not human_quality_gate["configured"]:
         blockers.append("尚无 human_verified 广东企业 Golden，不能冻结正式质量阈值")
     elif not human_quality_gate["eligible"]:
@@ -237,6 +317,8 @@ def _render_markdown(report: dict) -> str:
         "",
         f"- AkShare 公开基线：{'通过' if checks['akshare_public_baseline']['passed'] else '失败'}",
         f"- 广东质量烟测：{'通过' if checks['guangdong_quality_smoke']['passed'] else '失败'}",
+        f"- 统一智能体入口：{'通过' if checks['company_investigation_agent_entry']['passed'] else '失败'}",
+        f"- 意图与输入输出一致性：{'通过' if checks['investigation_quality']['passed'] else '失败'}",
         f"- 人工 Golden 门禁：{human_gate_status}",
         f"- 安全性能基线：{'通过' if checks['safe_performance']['passed'] else '失败'}",
         f"- 企业基本信息 P95：{scenario['latency']['p95_ms']} ms",

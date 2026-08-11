@@ -1,8 +1,8 @@
 <script setup>
-import { reactive, watch } from 'vue'
-import { Network, SearchCheck, Send } from 'lucide-vue-next'
+import { reactive } from 'vue'
+import { FileText, Send } from 'lucide-vue-next'
 
-import { QUICK_QUESTIONS } from '@/utils/companyDueDiligence'
+import { FULL_REPORT_SHORTCUT, QUICK_QUESTIONS } from '@/utils/companyDueDiligence'
 
 defineProps({
   disabled: { type: Boolean, default: true },
@@ -12,62 +12,65 @@ defineProps({
 const emit = defineEmits(['submit'])
 
 const form = reactive({
-  mode: 'qa',
-  question: QUICK_QUESTIONS[0],
+  message: QUICK_QUESTIONS[0],
+  startDate: '',
   asOf: '',
   hopLimit: 3,
   topK: 10,
   includeLowConfidence: false
 })
 
-watch(
-  () => form.mode,
-  (mode) => {
-    if (mode === 'graph') form.question = '该企业有哪些最多三跳的关联路径？'
-    if (mode === 'evidence') form.question = '该企业有哪些处罚、许可、专利、产品或新闻证据？'
-  }
-)
-
 const submit = () => emit('submit', { ...form })
+const createFullReport = () =>
+  emit('submit', { ...form, message: '', shortcut: FULL_REPORT_SHORTCUT })
 </script>
 
 <template>
   <section class="question-panel">
-    <div class="mode-row">
-      <a-radio-group v-model:value="form.mode" button-style="solid" :disabled="disabled">
-        <a-radio-button value="qa">简单问答</a-radio-button>
-        <a-radio-button value="graph"><Network size="14" /> 多跳关系</a-radio-button>
-        <a-radio-button value="evidence"><SearchCheck size="14" /> 证据检索</a-radio-button>
-      </a-radio-group>
-    </div>
-
     <div class="quick-questions">
       <button
         v-for="question in QUICK_QUESTIONS"
         :key="question"
         type="button"
         :disabled="disabled"
-        @click="form.question = question"
+        @click="form.message = question"
       >
-        {{ question.replace('是什么？', '').replace('有哪些？', '') }}
+        {{ question.replace('是什么？', '').replace('有哪些？', '').replace('情况如何？', '') }}
       </button>
     </div>
 
     <a-textarea
-      v-model:value="form.question"
+      v-model:value="form.message"
       :disabled="disabled"
-      :auto-size="{ minRows: 3, maxRows: 7 }"
-      placeholder="输入需要核查的企业问题"
+      :auto-size="{ minRows: 4, maxRows: 9 }"
+      placeholder="例如：请分析这家企业近三年的关系和风险；或生成完整尽调报告"
+      @press-enter.ctrl="submit"
     />
 
     <div class="advanced-row">
-      <label>业务时点 <input v-model="form.asOf" type="date" :disabled="disabled" /></label>
-      <label>最多跳数 <a-input-number v-model:value="form.hopLimit" :min="1" :max="3" :disabled="disabled" /></label>
-      <label>证据条数 <a-input-number v-model:value="form.topK" :min="1" :max="50" :disabled="disabled" /></label>
-      <a-checkbox v-model:checked="form.includeLowConfidence" :disabled="disabled">显示低置信度线索</a-checkbox>
+      <label>开始日期 <input v-model="form.startDate" type="date" :disabled="disabled" /></label>
+      <label>截止日期 <input v-model="form.asOf" type="date" :disabled="disabled" /></label>
+      <label
+        >最多跳数
+        <a-input-number v-model:value="form.hopLimit" :min="1" :max="3" :disabled="disabled"
+      /></label>
+      <label
+        >结果上限 <a-input-number v-model:value="form.topK" :min="1" :max="50" :disabled="disabled"
+      /></label>
+      <a-checkbox v-model:checked="form.includeLowConfidence" :disabled="disabled"
+        >包含低置信度线索</a-checkbox
+      >
+    </div>
+
+    <div class="action-row">
+      <span>系统自动理解主题、时间、展示形式和交付方式。</span>
+      <a-button :disabled="disabled" :loading="loading" @click="createFullReport">
+        <template #icon><FileText size="15" /></template>
+        生成完整尽调报告
+      </a-button>
       <a-button type="primary" :loading="loading" :disabled="disabled" @click="submit">
         <template #icon><Send size="15" /></template>
-        开始查询
+        开始调查
       </a-button>
     </div>
   </section>
@@ -77,12 +80,6 @@ const submit = () => emit('submit', { ...form })
 .question-panel {
   display: grid;
   gap: 14px;
-}
-
-.mode-row :deep(.ant-radio-button-wrapper) {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
 }
 
 .quick-questions {
@@ -107,12 +104,15 @@ const submit = () => emit('submit', { ...form })
   }
 }
 
-.advanced-row {
+.advanced-row,
+.action-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 12px;
+}
 
+.advanced-row {
   label {
     display: inline-flex;
     align-items: center;
@@ -127,16 +127,26 @@ const submit = () => emit('submit', { ...form })
     border-radius: 6px;
     color: var(--gray-800);
   }
+}
 
-  :deep(.ant-btn) {
-    margin-left: auto;
+.action-row {
+  justify-content: flex-end;
+
+  span {
+    margin-right: auto;
+    color: var(--gray-500);
+    font-size: 12px;
   }
 }
 
 @media (max-width: 760px) {
-  .advanced-row :deep(.ant-btn) {
-    width: 100%;
-    margin-left: 0;
+  .action-row {
+    align-items: stretch;
+    flex-direction: column;
+
+    span {
+      margin-right: 0;
+    }
   }
 }
 </style>

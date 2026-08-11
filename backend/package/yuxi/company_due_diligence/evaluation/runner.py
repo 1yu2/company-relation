@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 
+from yuxi.company_due_diligence.agent.service import CompanyDueDiligenceAgent, company_due_diligence_agent
 from yuxi.company_due_diligence.evaluation.dataset import EvaluationDataset, EvaluationSample
 from yuxi.company_due_diligence.evaluation.metrics import (
     QualityMetrics,
@@ -92,9 +93,11 @@ class QualityEvaluationRunner:
         self,
         qa_service: CompanyQuestionService | None = None,
         report_service: DueDiligenceReportService | None = None,
+        agent: CompanyDueDiligenceAgent | None = None,
     ) -> None:
         self._qa_service = qa_service or company_question_service
         self._report_service = report_service or due_diligence_report_service
+        self._agent = agent or company_due_diligence_agent
 
     async def run(
         self,
@@ -174,6 +177,8 @@ class QualityEvaluationRunner:
         try:
             if sample.qa_request is not None:
                 prediction = (await self._qa_service.query(sample.qa_request)).model_dump(mode="json")
+            elif sample.investigation_request is not None:
+                prediction = (await self._agent.investigate(sample.investigation_request)).model_dump(mode="json")
             else:
                 prediction = (
                     await self._report_service.generate_inline(
@@ -219,6 +224,20 @@ def _regression_gate(strict_metrics: QualityMetrics) -> QualityRegressionGate:
         reasons.append("人工 Golden 证据覆盖率未达到 100%")
     if strict_metrics.report_completeness.total and strict_metrics.report_completeness.rate != 1:
         reasons.append("人工 Golden 报告章节完整率未达到 100%")
+    if strict_metrics.topic_accuracy.total and strict_metrics.topic_accuracy.rate != 1:
+        reasons.append("人工 Golden 意图主题准确率未达到 100%")
+    if strict_metrics.presentation_accuracy.total and strict_metrics.presentation_accuracy.rate != 1:
+        reasons.append("人工 Golden presentation 匹配率未达到 100%")
+    if strict_metrics.tool_recall.total and strict_metrics.tool_recall.rate != 1:
+        reasons.append("人工 Golden 必要工具召回率未达到 100%")
+    if strict_metrics.forbidden_tool_avoidance.total and strict_metrics.forbidden_tool_avoidance.rate != 1:
+        reasons.append("人工 Golden 无关工具规避率未达到 100%")
+    if strict_metrics.claim_ledger_consistency.total and strict_metrics.claim_ledger_consistency.rate != 1:
+        reasons.append("人工 Golden Claim Ledger 一致率未达到 100%")
+    if strict_metrics.topic_coverage.total and strict_metrics.topic_coverage.rate != 1:
+        reasons.append("人工 Golden 输入主题覆盖率未达到 100%")
+    if strict_metrics.irrelevant_topic_avoidance.total and strict_metrics.irrelevant_topic_avoidance.rate != 1:
+        reasons.append("人工 Golden 无关主题规避率未达到 100%")
     if strict_metrics.strict_pass_rate.rate != 1:
         reasons.append("存在人工 Golden 严格失败样本")
     return QualityRegressionGate(eligible=True, passed=not reasons, reasons=reasons)
@@ -240,7 +259,7 @@ def aggregate_grouped_metrics(samples, results, key_builder) -> dict[str, Qualit
 
 def _sample_input(sample: EvaluationSample) -> dict:
     """保留逐题详情需要的脱敏问答或报告输入。"""
-    request = sample.qa_request or sample.report_request
+    request = sample.qa_request or sample.report_request or sample.investigation_request
     return request.model_dump(mode="json")
 
 

@@ -15,6 +15,7 @@ from yuxi.company_due_diligence.evaluation.dataset import (
     ReviewStatus,
 )
 from yuxi.company_due_diligence.qa.models import CompanyQuestionRequest
+from yuxi.company_due_diligence.agent.models import CompanyInvestigationRequest, InvestigationTopic
 
 
 def _sample(sample_id: str, review_status: ReviewStatus) -> EvaluationSample:
@@ -95,6 +96,23 @@ def test_sample_type_must_match_exactly_one_request():
             review_status=ReviewStatus.SOURCE_DERIVED_UNREVIEWED,
             expected=GoldenExpected(refused=True),
         )
+
+
+def test_investigation_sample_accepts_intent_golden():
+    """数据集应支持统一领域智能体输入和意图 Golden。"""
+    sample = EvaluationSample(
+        sample_id="investigation",
+        sample_type=EvaluationSampleType.INVESTIGATION,
+        domain="intent",
+        review_status=ReviewStatus.SOURCE_DERIVED_UNREVIEWED,
+        investigation_request=CompanyInvestigationRequest(
+            company_context={"eid": "eid-1"},
+            message="股东有哪些？",
+        ),
+        expected=GoldenExpected(topics=[InvestigationTopic.SHAREHOLDERS]),
+    )
+
+    assert sample.investigation_request.message == "股东有哪些？"
 
 
 def test_human_verified_sample_requires_review_audit_fields():
