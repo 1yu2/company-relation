@@ -14,7 +14,7 @@
 
 ## 交付物
 
-- 独立企业尽调评测路由或工作台标签页。
+- 唯一企业尽调评测路由 `/company-due-diligence`。
 - 数据集、质量运行和性能运行三个区域。
 - 总体指标、分类指标、策略对比和历史运行对比。
 - 逐题错误、首错归因和报告章节详情。
@@ -25,7 +25,7 @@
 ## 预计修改范围
 
 - `web/src/apis/company_due_diligence_api.js`
-- `web/src/views/CompanyDueDiligenceEvaluationView.vue`
+- `web/src/views/CompanyDueDiligenceView.vue`
 - `web/src/components/company-due-diligence/evaluation/DatasetPanel.vue`
 - `web/src/components/company-due-diligence/evaluation/QualityRunPanel.vue`
 - `web/src/components/company-due-diligence/evaluation/QualityResultDetail.vue`
@@ -94,6 +94,8 @@
 
 ## 当前验收记录
 
+- 2026 年 8 月 12 日，评测区域合并到 `CompanyDueDiligenceView.vue`，原独立评测视图删除；页面不再包含企业搜索、问答结果或报告任务。
+- 旧 `/company-due-diligence-evaluations` 路由重定向到 `/company-due-diligence`，侧边栏只保留“尽调评测”。
 - 已完成数据集、质量运行和性能运行三个区域，展示版本/checksum/业务时点/人工复核率、后端分类指标、逐题差异、首错归因和运行历史对比。
 - 性能区域实现安全/真实库模式、硬参数限制、二次确认、P50/P95/P99、吞吐、错误/超时、分段耗时、连接池与 RSS 展示。
 - 前端单元测试、ESLint 和生产构建通过；`2026-08-11` 管理员部署态接口联调完成质量与性能运行、进度、详情和导出闭环，验收通过。

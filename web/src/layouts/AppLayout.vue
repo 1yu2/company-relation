@@ -3,7 +3,6 @@ import { ref, onMounted, computed, provide, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import {
   BarChart3,
-  Building2,
   ClipboardList,
   FlaskConical,
   LibraryBig,
@@ -139,14 +138,9 @@ const mainList = computed(() => {
 
   if (userStore.isAdmin) {
     items.push({
-      name: '企业尽调',
-      path: '/company-due-diligence',
-      icon: Building2,
-      activeIcon: Building2
-    })
-    items.push({
       name: '尽调评测',
-      path: '/company-due-diligence-evaluations',
+      path: '/company-due-diligence',
+      activePaths: ['/company-due-diligence', '/company-due-diligence-evaluations'],
       icon: FlaskConical,
       activeIcon: FlaskConical
     })

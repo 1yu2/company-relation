@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from yuxi.agents.toolkits import service as tool_service
 
@@ -46,3 +47,32 @@ def test_get_tool_metadata_includes_config_guide(monkeypatch):
     ]
 
     tool_service._metadata_cache.clear()
+
+
+async def test_resolve_configured_runtime_tools_includes_non_buildin_local_tool(monkeypatch):
+    """按名称配置的领域工具必须进入智能体运行时，而不受展示分类限制。"""
+    company_tool = SimpleNamespace(name="investigate_company")
+    buildin_tool = SimpleNamespace(name="ask_user_question")
+
+    monkeypatch.setattr(
+        tool_service,
+        "get_tool_instances_by_category",
+        lambda category: {
+            "buildin": [buildin_tool],
+            "company_due_diligence": [company_tool],
+        }.get(category, []),
+    )
+    monkeypatch.setattr(
+        "yuxi.agents.mcp.service.get_enabled_mcp_tools",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        "yuxi.agents.middlewares.skills.resolve_skill_gated_tools",
+        lambda _context: [],
+    )
+
+    tools = await tool_service.resolve_configured_runtime_tools(
+        SimpleNamespace(tools=["investigate_company"], mcps=[])
+    )
+
+    assert tools == [company_tool]

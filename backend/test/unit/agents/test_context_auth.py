@@ -145,8 +145,18 @@ async def test_normalize_agent_context_config_expands_null_and_filters_explicit_
         "yuxi.agents.toolkits.service",
         types.SimpleNamespace(
             get_tool_metadata=lambda category=None: [
-                {"slug": "ask_user_question", "name": "Ask User", "description": ""},
-                {"slug": "web_search", "name": "Web Search", "description": ""},
+                {
+                    "slug": "ask_user_question",
+                    "name": "Ask User",
+                    "description": "",
+                    "category": "buildin",
+                },
+                {
+                    "slug": "investigate_company",
+                    "name": "企业尽调智能体",
+                    "description": "",
+                    "category": "company_due_diligence",
+                },
             ]
         ),
     )
@@ -189,7 +199,7 @@ async def test_normalize_agent_context_config_expands_null_and_filters_explicit_
         context_schema=ChatBotContext,
     )
 
-    assert normalized["tools"] == ["ask_user_question", "web_search"]
+    assert normalized["tools"] == ["ask_user_question", "investigate_company"]
     assert normalized["knowledges"] == ["kb-b"]
     assert normalized["mcps"] == ["mcp-a", "mcp-b"]
     assert normalized["skills"] == []

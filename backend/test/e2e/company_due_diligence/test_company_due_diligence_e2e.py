@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import uuid
 
 import pytest
 from sqlalchemy import text
@@ -25,6 +27,91 @@ async def _wait_for_detail(client, headers, path: str) -> dict:
             return detail
         await asyncio.sleep(0.2)
     raise AssertionError(f"任务未在预期时间内完成: {path}")
+
+
+async def _wait_for_agent_run(client, headers, run_id: str) -> dict:
+    """轮询主智能体 Run，直到返回完成或失败状态。"""
+    for _ in range(300):
+        response = await client.get(f"/api/agent/runs/{run_id}", headers=headers)
+        assert response.status_code == 200, response.text
+        run = response.json().get("run") or {}
+        if run.get("status") in {"completed", "failed", "cancelled", "interrupted"}:
+            return run
+        await asyncio.sleep(1)
+    raise AssertionError(f"主智能体 Run 未在预期时间内完成: {run_id}")
+
+
+async def test_main_chat_can_call_global_company_due_diligence_agent(e2e_client, e2e_headers):
+    """主聊天选择全局企业尽调智能体后应实际调用工具并落库工具结果。"""
+    agent_slug = "company-due-diligence"
+    thread_id = None
+    run_id = None
+    try:
+        agent_response = await e2e_client.get(f"/api/agent/{agent_slug}", headers=e2e_headers)
+        assert agent_response.status_code == 200, agent_response.text
+        agent = agent_response.json()["agent"]
+        context = (agent.get("config_json") or {}).get("context") or {}
+        assert agent["slug"] == agent_slug
+        assert "investigate_company" in context.get("tools", [])
+
+        thread_response = await e2e_client.post(
+            "/api/chat/thread",
+            json={
+                "agent_id": agent_slug,
+                "title": f"company-due-diligence-e2e-{uuid.uuid4().hex[:8]}",
+                "metadata": {"test": "company-due-diligence-main-chat"},
+            },
+            headers=e2e_headers,
+        )
+        assert thread_response.status_code == 200, thread_response.text
+        thread_id = str(thread_response.json().get("thread_id") or thread_response.json().get("id"))
+        assert thread_id and thread_id != "None"
+
+        request_id = f"company-dd-e2e-{uuid.uuid4().hex[:16]}"
+        run_response = await e2e_client.post(
+            "/api/agent/runs",
+            json={
+                "query": "当前数据覆盖哪些企业？",
+                "agent_slug": agent_slug,
+                "thread_id": thread_id,
+                "meta": {"request_id": request_id},
+            },
+            headers=e2e_headers,
+        )
+        assert run_response.status_code == 200, run_response.text
+        run_id = str(run_response.json().get("run_id"))
+        assert run_id and run_id != "None"
+
+        run = await _wait_for_agent_run(e2e_client, e2e_headers, run_id)
+        assert run["status"] == "completed", run
+
+        result_response = await e2e_client.get(f"/api/agent/runs/{run_id}/result", headers=e2e_headers)
+        assert result_response.status_code == 200, result_response.text
+        result = result_response.json()
+        assert result["status"] == "completed", result
+        assert result["output"], result
+
+        history_response = await e2e_client.get(f"/api/chat/thread/{thread_id}/history", headers=e2e_headers)
+        assert history_response.status_code == 200, history_response.text
+        history = history_response.json().get("history") or []
+        tool_calls = [tool_call for message in history for tool_call in message.get("tool_calls") or []]
+        investigate_calls = [call for call in tool_calls if call.get("name") == "investigate_company"]
+        assert investigate_calls, json.dumps(history, ensure_ascii=False)
+        assert any(call.get("status") == "success" for call in investigate_calls), json.dumps(
+            investigate_calls, ensure_ascii=False
+        )
+    finally:
+        if run_id:
+            run = await e2e_client.get(f"/api/agent/runs/{run_id}", headers=e2e_headers)
+            if run.status_code == 200 and (run.json().get("run") or {}).get("status") not in {
+                "completed",
+                "failed",
+                "cancelled",
+                "interrupted",
+            }:
+                await e2e_client.post(f"/api/agent/runs/{run_id}/cancel", headers=e2e_headers)
+        if thread_id:
+            await e2e_client.delete(f"/api/chat/thread/{thread_id}", headers=e2e_headers)
 
 
 async def test_admin_can_complete_investigation_report_quality_and_performance_e2e(e2e_client, e2e_headers):

@@ -27,7 +27,7 @@ flowchart TD
     T007[TASK-007 统一报告意图与工作流]
     T008[TASK-008 全链路质量评测]
     T009[TASK-009 系统性能评测]
-    T010[TASK-010 前端智能体调查工作台]
+    T010[TASK-010 主聊天调查入口与页面收敛]
     T011[TASK-011 前端全链路评测工作台]
     T012[TASK-012 端到端回归与发布]
     T013[TASK-013 全局共享与自动评测]
@@ -71,7 +71,7 @@ flowchart TD
 | Wave 1 | `TASK-001` | 串行起点 | 只读连接池、健康检查和安全测试通过 |
 | Wave 2 | `TASK-002` | 依赖 Wave 1 | DTO、来源契约和身份解析冻结 |
 | Wave 3 | `TASK-003`、`TASK-004`、`TASK-005` | 三个任务写入范围分离，可并行 | SQL、图谱、文本三种检索服务可独立测试 |
-| Wave 4 | `TASK-006`、`TASK-007`、`TASK-010` | 后端调查编排和报告可并行；前端先按冻结契约 mock，联调依赖后端 | 企业上下文、统一意图、动态输出和报告工作台可用 |
+| Wave 4 | `TASK-006`、`TASK-007`、`TASK-010` | 后端调查编排和报告可并行；前端联调依赖后端 | 企业上下文、统一意图、动态输出和主聊天调用可用 |
 | Wave 5 | `TASK-008`、`TASK-009`、`TASK-011` | 质量、性能和评测前端可并行；前端联调依赖评测 API | 质量和性能结果可在前端查看与导出 |
 | Wave 6 | `TASK-012` | 串行收口 | 关键链路 E2E、回归门禁和文档全部通过 |
 | Wave 7 | `TASK-006`、`TASK-007`、`TASK-008`、`TASK-010`、`TASK-011`、`TASK-012` 升级项 | 先冻结意图/响应契约，再并行改后端编排、报告和前端，最后补评测与发布门禁 | 领域智能体统一入口、输入输出一致性和动态展示通过新 Golden |
@@ -90,7 +90,7 @@ flowchart TD
 | [`TASK-007`](TASK-007-due-diligence-report-workflow.md) | 统一报告意图与工作流 | 并行 | `TASK-003`、`TASK-004`、`TASK-005`、升级后的 `TASK-006` 契约 | 已完成 |
 | [`TASK-008`](TASK-008-quality-evaluation.md) | 全链路质量评测 | 并行 | `TASK-006`、`TASK-007` | 自动评测升级已完成；人工 Golden 阻塞正式门禁 |
 | [`TASK-009`](TASK-009-performance-evaluation.md) | 系统性能评测 | 并行 | `TASK-006`、`TASK-007` | 已完成 |
-| [`TASK-010`](TASK-010-frontend-query-and-report.md) | 前端智能体调查工作台 | 条件并行 | 统一意图/响应契约，联调依赖 `TASK-006`、`TASK-007` | 已完成 |
+| [`TASK-010`](TASK-010-frontend-query-and-report.md) | 主聊天调查入口与页面收敛 | 条件并行 | 统一意图/响应契约，联调依赖 `TASK-006`、`TASK-007` | 已完成 |
 | [`TASK-011`](TASK-011-frontend-evaluation-workbench.md) | 前端全链路评测工作台 | 条件并行 | `TASK-008`、`TASK-009` API 契约 | 已完成 |
 | [`TASK-012`](TASK-012-e2e-regression-and-release.md) | 端到端回归与发布门禁 | 串行收口 | `TASK-006` 至 `TASK-011` | 自动门禁已完成；正式发布受人工 Golden 阻塞 |
 | [`TASK-013`](TASK-013-global-shared-auto-evaluation.md) | 全局共享智能体与无企业必填的自动评测 | 横切升级 | `TASK-006` 至 `TASK-012` | 已完成；正式发布仍受人工 Golden 阻塞 |
@@ -101,7 +101,8 @@ flowchart TD
 
 - 平台启动时幂等注册唯一 slug 为 `company-due-diligence` 的全局共享 Agent，复用 `share_config.access_level=global`，不按用户复制配置。
 - `POST /api/company-due-diligence/investigations`、`CompanyDueDiligenceAgent` 和主智能体工具 `investigate_company` 已共用同一领域服务；旧 `/query`、`/reports` 保持兼容。
-- 工作台直接显示单一自然语言输入，企业搜索仅作为可选上下文；问题可自动提取企业全称、股票代码和信用代码，无企业全局问题返回 `global_scope`，企业依赖问题返回 `needs_context`。
+- 主聊天直接接收自然语言输入；问题可自动提取企业全称、股票代码和信用代码，无企业全局问题返回 `global_scope`，企业依赖问题返回 `needs_context`。
+- `/company-due-diligence` 只保留全局质量/性能评测，旧评测路由兼容重定向；查询、关系和报告不再形成独立页面链路。
 - 真实目录扫描确认 `924` 家企业，并输出股东、产品、融资、风险、许可、知识产权覆盖和关键字段非空率；自动评测按五类样本族生成 `source_derived` 数据集。
 - 性能运行不要求企业引用，自动选样并输出全局分位数、接口/意图/工具链/数据源、连接池和 Tasker 排队等待；最终性能报告不保留企业引用明细。
 - `TASK-008` 已增加企业解析、主题、时间、深度、展示、交付、必要/禁止工具、Claim Ledger、主题覆盖和无关主题规避指标；当前没有 `human_verified` 广东企业 Golden，不能冻结正式质量阈值。

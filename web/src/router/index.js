@@ -99,16 +99,7 @@ const router = createRouter({
     },
     {
       path: '/company-due-diligence-evaluations',
-      name: 'company-due-diligence-evaluations',
-      component: AppLayout,
-      children: [
-        {
-          path: '',
-          name: 'CompanyDueDiligenceEvaluations',
-          component: () => import('../views/CompanyDueDiligenceEvaluationView.vue'),
-          meta: { keepAlive: false, requiresAuth: true, requiresAdmin: true }
-        }
-      ]
+      redirect: '/company-due-diligence'
     },
     {
       path: '/agent-manage',

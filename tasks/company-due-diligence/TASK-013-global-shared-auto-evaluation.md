@@ -183,7 +183,6 @@ GET  /api/company-due-diligence/evaluations/performance-runs/global
 - `backend/test/e2e/company_due_diligence/`
 - `web/src/apis/company_due_diligence_api.js`
 - `web/src/views/CompanyDueDiligenceView.vue`
-- `web/src/views/CompanyDueDiligenceEvaluationView.vue`
 - `web/src/components/company-due-diligence/`
 - `web/test/unit/company-due-diligence/`
 
@@ -223,7 +222,8 @@ GET  /api/company-due-diligence/evaluations/performance-runs/global
 - 2026 年 8 月 11 日真实只读扫描确认分母为 `924` 家企业；覆盖摘要包含股东、产品、融资、风险、许可、知识产权、记录数和关键字段非空率。
 - 自动评测生成字段覆盖、关系一致、证据来源、报告完整、拒答与歧义五类 `source_derived` 样本，保留数据版本、来源表、来源记录键、checksum、抽样策略、分母和跳过原因。
 - 全局性能报告增加接口、意图、工具链、数据源请求、MySQL 连接池、Tasker 排队等待和 worker 维度；Tasker payload 与最终报告均不保留企业名称、信用代码或企业引用明细。
-- 前端工作台、质量评测和性能评测入口均取消企业必填阻断，并展示全局覆盖与性能维度。
+- 企业调查与报告统一进入主聊天；唯一评测页面取消企业必填阻断，并展示全局覆盖与性能维度。
+- 运行时工具解析、配置选项和历史 Agent 修复均覆盖 `investigate_company`，避免“配置中有工具但主聊天未绑定”的失效状态。
 - Docker 验证已覆盖后端单元、真实集成、管理员 HTTP E2E、前端单测、ESLint 和生产构建；正式发布结论仍等待 `human_verified` 广东企业 Golden。
 
 ## 测试范围

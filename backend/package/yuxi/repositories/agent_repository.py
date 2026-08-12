@@ -270,19 +270,50 @@ class AgentRepository:
         )
 
     async def ensure_company_due_diligence_agent(self, *, created_by: str | None = None) -> Agent:
-        """幂等落库唯一的全局共享企业尽调智能体。"""
-        return await self._ensure_builtin_agent(
-            slug=COMPANY_DUE_DILIGENCE_AGENT_SLUG,
-            backend_id=DEFAULT_AGENT_BACKEND_ID,
-            name=COMPANY_DUE_DILIGENCE_AGENT_NAME,
-            description=COMPANY_DUE_DILIGENCE_AGENT_DESCRIPTION,
-            config_context={
-                "system_prompt": COMPANY_DUE_DILIGENCE_SYSTEM_PROMPT,
-                "tools": ["investigate_company"],
-            },
-            is_subagent=False,
-            created_by=created_by,
-        )
+        """幂等落库并修复唯一的全局共享企业尽调智能体。"""
+        agent = await self.get_by_slug(COMPANY_DUE_DILIGENCE_AGENT_SLUG)
+        if agent is None:
+            return await self._ensure_builtin_agent(
+                slug=COMPANY_DUE_DILIGENCE_AGENT_SLUG,
+                backend_id=DEFAULT_AGENT_BACKEND_ID,
+                name=COMPANY_DUE_DILIGENCE_AGENT_NAME,
+                description=COMPANY_DUE_DILIGENCE_AGENT_DESCRIPTION,
+                config_context={
+                    "system_prompt": COMPANY_DUE_DILIGENCE_SYSTEM_PROMPT,
+                    "tools": ["investigate_company"],
+                },
+                is_subagent=False,
+                created_by=created_by,
+            )
+
+        config_json = dict(agent.config_json or {})
+        context = dict(config_json.get("context") or {})
+        tools = [item for item in context.get("tools") or [] if isinstance(item, str)]
+        changed = False
+
+        if "investigate_company" not in tools:
+            context["tools"] = [*tools, "investigate_company"]
+            changed = True
+        if not context.get("system_prompt"):
+            context["system_prompt"] = COMPANY_DUE_DILIGENCE_SYSTEM_PROMPT
+            changed = True
+        if agent.share_config != DEFAULT_SHARE_CONFIG:
+            agent.share_config = DEFAULT_SHARE_CONFIG.copy()
+            changed = True
+        if agent.backend_id != DEFAULT_AGENT_BACKEND_ID or agent.is_subagent:
+            agent.backend_id = DEFAULT_AGENT_BACKEND_ID
+            agent.is_subagent = False
+            changed = True
+
+        if changed:
+            config_json["context"] = context
+            agent.config_json = config_json
+            agent.updated_by = created_by
+            agent.updated_at = utc_now_naive()
+            await self.db.commit()
+            await self.db.refresh(agent)
+
+        return agent
 
     async def _ensure_builtin_agent(
         self,

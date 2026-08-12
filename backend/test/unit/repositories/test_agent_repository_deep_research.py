@@ -92,3 +92,32 @@ async def test_ensure_company_due_diligence_agent_creates_one_global_instance(mo
     assert agent.is_subagent is False
     assert agent.share_config == DEFAULT_SHARE_CONFIG
     assert agent.config_json["context"]["tools"] == ["investigate_company"]
+
+
+@pytest.mark.asyncio
+async def test_ensure_company_due_diligence_agent_repairs_legacy_runtime_config(monkeypatch):
+    """历史企业尽调 Agent 缺少工具或全局权限时应在启动阶段自动修复。"""
+    db = CollectingDb()
+    repo = AgentRepository(db)
+    agent = SimpleNamespace(
+        slug=COMPANY_DUE_DILIGENCE_AGENT_SLUG,
+        backend_id=SUB_AGENT_BACKEND_ID,
+        is_subagent=True,
+        share_config={"access_level": "user", "department_ids": [], "user_uids": ["u1"]},
+        config_json={"context": {"model": "deepseek:deepseek-chat"}},
+        updated_by=None,
+        updated_at=None,
+    )
+    monkeypatch.setattr(repo, "get_by_slug", AsyncMock(return_value=agent))
+
+    result = await repo.ensure_company_due_diligence_agent(created_by="system")
+
+    assert result is agent
+    assert agent.backend_id == DEFAULT_AGENT_BACKEND_ID
+    assert agent.is_subagent is False
+    assert agent.share_config == DEFAULT_SHARE_CONFIG
+    assert agent.config_json["context"]["model"] == "deepseek:deepseek-chat"
+    assert agent.config_json["context"]["tools"] == ["investigate_company"]
+    assert agent.config_json["context"]["system_prompt"].strip()
+    db.commit.assert_awaited_once()
+    db.refresh.assert_awaited_once_with(agent)

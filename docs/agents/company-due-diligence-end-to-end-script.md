@@ -20,16 +20,14 @@
 
 **逐字稿：**
 
-> 企业尽调不是脱离平台的独立查询工具，而是一个领域智能体。它既可以在独立企业尽调工作台中使用，也可以由 Yuxi 主智能体或其他 SubAgent 调用。
+> 企业尽调不是脱离平台的独立查询工具，而是主聊天中的全局共享领域智能体。独立页面只用于查看和启动全局质量/性能评测。
 >
-> 两个入口必须复用同一个 slug 为 `company-due-diligence` 的全局 Agent 和同一个 `CompanyDueDiligenceAgent`。如果工作台直接调用一套查询 API，而主智能体再单独实现一套企业查询逻辑，后续会出现企业解析、意图理解、来源规则和输出格式不一致。
+> 主聊天必须使用 slug 为 `company-due-diligence` 的全局 Agent，并通过 `investigate_company` 进入同一个 `CompanyDueDiligenceAgent`。评测页面只消费评测 API，不再维护第二套调查输入输出。
 >
 > 领域智能体内部包含企业解析、结构化查询、图路径、证据检索、报告生成和质量校验工具。用户看到的是调查能力，系统内部才看到执行工具。
 
 ```text
-Yuxi 主智能体 / SubAgent ─┐
-                           ├── CompanyDueDiligenceAgent
-企业尽调工作台 / 报告按钮 ─┘          │
+主聊天企业尽调 Agent ─────── CompanyDueDiligenceAgent
                                       ├── EntityResolutionTool
                                       ├── StructuredQueryTool
                                       ├── GraphPathTool
@@ -96,7 +94,7 @@ flowchart LR
 }
 ```
 
-两个入口都不能直接绕到某个数据库查询或独立报告实现，而要进入同一个领域智能体。
+主聊天不能直接绕到某个数据库查询或独立报告实现，而要进入同一个领域智能体。
 
 ## 五、第二阶段：企业上下文如何建立
 
@@ -399,7 +397,7 @@ flowchart LR
 
 当前主路径使用 `POST /api/company-due-diligence/investigations` 和单一自然语言输入，`question` 是唯一必填业务字段。问题中的企业全称、股票代码和信用代码会自动解析；无企业的白名单全局问题返回 `global_scope`，企业依赖问题缺少唯一主体时返回 `needs_context`。领域智能体返回 `understood_request`、`presentation`、Claim Ledger 和必要的同步结果/异步任务。旧 `company_ref + question + mode` 与独立报告接口继续作为兼容入口。在线 LLM 意图节点尚未接入，但确定性规则已覆盖当前验收样本。
 
-主智能体工具位于 `backend/package/yuxi/agents/toolkits/company_due_diligence/tools.py`，它只负责把主智能体参数转换成 `CompanyInvestigationRequest`。企业身份解析、工具计划、报告任务和来源校验仍由 `CompanyDueDiligenceAgent.investigate` 完成，因此独立工作台和系统主智能体不会形成两套事实逻辑。
+主智能体工具位于 `backend/package/yuxi/agents/toolkits/company_due_diligence/tools.py`，它只负责把主智能体参数转换成 `CompanyInvestigationRequest`。企业身份解析、工具计划、报告任务和来源校验仍由 `CompanyDueDiligenceAgent.investigate` 完成，因此主聊天不会形成第二套事实逻辑。
 
 ### 15.2 正式质量门禁仍缺人工 Golden
 

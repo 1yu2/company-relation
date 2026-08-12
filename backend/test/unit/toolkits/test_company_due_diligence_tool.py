@@ -39,7 +39,7 @@ async def test_main_agent_tool_reuses_domain_agent_service(monkeypatch):
     monkeypatch.setattr(tools.company_due_diligence_agent, "investigate", investigate)
 
     result = await tools.investigate_company.coroutine(
-        message="这家企业的股东有哪些？",
+        question="这家企业的股东有哪些？",
         company_name="示例企业有限公司",
         confirmed_eid="eid-1",
         target_company_name=None,
@@ -75,7 +75,7 @@ async def test_main_agent_tool_leaves_unconfirmed_company_for_domain_resolution(
     monkeypatch.setattr(tools.company_due_diligence_agent, "investigate", investigate)
 
     await tools.investigate_company.coroutine(
-        message="示例企业有限公司近年的风险有哪些？",
+        question="示例企业有限公司近年的风险有哪些？",
         company_name=None,
         confirmed_eid=None,
         target_company_name=None,
@@ -84,4 +84,13 @@ async def test_main_agent_tool_leaves_unconfirmed_company_for_domain_resolution(
 
     request = investigate.await_args.args[0]
     assert request.company_context is None
-    assert request.message == "示例企业有限公司近年的风险有哪些？"
+    assert request.question == "示例企业有限公司近年的风险有哪些？"
+
+
+def test_main_agent_tool_schema_requires_question_and_accepts_legacy_message():
+    """模型看到的 schema 应要求 question，同时兼容历史 message 参数。"""
+    schema = tools.CompanyInvestigationToolInput.model_json_schema()
+
+    assert schema["required"] == ["question"]
+    assert "message" not in schema["properties"]
+    assert tools.CompanyInvestigationToolInput.model_validate({"message": "查询企业风险"}).question == "查询企业风险"

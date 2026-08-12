@@ -62,11 +62,11 @@
 | 查询与报告 | 已完成 | 17 类结构化查询、最多三跳、文本证据、十二章节报告和 JSON/Markdown 产物；管理员部署态 HTTP E2E 已通过 |
 | 结果质量评测 | 阻塞 | 严格指标、逐题差异、导出和烟测已完成；缺少 `human_verified` 广东企业 Golden |
 | 系统性能评测 | 已完成 | 安全/受控真实库模式、P50/P95/P99、吞吐、错误率、阶段耗时和连接池观测 |
-| 前端工作台 | 已完成 | 查询/报告与质量/性能评测两个管理员工作台，前端单测、Lint、构建和部署态接口联调通过 |
+| 前端入口 | 已完成 | 主聊天统一承载企业问答、关系查询和报告；独立页面只保留质量/性能评测，前端单测、Lint、构建和部署态接口联调通过 |
 | 发布门禁 | 阻塞 | 自动门禁与管理员 HTTP E2E 通过；仅缺少人工 `human_verified` Golden，在线 LLM 未启用作为非阻塞限制展示 |
-| 智能体输入输出升级 | 方案完成，待实现 | 统一企业上下文、调查意图、Claim Ledger、动态 `presentation`、单输入框和输入输出一致性评测 |
+| 智能体输入输出升级 | 已完成 | 全局共享 Agent、自然语言唯一输入、Claim Ledger、动态 `presentation` 和输入输出一致性评测已落地 |
 
-管理员登录后可访问 `/company-due-diligence` 和 `/company-due-diligence-evaluations`。本地开发直接使用不提交的 `.env`，仓库只提交脱敏 `.env.template`；发布报告生成到 `saves/company_due_diligence/release/`，不提交运行产物。
+登录用户在主聊天窗口选择“企业尽调智能体”后直接提问；管理员通过 `/company-due-diligence` 查看全局质量与性能评测，旧 `/company-due-diligence-evaluations` 自动重定向到该页面。当前部署已将企业尽调 Agent 绑定到通过连通性检查且支持工具调用的模型；其他部署也必须配置可用对话模型。本地开发使用不提交的 `.env`，发布报告生成到 `saves/company_due_diligence/release/`，不提交运行产物。
 
 相关文档：
 

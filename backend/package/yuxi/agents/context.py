@@ -445,8 +445,8 @@ async def resolve_agent_resource_options(
 
         options["tools"] = [
             _resource_option(tool["slug"], tool.get("name"), tool.get("description"))
-            for tool in get_tool_metadata(category="buildin")
-            if tool.get("slug")
+            for tool in get_tool_metadata()
+            if tool.get("slug") and tool.get("category", "buildin") in {"buildin", "company_due_diligence"}
         ]
     if "knowledges" in fields_to_load:
         from yuxi.knowledge.runtime import knowledge_base
