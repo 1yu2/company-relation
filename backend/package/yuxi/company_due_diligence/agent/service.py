@@ -18,7 +18,7 @@ from yuxi.company_due_diligence.agent.models import (
 from yuxi.company_due_diligence.agent.planner import (
     InvestigationPlanner,
     effective_message,
-    extract_company_mentions,
+    extract_company_references,
     investigation_planner,
     presentation_for,
 )
@@ -32,6 +32,7 @@ from yuxi.company_due_diligence.models import (
     EntityType,
     LatencyBreakdown,
     ResolutionStatus,
+    RequestScopeStatus,
     ResolvedCompany,
     SourceStatus,
 )
@@ -73,7 +74,21 @@ class CompanyDueDiligenceAgent:
         message = effective_message(request)
         primary_reference, target_reference = _references_from_request(request, message, plan)
         if primary_reference is None:
-            return _clarification_response(plan, "请先搜索确认企业，或在问题中提供企业完整名称。")
+            if plan.intent.delivery == DeliveryMethod.ASYNC_TASK:
+                return _clarification_response(
+                    plan,
+                    "生成报告需要唯一企业范围，请在问题中补充企业名称、股票代码或统一社会信用代码。",
+                )
+            query_result = await self._question_service.query(
+                CompanyQuestionRequest(
+                    question=message,
+                    hop_limit=request.hop_limit,
+                    top_k=request.top_k,
+                    include_low_confidence=request.include_low_confidence,
+                ),
+                plan=plan.query_plan,
+            )
+            return _query_without_company_response(plan, query_result)
 
         primary_resolution = await self._resolver.resolve(primary_reference)
         if primary_resolution.status != ResolutionStatus.RESOLVED or primary_resolution.company is None:
@@ -177,17 +192,17 @@ def _references_from_request(
     plan: InvestigationPlan,
 ) -> tuple[CompanyReference | None, CompanyReference | None]:
     """从已确认上下文和明确法律全称中选择主企业与目标企业。"""
-    mentions = extract_company_mentions(message)
+    references = extract_company_references(message)
     primary_reference = request.company_context.to_reference() if request.company_context else None
     target_reference = request.target_company_context.to_reference() if request.target_company_context else None
 
-    if primary_reference is None and mentions:
-        primary_reference = CompanyReference(name=mentions.pop(0))
+    if primary_reference is None and references:
+        primary_reference = references.pop(0)
     elif request.company_context and request.company_context.name:
-        mentions = [mention for mention in mentions if mention != request.company_context.name]
+        references = [reference for reference in references if reference.name != request.company_context.name]
 
-    if target_reference is None and _needs_target_company(plan.intent) and mentions:
-        target_reference = CompanyReference(name=mentions[0])
+    if target_reference is None and _needs_target_company(plan.intent) and references:
+        target_reference = references[0]
     return primary_reference, target_reference
 
 
@@ -225,6 +240,11 @@ def _query_response(
     )
     return CompanyInvestigationResponse(
         status=status,
+        scope_status=(
+            RequestScopeStatus.SOURCE_UNAVAILABLE
+            if query_result.scope_status == RequestScopeStatus.SOURCE_UNAVAILABLE
+            else RequestScopeStatus.RESOLVED
+        ),
         understood_request=_understood_request(plan.intent),
         company_context=_company_context(company),
         target_company_context=_company_context(target_company) if target_company else None,
@@ -260,7 +280,59 @@ def _resolution_response(
         summary = f"{subject}主数据源当前不可用，未执行后续调查。"
     else:
         summary = f"未找到可确认的{subject}，请提供标准全称或重新搜索。"
-    return _clarification_response(plan, summary, candidates=candidates, data_quality=data_quality)
+    status = (
+        InvestigationStatus.SOURCE_UNAVAILABLE
+        if data_quality.source_status == SourceStatus.UNAVAILABLE
+        else InvestigationStatus.NEEDS_CONTEXT
+        if candidates
+        else InvestigationStatus.NOT_FOUND
+    )
+    scope_status = (
+        RequestScopeStatus.SOURCE_UNAVAILABLE
+        if data_quality.source_status == SourceStatus.UNAVAILABLE
+        else RequestScopeStatus.NEEDS_CONTEXT
+        if candidates
+        else RequestScopeStatus.NOT_FOUND
+    )
+    return _clarification_response(
+        plan,
+        summary,
+        candidates=candidates,
+        data_quality=data_quality,
+        status=status,
+        scope_status=scope_status,
+    )
+
+
+def _query_without_company_response(
+    plan: InvestigationPlan,
+    query_result: CompanyQuestionResponse,
+) -> CompanyInvestigationResponse:
+    """把全局统计或需要上下文的问答结果映射为统一智能体输出。"""
+    if query_result.scope_status == RequestScopeStatus.GLOBAL_SCOPE:
+        status = InvestigationStatus.GLOBAL_SCOPE
+        intent = plan.intent
+    elif query_result.scope_status == RequestScopeStatus.SOURCE_UNAVAILABLE:
+        status = InvestigationStatus.SOURCE_UNAVAILABLE
+        intent = plan.intent.model_copy(update={"presentation": PresentationType.CLARIFICATION})
+    else:
+        status = InvestigationStatus.NEEDS_CONTEXT
+        intent = plan.intent.model_copy(update={"presentation": PresentationType.CLARIFICATION})
+    return CompanyInvestigationResponse(
+        status=status,
+        scope_status=query_result.scope_status,
+        understood_request=_understood_request(intent),
+        candidates=query_result.candidates,
+        global_result=query_result.global_result.model_dump(mode="json") if query_result.global_result else None,
+        summary=query_result.answer,
+        sources=query_result.sources,
+        data_quality=query_result.data_quality,
+        presentation=presentation_for(intent),
+        plan=plan.query_plan,
+        steps=query_result.steps,
+        projection_versions=query_result.projection_versions,
+        latency=query_result.latency,
+    )
 
 
 def _clarification_response(
@@ -269,6 +341,8 @@ def _clarification_response(
     *,
     candidates: list[CompanyCandidate] | None = None,
     data_quality: DataQuality | None = None,
+    status: InvestigationStatus = InvestigationStatus.NEEDS_CONTEXT,
+    scope_status: RequestScopeStatus = RequestScopeStatus.NEEDS_CONTEXT,
 ) -> CompanyInvestigationResponse:
     """返回不执行底层事实工具的最小澄清响应。"""
     intent = plan.intent.model_copy(
@@ -278,7 +352,8 @@ def _clarification_response(
         }
     )
     return CompanyInvestigationResponse(
-        status=InvestigationStatus.CLARIFICATION,
+        status=status,
+        scope_status=scope_status,
         understood_request=_understood_request(intent),
         candidates=candidates or [],
         summary=summary,

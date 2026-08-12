@@ -27,7 +27,7 @@ const buildColorPalette = () => {
       ['--color-success-500', '#52c41a'],
       ['--color-warning-500', '#faad14'],
       ['--color-error-500', '#ff4d4f'],
-      ['--color-accent-500', '#13c2c2']
+      ['--color-accent-500', '#a855f7']
     ]
 
     // Extended palette colors
@@ -62,7 +62,7 @@ const buildColorPalette = () => {
       '#52c41a',
       '#faad14',
       '#ff4d4f',
-      '#13c2c2',
+      '#a855f7',
       '#a394f7',
       '#9581cc',
       '#E8A035',

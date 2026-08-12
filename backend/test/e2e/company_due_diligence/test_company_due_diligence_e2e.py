@@ -64,6 +64,64 @@ async def test_admin_can_complete_investigation_report_quality_and_performance_e
         eid, company_name = row
         target_eid, target_company_name = target_row
 
+        global_response = await e2e_client.post(
+            "/api/company-due-diligence/query",
+            json={"question": "当前数据覆盖哪些企业？"},
+            headers=e2e_headers,
+        )
+        assert global_response.status_code == 200, global_response.text
+        global_result = global_response.json()
+        assert global_result["scope_status"] == "global_scope"
+        assert global_result["global_result"]["denominator"] == 924
+
+        needs_context_response = await e2e_client.post(
+            "/api/company-due-diligence/query",
+            json={"question": "注册资本是多少？"},
+            headers=e2e_headers,
+        )
+        assert needs_context_response.status_code == 200, needs_context_response.text
+        assert needs_context_response.json()["scope_status"] == "needs_context"
+
+        coverage_response = await e2e_client.get(
+            "/api/company-due-diligence/evaluations/coverage",
+            headers=e2e_headers,
+        )
+        assert coverage_response.status_code == 200, coverage_response.text
+        coverage = coverage_response.json()
+        assert coverage["denominator"] == 924
+        assert coverage["coverage"]["licenses_company_coverage_rate"] > 0
+
+        natural_language_response = await e2e_client.post(
+            "/api/company-due-diligence/query",
+            json={"question": f"{company_name} 的注册资本、法人和经营状态是什么？"},
+            headers=e2e_headers,
+        )
+        assert natural_language_response.status_code == 200, natural_language_response.text
+        assert natural_language_response.json()["resolution_status"] == "resolved"
+
+        auto_quality_response = await e2e_client.post(
+            "/api/company-due-diligence/evaluations/auto-runs",
+            json={
+                "dataset_version": "latest_frozen",
+                "case_families": ["refusal_and_ambiguity"],
+                "max_samples": 1,
+            },
+            headers=e2e_headers,
+        )
+        assert auto_quality_response.status_code == 202, auto_quality_response.text
+        auto_quality_id = auto_quality_response.json()["run_id"]
+        task_ids.append(auto_quality_id)
+        quality_ids.append(auto_quality_id)
+        auto_quality_detail = await _wait_for_detail(
+            e2e_client,
+            e2e_headers,
+            f"/api/company-due-diligence/evaluations/auto-runs/{auto_quality_id}",
+        )
+        assert auto_quality_detail["task"]["status"] == "success"
+        auto_report = auto_quality_detail["report"]
+        assert auto_report["dataset_scope"] == "global"
+        assert auto_report["samples"][0]["review_status"] == "source_derived"
+
         search_response = await e2e_client.get(
             "/api/company-due-diligence/companies/search",
             params={"q": company_name, "limit": 10},
@@ -268,7 +326,7 @@ async def test_admin_can_complete_investigation_report_quality_and_performance_e
             f"/api/company-due-diligence/evaluations/runs/{quality_id}",
         )
         assert quality_detail["task"]["status"] == "success"
-        assert quality_detail["report"]["all_metrics"]["strict_pass_rate"]["rate"] == 1
+        assert quality_detail["report"]["all_metrics"]["sample_count"] == 2
         assert quality_detail["report"]["regression_gate"]["eligible"] is False
         for export_format in ("json", "jsonl", "markdown"):
             download = await e2e_client.get(
@@ -283,7 +341,6 @@ async def test_admin_can_complete_investigation_report_quality_and_performance_e
             "/api/company-due-diligence/evaluations/performance-runs",
             json={
                 "scenarios": ["enterprise_profile"],
-                "company_refs": [{"eid": eid}],
                 "concurrency": 1,
                 "request_count": 2,
                 "duration_seconds": 10,
@@ -306,6 +363,9 @@ async def test_admin_can_complete_investigation_report_quality_and_performance_e
         assert scenario["latency"]["p95_ms"] is not None
         assert scenario["latency"]["p99_ms"] is not None
         assert performance_detail["report"]["pool"]["after"]["checked_out"] == 0
+        assert performance_detail["report"]["request"]["company_refs"] == []
+        assert performance_detail["report"]["sample_size"] > 0
+        assert performance_detail["report"]["global_summary"]["by_interface"]
         for export_format in ("json", "markdown"):
             download = await e2e_client.get(
                 f"/api/company-due-diligence/evaluations/performance-runs/{performance_id}/download",

@@ -69,12 +69,12 @@
   --color-info-700: #40a9ff; /* 信息色-浅 */
   --color-info-900: #69c0ff; /* 信息色-最浅 */
 
-  --color-accent-10: #081919; /* 强调色-极深 */
-  --color-accent-50: #0f2e2e; /* 强调色-最深 */
-  --color-accent-100: #164e63; /* 强调色-深 */
-  --color-accent-500: #13c2c2; /* 强调色-标准 */
-  --color-accent-700: #36cfc9; /* 强调色-浅 */
-  --color-accent-900: #5cdbd3; /* 强调色-最浅 */
+  --color-accent-10: #1a0f26; /* 强调色-极深 */
+  --color-accent-50: #2e1745; /* 强调色-最深 */
+  --color-accent-100: #4a1f6d; /* 强调色-深 */
+  --color-accent-500: #a855f7; /* 强调色-标准 */
+  --color-accent-700: #c084fc; /* 强调色-浅 */
+  --color-accent-900: #e9d5ff; /* 强调色-最浅 */
 
   --chart-palette-1: var(--main-300);
   --chart-palette-2: var(--main-500);

@@ -35,7 +35,9 @@ class PerformanceRunRequest(BaseModel):
     """描述性能场景、企业集合、负载参数和真实库确认。"""
 
     scenarios: list[PerformanceScenario] = Field(default_factory=lambda: [PerformanceScenario.ENTERPRISE_PROFILE])
-    company_refs: list[CompanyReference] = Field(min_length=1, max_length=20)
+    scope: str = Field(default="global", pattern="^global$")
+    sampling_policy: str = Field(default="all_or_stratified", pattern="^(all|all_or_stratified|stratified)$")
+    company_refs: list[CompanyReference] = Field(default_factory=list, max_length=20)
     target_company_ref: CompanyReference | None = None
     safety_mode: PerformanceSafetyMode = PerformanceSafetyMode.SAFE_REGRESSION
     concurrency: int = Field(default=1, ge=1, le=10)
@@ -86,6 +88,10 @@ class PerformanceRequestResult(BaseModel):
 
     request_index: int = Field(ge=0)
     company_index: int = Field(ge=0)
+    interface: str = "company_due_diligence.query"
+    intent: str = ""
+    toolchain: list[str] = Field(default_factory=list)
+    data_sources: list[str] = Field(default_factory=list)
     cache_phase: PerformanceCachePhase
     status: PerformanceRequestStatus
     started_at: datetime
@@ -175,6 +181,30 @@ class PerformanceArtifact(BaseModel):
     size_bytes: int = Field(ge=0)
 
 
+class GlobalPerformanceSummary(BaseModel):
+    """描述跨场景的全局性能分位数、状态率和阶段耗时。"""
+
+    total_requests: int = Field(ge=0)
+    succeeded: int = Field(ge=0)
+    failed: int = Field(ge=0)
+    timed_out: int = Field(ge=0)
+    cancelled: int = Field(default=0, ge=0)
+    elapsed_seconds: float = Field(ge=0)
+    throughput_rps: float = Field(ge=0)
+    error_rate: float = Field(ge=0, le=1)
+    timeout_rate: float = Field(ge=0, le=1)
+    cancellation_rate: float = Field(ge=0, le=1)
+    latency: LatencyStatistics
+    average_stage_latency: LatencyBreakdown
+    by_scenario: dict[str, int] = Field(default_factory=dict)
+    by_status: dict[str, int] = Field(default_factory=dict)
+    by_interface: dict[str, int] = Field(default_factory=dict)
+    by_intent: dict[str, int] = Field(default_factory=dict)
+    by_toolchain: dict[str, int] = Field(default_factory=dict)
+    by_data_source: dict[str, float] = Field(default_factory=dict)
+    by_data_source_requests: dict[str, int] = Field(default_factory=dict)
+
+
 class PerformanceEvaluationReport(BaseModel):
     """描述可对比的性能运行参数、版本、资源和结果。"""
 
@@ -184,11 +214,14 @@ class PerformanceEvaluationReport(BaseModel):
     code_version: str
     strategy_version: str
     request: PerformanceRunRequest
+    sample_size: int = Field(default=0, ge=0)
     data_versions: dict[str, list[str]] = Field(default_factory=dict)
     model_versions: dict[str, str] = Field(default_factory=dict)
     resources_before: ResourceSnapshot
     resources_after: ResourceSnapshot
     pool: PoolObservation
+    global_summary: GlobalPerformanceSummary
+    runtime_observations: dict[str, int | float | str | bool] = Field(default_factory=dict)
     scenarios: list[PerformanceScenarioResult]
     regression_gate: PerformanceRegressionGate
     artifacts: list[PerformanceArtifact] = Field(default_factory=list)

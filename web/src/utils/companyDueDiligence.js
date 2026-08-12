@@ -3,6 +3,8 @@ export const REAL_DATABASE_CONFIRMATION = 'CONFIRM_READONLY_REAL_DATABASE_LOAD'
 const BASE_URL = '/api/company-due-diligence'
 
 export const QUICK_QUESTIONS = [
+  '当前数据覆盖哪些企业？',
+  '当前数据中哪些企业存在共同股东关系？',
   '企业基本信息、注册资本、法定代表人和经营状态是什么？',
   '当前股东和出资情况有哪些？',
   '该企业有哪些关联关系和最多三跳路径？',
@@ -20,6 +22,8 @@ const STATUS_META = {
   ambiguous: ['多候选', 'warning'],
   not_found: ['未找到', 'default'],
   source_unavailable: ['来源不可用', 'error'],
+  global_scope: ['全局统计', 'success'],
+  needs_context: ['需要企业范围', 'warning'],
   complete: ['完成', 'success'],
   accepted: ['任务已接受', 'processing'],
   clarification: ['需要确认', 'warning'],
@@ -46,23 +50,24 @@ export function buildCompanySearchUrl(query, limit = 10) {
 }
 
 export function buildInvestigationPayload(company, form) {
-  if (!company?.eid && !company?.name) throw new Error('请先确认唯一企业')
   const message = String(form.message || '').trim()
   const shortcut = form.shortcut || null
   if (!message && !shortcut) throw new Error('请输入调查要求')
 
   const payload = {
-    company_context: {
-      eid: company.eid || null,
-      name: company.name || null,
-      credit_code: company.credit_code || null,
-      stock_code: company.stock_code || null
-    },
     hop_limit: Number(form.hopLimit || 3),
     top_k: Number(form.topK || 10),
     include_low_confidence: Boolean(form.includeLowConfidence)
   }
-  if (message) payload.message = message
+  if (company?.eid || company?.name || company?.credit_code || company?.stock_code) {
+    payload.company_context = {
+      eid: company.eid || null,
+      name: company.name || null,
+      credit_code: company.credit_code || null,
+      stock_code: company.stock_code || null
+    }
+  }
+  if (message) payload.question = message
   if (shortcut) payload.shortcut = shortcut
   if (form.startDate) payload.start_date = form.startDate
   if (form.asOf) payload.as_of = form.asOf
@@ -73,7 +78,10 @@ export function presentationSections(result = {}) {
   const type = result.presentation?.type
   const components = new Set(result.presentation?.components || [])
   return {
-    clarification: type === 'clarification',
+    clarification:
+      type === 'clarification' ||
+      ['needs_context', 'not_found', 'source_unavailable'].includes(result.status),
+    global: result.status === 'global_scope' || Boolean(result.global_result),
     report: type === 'topic_report' || type === 'full_report',
     facts: components.has('facts') || components.has('fact_table') || components.has('findings'),
     relations: components.has('relations') || components.has('paths'),
@@ -128,12 +136,11 @@ export function companyRefsFromDataset(dataset = {}) {
   return refs.slice(0, 20)
 }
 
-export function validatePerformanceForm(form, dataset) {
+export function validatePerformanceForm(form) {
   const concurrency = Number(form.concurrency)
   const durationSeconds = Number(form.durationSeconds)
   const requestCount = Number(form.requestCount)
   if (!form.scenarios?.length) throw new Error('至少选择一个性能场景')
-  if (!companyRefsFromDataset(dataset).length) throw new Error('数据集没有可用于性能评测的企业引用')
   if (form.safetyMode === 'safe_regression') {
     if (concurrency > 3) throw new Error('安全回归模式并发不得超过 3')
     if (durationSeconds > 60) throw new Error('安全回归模式持续时间不得超过 60 秒')
@@ -143,7 +150,8 @@ export function validatePerformanceForm(form, dataset) {
   }
   return {
     scenarios: form.scenarios,
-    company_refs: companyRefsFromDataset(dataset),
+    scope: 'global',
+    sampling_policy: 'all_or_stratified',
     safety_mode: form.safetyMode,
     concurrency,
     request_count: requestCount,

@@ -16,6 +16,7 @@
 - 升级企业尽调查询/报告与评测两个管理员工作台：调查页改为企业确认加单一自然语言输入，移除内部模式选择，按 `presentation` 动态展示；自然语言报告与完整报告按钮共用统一意图，评测页增加意图、工具、Claim Ledger 和输入输出一致性指标。
 - 升级企业尽调发布门禁：串联后端回归、临时容器管理员 E2E、AkShare 120 题、敏感审计、质量/性能和前端构建，并显式检查统一 REST 入口、主智能体工具、意图/工具/展示/Claim/输入输出一致性；正式发布仅缺冻结人工 Golden，在线 LLM 单列为非阻塞限制。
 - 完成企业尽调领域智能体升级：新增 `/api/company-due-diligence/investigations`、统一意图、Claim Ledger 和动态 `presentation`，系统主智能体工具 `investigate_company` 与独立工作台复用 `CompanyDueDiligenceAgent.investigate`；旧 `/query`、`/reports` 保持兼容。
+- 完成企业尽调全局共享与自动评测升级：启动时幂等注册唯一全局 Agent，`question` 成为唯一必填输入并自动解析企业全称、股票代码和信用代码；增加白名单全局统计、`needs_context`、五类 `source_derived` 自动样本和全局性能聚合，查询及评测页面取消企业必填阻断。
 - 新增企业股权关联图谱与可重复评测链路：公开数据快照可校验并导入 Neo4j，提供带来源证据的自然语言查询 API，对同一冻结题库执行 TF-IDF 向量基线、确定性 GraphRAG 与 Cypher 对照，输出逐题和汇总报告、性能探针及回归门禁。
 - 精简知识库文档内容接口响应：`GET /api/knowledge/databases/{kb_id}/documents/{doc_id}/content` 不再返回分块内部的实体 ID 与抽取结果，避免向文档预览请求传输仅供知识图谱构建使用的数据。
 - 收敛消息型 AgentRun 提交：Web Chat 与 Agent Call/Eval 共用 `run_submission_service.submit_run_command`，Call/Eval 拆为独立 Router；Request/Run 固化 `source/channel/external_id/origin_metadata` 来源快照，Eval 评估上下文继续透传到 worker 与 Langfuse，保留现有接口与响应兼容性，Resume、Subagent 生命周期不变。

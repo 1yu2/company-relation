@@ -39,7 +39,9 @@ const investigateCompany = async (form) => {
       <div class="hero-icon"><Building2 size="28" /></div>
       <div>
         <h1>企业尽调工作台</h1>
-        <p>确认企业后直接描述调查要求，系统自动拆解意图、调用工具并选择输出形式。</p>
+        <p>
+          直接描述调查要求；企业搜索仅作为可选上下文，系统会从问题中自动识别企业或执行全局统计。
+        </p>
       </div>
     </header>
 
@@ -53,7 +55,7 @@ const investigateCompany = async (form) => {
           <SearchCheck size="18" />
           <h2>智能调查</h2>
         </div>
-        <QuestionPanel :disabled="!company" :loading="querying" @submit="investigateCompany" />
+        <QuestionPanel :loading="querying" @submit="investigateCompany" />
       </section>
     </div>
 

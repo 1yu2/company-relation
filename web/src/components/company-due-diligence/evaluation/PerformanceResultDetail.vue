@@ -9,6 +9,12 @@ const props = defineProps({
 const comparisonByScenario = computed(() =>
   Object.fromEntries((props.comparison?.scenarios || []).map((item) => [item.scenario, item]))
 )
+const globalDimensions = computed(() => [
+  ['接口', props.report.global_summary?.by_interface || {}],
+  ['意图', props.report.global_summary?.by_intent || {}],
+  ['工具链', props.report.global_summary?.by_toolchain || {}],
+  ['数据源请求', props.report.global_summary?.by_data_source_requests || {}]
+])
 
 const delta = (scenario) => {
   const previous = comparisonByScenario.value[scenario.scenario]?.latency?.p95_ms
@@ -16,6 +22,11 @@ const delta = (scenario) => {
   if (previous == null || current == null) return null
   return current - previous
 }
+
+const formatDimension = (values) =>
+  Object.entries(values)
+    .map(([key, value]) => `${key} ${value}`)
+    .join(' · ') || '暂无数据'
 </script>
 
 <template>
@@ -30,20 +41,63 @@ const delta = (scenario) => {
       </a-tag>
     </div>
 
+    <div v-if="report.global_summary" class="global-grid">
+      <article>
+        <span>全局 P50</span><strong>{{ report.global_summary.latency.p50_ms ?? '-' }} ms</strong>
+      </article>
+      <article>
+        <span>全局 P95</span><strong>{{ report.global_summary.latency.p95_ms ?? '-' }} ms</strong>
+      </article>
+      <article>
+        <span>全局 P99</span><strong>{{ report.global_summary.latency.p99_ms ?? '-' }} ms</strong>
+      </article>
+      <article>
+        <span>吞吐</span
+        ><strong>{{ report.global_summary.throughput_rps.toFixed(2) }} req/s</strong>
+      </article>
+      <article>
+        <span>错误率</span
+        ><strong>{{ (report.global_summary.error_rate * 100).toFixed(2) }}%</strong>
+      </article>
+      <article>
+        <span>超时率</span
+        ><strong>{{ (report.global_summary.timeout_rate * 100).toFixed(2) }}%</strong>
+      </article>
+    </div>
+
+    <div v-if="report.global_summary" class="dimension-grid">
+      <article v-for="[label, values] in globalDimensions" :key="label">
+        <span>{{ label }}</span
+        ><strong>{{ formatDimension(values) }}</strong>
+      </article>
+    </div>
+
     <div class="scenario-grid">
       <article v-for="scenario in report.scenarios" :key="scenario.scenario">
         <header>
           <strong>{{ scenario.scenario }}</strong>
-          <a-tag :color="scenario.status === 'skipped' ? 'default' : scenario.target_met ? 'green' : 'red'">
+          <a-tag
+            :color="
+              scenario.status === 'skipped' ? 'default' : scenario.target_met ? 'green' : 'red'
+            "
+          >
             {{ scenario.status }}
           </a-tag>
         </header>
         <p v-if="scenario.reason">{{ scenario.reason }}</p>
         <div class="latency-stats">
-          <span>P50 <strong>{{ scenario.latency.p50_ms ?? '-' }} ms</strong></span>
-          <span>P95 <strong>{{ scenario.latency.p95_ms ?? '-' }} ms</strong></span>
-          <span>P99 <strong>{{ scenario.latency.p99_ms ?? '-' }} ms</strong></span>
-          <span>最大 <strong>{{ scenario.latency.max_ms ?? '-' }} ms</strong></span>
+          <span
+            >P50 <strong>{{ scenario.latency.p50_ms ?? '-' }} ms</strong></span
+          >
+          <span
+            >P95 <strong>{{ scenario.latency.p95_ms ?? '-' }} ms</strong></span
+          >
+          <span
+            >P99 <strong>{{ scenario.latency.p99_ms ?? '-' }} ms</strong></span
+          >
+          <span
+            >最大 <strong>{{ scenario.latency.max_ms ?? '-' }} ms</strong></span
+          >
         </div>
         <footer>
           <span>{{ scenario.throughput_rps.toFixed(2) }} req/s</span>
@@ -61,11 +115,22 @@ const delta = (scenario) => {
             </span>
           </div>
           <table>
-            <thead><tr><th>#</th><th>冷热</th><th>状态</th><th>总耗时</th><th>错误</th></tr></thead>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>冷热</th>
+                <th>状态</th>
+                <th>总耗时</th>
+                <th>错误</th>
+              </tr>
+            </thead>
             <tbody>
               <tr v-for="request in scenario.requests.slice(0, 30)" :key="request.request_index">
-                <td>{{ request.request_index }}</td><td>{{ request.cache_phase }}</td><td>{{ request.status }}</td>
-                <td>{{ request.duration_ms }} ms</td><td>{{ request.error || '-' }}</td>
+                <td>{{ request.request_index }}</td>
+                <td>{{ request.cache_phase }}</td>
+                <td>{{ request.status }}</td>
+                <td>{{ request.duration_ms }} ms</td>
+                <td>{{ request.error || '-' }}</td>
               </tr>
             </tbody>
           </table>
@@ -74,12 +139,32 @@ const delta = (scenario) => {
     </div>
 
     <div class="pool-grid">
-      <article><span>池大小</span><strong>{{ report.pool.after.size }}</strong></article>
-      <article><span>结束签出</span><strong>{{ report.pool.after.checked_out }}</strong></article>
-      <article><span>结束溢出</span><strong>{{ report.pool.after.overflow }}</strong></article>
-      <article><span>等待增量</span><strong>{{ report.pool.wait_ms_delta }} ms</strong></article>
-      <article><span>超时增量</span><strong>{{ report.pool.timeout_delta }}</strong></article>
-      <article><span>最大 RSS</span><strong>{{ report.resources_after.max_rss_mb }} MB</strong></article>
+      <article>
+        <span>池大小</span><strong>{{ report.pool.after.size }}</strong>
+      </article>
+      <article>
+        <span>结束签出</span><strong>{{ report.pool.after.checked_out }}</strong>
+      </article>
+      <article>
+        <span>结束溢出</span><strong>{{ report.pool.after.overflow }}</strong>
+      </article>
+      <article>
+        <span>等待增量</span><strong>{{ report.pool.wait_ms_delta }} ms</strong>
+      </article>
+      <article>
+        <span>超时增量</span><strong>{{ report.pool.timeout_delta }}</strong>
+      </article>
+      <article>
+        <span>最大 RSS</span><strong>{{ report.resources_after.max_rss_mb }} MB</strong>
+      </article>
+      <article>
+        <span>Tasker 排队</span
+        ><strong>{{ report.runtime_observations?.tasker_queue_wait_ms ?? 0 }} ms</strong>
+      </article>
+      <article>
+        <span>Tasker worker</span
+        ><strong>{{ report.runtime_observations?.tasker_worker_count ?? '-' }}</strong>
+      </article>
     </div>
   </div>
 </template>
@@ -101,6 +186,51 @@ const delta = (scenario) => {
     background: var(--gray-50);
     color: var(--gray-700);
     font-size: 12px;
+  }
+}
+
+.global-grid,
+.dimension-grid,
+.pool-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dimension-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+
+  article {
+    display: grid;
+    gap: 4px;
+    padding: 10px;
+    border: 1px solid var(--gray-200);
+    border-radius: 8px;
+  }
+
+  span {
+    color: var(--gray-600);
+    font-size: 11px;
+  }
+
+  strong {
+    color: var(--gray-800);
+    font-size: 12px;
+    word-break: break-word;
+  }
+}
+
+.global-grid article {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--main-100);
+  border-radius: 8px;
+  background: var(--main-5);
+
+  span {
+    color: var(--gray-600);
+    font-size: 11px;
   }
 }
 
@@ -212,6 +342,7 @@ details {
 @media (max-width: 600px) {
   .latency-stats,
   .stage-grid,
+  .dimension-grid,
   .pool-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

@@ -6,6 +6,7 @@ import json
 import time
 from datetime import UTC, datetime
 
+from yuxi.company_due_diligence.entity_mentions import extract_company_references
 from yuxi.company_due_diligence.entity_resolution import EntityResolutionService, entity_resolution_service
 from yuxi.company_due_diligence.models import (
     ConfidenceLevel,
@@ -17,12 +18,18 @@ from yuxi.company_due_diligence.models import (
     Path,
     Relation,
     ResolutionStatus,
+    RequestScopeStatus,
     Source,
     SourceStatus,
     build_source_id,
 )
 from yuxi.company_due_diligence.qa.graph import QAWorkflow
-from yuxi.company_due_diligence.qa.models import CompanyQuestionRequest, CompanyQuestionResponse, QueryPlan
+from yuxi.company_due_diligence.qa.global_service import GlobalQuestionService, global_question_service
+from yuxi.company_due_diligence.qa.models import (
+    CompanyQuestionRequest,
+    CompanyQuestionResponse,
+    QueryPlan,
+)
 from yuxi.company_due_diligence.qa.planner import QuestionPlanner, question_planner
 
 
@@ -38,10 +45,12 @@ class CompanyQuestionService:
         resolver: EntityResolutionService | None = None,
         planner: QuestionPlanner | None = None,
         workflow: QAWorkflow | None = None,
+        global_service: GlobalQuestionService | None = None,
     ) -> None:
         self._resolver = resolver or entity_resolution_service
         self._planner = planner or question_planner
         self._workflow = workflow or QAWorkflow()
+        self._global_service = global_service or global_question_service
 
     async def query(
         self,
@@ -51,6 +60,20 @@ class CompanyQuestionService:
     ) -> CompanyQuestionResponse:
         """执行企业问答；可复用领域智能体已校验的受控计划。"""
         started_at = time.perf_counter()
+        resolved_plan = plan or self._planner.plan(request.question)
+        if request.company_ref is None:
+            references = extract_company_references(request.question)
+            if references:
+                updates = {"company_ref": references[0]}
+                if request.target_company_ref is None and resolved_plan.use_graph and len(references) > 1:
+                    updates["target_company_ref"] = references[1]
+                request = request.model_copy(update=updates)
+            else:
+                global_response = await self._global_service.query(request.question, top_k=request.top_k)
+                if global_response is not None:
+                    return _assemble_global_response(request, global_response, started_at)
+                return _needs_context_response(request, started_at)
+
         resolution = await self._resolver.resolve(request.company_ref)
         if resolution.status != ResolutionStatus.RESOLVED or resolution.company is None:
             return _resolution_rejection(request, resolution, started_at, "企业无法唯一解析，未执行后续查询。")
@@ -66,16 +89,15 @@ class CompanyQuestionService:
                     "目标企业无法唯一解析，未执行后续查询。",
                 )
 
-        plan = plan or self._planner.plan(request.question)
         workflow_result = await self._workflow.execute(
             eid=resolution.company.eid,
             target_eid=target_resolution.company.eid if target_resolution and target_resolution.company else None,
             request=request,
-            plan=plan,
+            plan=resolved_plan,
         )
         return _assemble_response(
             request=request,
-            plan=plan,
+            plan=resolved_plan,
             company=resolution.company,
             target_company=target_resolution.company if target_resolution else None,
             resolution_sources=resolution.sources + (target_resolution.sources if target_resolution else []),
@@ -172,6 +194,7 @@ def _assemble_response(
     total_ms = round((time.perf_counter() - started_at) * 1000, 3)
     return CompanyQuestionResponse(
         question=request.question,
+        scope_status=RequestScopeStatus.RESOLVED,
         resolution_status=ResolutionStatus.RESOLVED,
         company=company,
         target_company=target_company,
@@ -209,6 +232,13 @@ def _resolution_rejection(request, resolution, started_at: float, answer: str) -
     total_ms = round((time.perf_counter() - started_at) * 1000, 3)
     return CompanyQuestionResponse(
         question=request.question,
+        scope_status=(
+            RequestScopeStatus.SOURCE_UNAVAILABLE
+            if resolution.status == ResolutionStatus.SOURCE_UNAVAILABLE
+            else RequestScopeStatus.NOT_FOUND
+            if resolution.status == ResolutionStatus.NOT_FOUND
+            else RequestScopeStatus.NEEDS_CONTEXT
+        ),
         resolution_status=resolution.status,
         company=resolution.company,
         answer=answer,
@@ -216,6 +246,42 @@ def _resolution_rejection(request, resolution, started_at: float, answer: str) -
         data_quality=resolution.data_quality,
         latency=LatencyBreakdown(
             resolution_ms=resolution.latency.total_ms,
+            total_ms=total_ms,
+        ),
+    )
+
+
+def _needs_context_response(request: CompanyQuestionRequest, started_at: float) -> CompanyQuestionResponse:
+    """返回不强制企业输入但明确提示需要上下文的响应。"""
+    total_ms = round((time.perf_counter() - started_at) * 1000, 3)
+    return CompanyQuestionResponse(
+        question=request.question,
+        scope_status=RequestScopeStatus.NEEDS_CONTEXT,
+        resolution_status=ResolutionStatus.NOT_FOUND,
+        answer="这个问题需要唯一企业范围，请在问题中补充企业名称、股票代码或统一社会信用代码。",
+        data_quality=DataQuality(source_status=SourceStatus.AVAILABLE),
+        latency=LatencyBreakdown(total_ms=total_ms),
+    )
+
+
+def _assemble_global_response(request: CompanyQuestionRequest, global_response, started_at: float):
+    """把全局白名单统计转换为兼容问答响应。"""
+    total_ms = round((time.perf_counter() - started_at) * 1000, 3)
+    scope_status = (
+        RequestScopeStatus.SOURCE_UNAVAILABLE
+        if global_response.data_quality.source_status == SourceStatus.UNAVAILABLE
+        else RequestScopeStatus.GLOBAL_SCOPE
+    )
+    return CompanyQuestionResponse(
+        question=request.question,
+        scope_status=scope_status,
+        resolution_status=ResolutionStatus.RESOLVED,
+        answer=global_response.answer,
+        global_result=global_response.result,
+        sources=global_response.sources,
+        data_quality=global_response.data_quality,
+        latency=LatencyBreakdown(
+            mysql_ms=global_response.latency.mysql_ms,
             total_ms=total_ms,
         ),
     )

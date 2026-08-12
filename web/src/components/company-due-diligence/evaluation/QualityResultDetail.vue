@@ -63,6 +63,27 @@ const paged = computed(() =>
       <small v-for="reason in report.regression_gate.reasons" :key="reason">{{ reason }}</small>
     </div>
 
+    <div class="provenance-grid">
+      <span
+        >数据版本 <strong>{{ report.dataset_version }}</strong></span
+      >
+      <span
+        >全局分母 <strong>{{ report.denominator || 0 }}</strong></span
+      >
+      <span
+        >抽样分母 <strong>{{ report.sampled_denominator || 0 }}</strong></span
+      >
+      <span
+        >抽样策略 <strong>{{ report.sampling_policy }}</strong></span
+      >
+      <span
+        >来源类型 <strong>{{ report.dataset_source_kind }}</strong></span
+      >
+      <span
+        >来源键 checksum <strong>{{ report.source_record_keys_checksum || '-' }}</strong></span
+      >
+    </div>
+
     <div class="metric-grid">
       <article v-for="[label, metric] in metricCards" :key="label">
         <span>{{ label }}</span>
@@ -119,7 +140,8 @@ const paged = computed(() =>
         style="width: 210px"
       >
         <a-select-option value="human_verified">人工复核</a-select-option>
-        <a-select-option value="source_derived_unreviewed">程序派生未复核</a-select-option>
+        <a-select-option value="source_derived">程序派生未复核</a-select-option>
+        <a-select-option value="source_derived_unreviewed">历史程序派生未复核</a-select-option>
       </a-select>
     </div>
 
@@ -191,6 +213,26 @@ const paged = computed(() =>
   span,
   small {
     color: var(--gray-700);
+  }
+}
+
+.provenance-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+
+  span {
+    display: grid;
+    gap: 3px;
+    padding: 8px;
+    border: 1px solid var(--gray-200);
+    border-radius: 8px;
+    color: var(--gray-600);
+    font-size: 11px;
+  }
+
+  strong {
+    color: var(--gray-900);
   }
 }
 

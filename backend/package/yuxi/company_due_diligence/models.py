@@ -26,6 +26,16 @@ class ResolutionStatus(StrEnum):
     SOURCE_UNAVAILABLE = "source_unavailable"
 
 
+class RequestScopeStatus(StrEnum):
+    """描述请求是否已经确定单企业范围或进入全局范围。"""
+
+    RESOLVED = "resolved"
+    GLOBAL_SCOPE = "global_scope"
+    NEEDS_CONTEXT = "needs_context"
+    NOT_FOUND = "not_found"
+    SOURCE_UNAVAILABLE = "source_unavailable"
+
+
 class MatchMethod(StrEnum):
     """描述企业身份命中的字段和方式。"""
 

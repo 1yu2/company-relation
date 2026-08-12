@@ -32,6 +32,9 @@ def render_quality_markdown(report: QualityEvaluationReport) -> bytes:
         f"- 数据集：`{report.dataset_id}` / `{report.dataset_version}`",
         f"- 数据集类别：`{report.dataset_source_kind}`",
         f"- checksum：`{report.dataset_checksum}`",
+        f"- 全局分母：{report.denominator}",
+        f"- 抽样分母：{report.sampled_denominator}",
+        f"- 抽样策略：`{report.sampling_policy}`",
         f"- 人工复核样本：{strict.human_verified_count}",
         f"- 严格门禁：{'通过' if report.regression_gate.passed else '未通过'}",
         "",
@@ -56,9 +59,12 @@ def render_quality_markdown(report: QualityEvaluationReport) -> bytes:
         f"- 无关主题规避率：{_rate(strict.irrelevant_topic_avoidance.rate)}",
         f"- 幻觉率：{strict.hallucination_rate:.2%}",
         "",
-        "## 门禁说明",
-        "",
     ]
+    if report.catalog_coverage:
+        lines.extend(["## 数据目录覆盖", ""])
+        lines.extend(f"- {key}：{value}" for key, value in sorted(report.catalog_coverage.items()))
+        lines.append("")
+    lines.extend(["## 门禁说明", ""])
     lines.extend(f"- {reason}" for reason in report.regression_gate.reasons)
     failures = [sample for sample in report.samples if _is_failure(sample)]
     lines.extend(["", "## 失败与待复核样本", ""])

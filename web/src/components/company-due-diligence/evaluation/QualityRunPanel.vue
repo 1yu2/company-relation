@@ -12,6 +12,8 @@ const props = defineProps({ dataset: { type: Object, default: null } })
 
 const maxSamples = ref(null)
 const strategyLabel = ref('default')
+const samplingPolicy = ref('all_or_stratified')
+const coverage = ref(null)
 const runId = ref(null)
 const runs = ref([])
 const creating = ref(false)
@@ -34,15 +36,30 @@ const loadRuns = async () => {
   }
 }
 
+const loadCoverage = async () => {
+  try {
+    coverage.value = await companyDueDiligenceApi.getEvaluationCoverage(samplingPolicy.value)
+  } catch (error) {
+    message.error(describeApiError(error))
+  }
+}
+
 const createRun = async () => {
-  if (!props.dataset?.dataset_id) return message.warning('请先选择数据集')
   creating.value = true
   try {
-    const result = await companyDueDiligenceApi.createQualityRun({
-      dataset_id: props.dataset.dataset_id,
+    const payload = {
       max_samples: maxSamples.value || null,
-      strategy_label: strategyLabel.value.trim() || 'default'
-    })
+      strategy_label: strategyLabel.value.trim() || 'default',
+      dataset_version: 'latest_frozen',
+      scope: 'global',
+      sampling_policy: samplingPolicy.value
+    }
+    const result = props.dataset?.dataset_id
+      ? await companyDueDiligenceApi.createQualityRun({
+          ...payload,
+          dataset_id: props.dataset.dataset_id
+        })
+      : await companyDueDiligenceApi.createAutoQualityRun(payload)
     runId.value = result.run_id
     await polling.start(runId.value)
     await loadRuns()
@@ -92,7 +109,9 @@ const download = async (format) => {
   }
 }
 
-onMounted(loadRuns)
+onMounted(async () => {
+  await Promise.all([loadRuns(), loadCoverage()])
+})
 </script>
 
 <template>
@@ -100,29 +119,61 @@ onMounted(loadRuns)
     <div class="run-form">
       <div>
         <strong>质量评测</strong>
-        <span>{{ dataset?.name || '未选择数据集' }}</span>
+        <span>{{ dataset?.name || '全局自动 source-derived 数据集' }}</span>
       </div>
+      <label
+        >抽样策略
+        <a-select v-model:value="samplingPolicy" style="width: 180px" @change="loadCoverage">
+          <a-select-option value="all_or_stratified">全量或稳定分层</a-select-option>
+          <a-select-option value="stratified">稳定分层</a-select-option>
+        </a-select>
+      </label>
       <label>策略标签 <a-input v-model:value="strategyLabel" style="width: 150px" /></label>
-      <label>样本上限 <a-input-number v-model:value="maxSamples" :min="1" :max="10000" placeholder="全部" /></label>
-      <a-button type="primary" :disabled="!dataset" :loading="creating" @click="createRun"><Play size="14" />运行</a-button>
+      <label
+        >样本上限
+        <a-input-number v-model:value="maxSamples" :min="1" :max="10000" placeholder="全部"
+      /></label>
+      <a-button type="primary" :loading="creating" @click="createRun"
+        ><Play size="14" />运行</a-button
+      >
     </div>
+
+    <a-alert
+      v-if="coverage"
+      type="info"
+      show-icon
+      :message="`全局目录 ${coverage.denominator} 家，当前策略抽样 ${coverage.sampled_denominator} 家`"
+      :description="`数据版本 ${coverage.data_version} · checksum ${coverage.checksum}`"
+    />
 
     <div v-if="runs.length" class="history-row">
       <span>历史运行</span>
-      <button v-for="item in runs.slice(0, 8)" :key="item.id" type="button" @click="openRun(item.id)">
+      <button
+        v-for="item in runs.slice(0, 8)"
+        :key="item.id"
+        type="button"
+        @click="openRun(item.id)"
+      >
         {{ item.id.slice(0, 8) }} · {{ statusMeta(item.status).label }}
       </button>
       <a-select allow-clear placeholder="对比运行" style="width: 180px" @change="loadComparison">
-        <a-select-option v-for="item in runs" :key="item.id" :value="item.id">{{ item.id.slice(0, 12) }}</a-select-option>
+        <a-select-option v-for="item in runs" :key="item.id" :value="item.id">{{
+          item.id.slice(0, 12)
+        }}</a-select-option>
       </a-select>
     </div>
 
     <div v-if="runId" class="task-card">
-      <header><strong>{{ runId }}</strong><a-tag :color="status.color">{{ status.label }}</a-tag></header>
+      <header>
+        <strong>{{ runId }}</strong
+        ><a-tag :color="status.color">{{ status.label }}</a-tag>
+      </header>
       <a-progress :percent="Math.round(taskState.progress)" />
       <p>{{ taskState.message }}</p>
       <div>
-        <a-button v-if="!taskState.terminal" danger @click="cancelRun"><Square size="13" />取消</a-button>
+        <a-button v-if="!taskState.terminal" danger @click="cancelRun"
+          ><Square size="13" />取消</a-button
+        >
         <template v-if="report">
           <a-button @click="download('json')"><Download size="13" />JSON</a-button>
           <a-button @click="download('jsonl')"><Download size="13" />JSONL</a-button>

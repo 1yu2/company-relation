@@ -68,6 +68,14 @@ export const companyDueDiligenceApi = {
     return apiAdminPost(`${EVALUATION_URL}/runs`, payload)
   },
 
+  createAutoQualityRun(payload) {
+    return apiAdminPost(`${EVALUATION_URL}/auto-runs`, payload)
+  },
+
+  getEvaluationCoverage(samplingPolicy = 'all_or_stratified') {
+    return apiAdminGet(`${EVALUATION_URL}/coverage?sampling_policy=${samplingPolicy}`)
+  },
+
   listQualityRuns(limit = 50) {
     return apiAdminGet(`${EVALUATION_URL}/runs?limit=${limit}`)
   },
@@ -94,6 +102,10 @@ export const companyDueDiligenceApi = {
 
   listPerformanceRuns(limit = 50) {
     return apiAdminGet(`${EVALUATION_URL}/performance-runs?limit=${limit}`)
+  },
+
+  getGlobalPerformanceSummary(windowMinutes = 1440) {
+    return apiAdminGet(`${EVALUATION_URL}/performance-runs/global?window_minutes=${windowMinutes}`)
   },
 
   getPerformanceRun(runId) {

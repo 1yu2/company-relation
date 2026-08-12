@@ -7,6 +7,7 @@ from collections.abc import Callable
 from datetime import date
 
 from yuxi.company_due_diligence.evidence.models import EvidenceDocumentType
+from yuxi.company_due_diligence.entity_mentions import extract_company_mentions, extract_company_references
 from yuxi.company_due_diligence.graph.schema import GraphRelationType
 from yuxi.company_due_diligence.models import StructuredQueryType
 from yuxi.company_due_diligence.agent.models import (
@@ -25,6 +26,8 @@ from yuxi.company_due_diligence.agent.models import (
 from yuxi.company_due_diligence.qa.models import QueryPlan, QuestionType
 from yuxi.company_due_diligence.qa.planner import QuestionPlanner, question_planner
 
+__all__ = ["extract_company_mentions", "extract_company_references"]
+
 _TOPIC_RULES: tuple[tuple[tuple[str, ...], InvestigationTopic], ...] = (
     (("股东", "持股", "出资", "认缴", "实缴"), InvestigationTopic.SHAREHOLDERS),
     (("关系", "关联", "共同股东", "路径", "几跳", "关系网络"), InvestigationTopic.RELATIONS),
@@ -37,9 +40,7 @@ _TOPIC_RULES: tuple[tuple[tuple[str, ...], InvestigationTopic], ...] = (
     (("基本信息", "工商信息", "注册资本", "法人", "经营状态", "企业概况"), InvestigationTopic.PROFILE),
 )
 
-_COMPANY_PATTERN = re.compile(r"([\u4e00-\u9fffA-Za-z0-9（）()·]{2,80}?(?:股份有限公司|有限责任公司|有限公司))")
 _RECENT_YEARS_PATTERN = re.compile(r"近\s*([一二三四五六七八九十\d]{1,3})\s*年")
-_LEADING_MENTION_WORDS = ("请帮我", "帮我", "请分析", "请调查", "调查", "分析", "查询", "比较", "关于", "与", "和")
 _CHINESE_NUMBER_VALUES = {
     "一": 1,
     "二": 2,
@@ -246,28 +247,11 @@ class InvestigationPlanner:
 
 def effective_message(request: CompanyInvestigationRequest) -> str:
     """为报告快捷入口生成稳定的内部调查文本。"""
-    if request.message:
-        return request.message
+    if request.message or request.question:
+        return request.message or request.question or ""
     if request.shortcut == InvestigationShortcut.GENERATE_FULL_REPORT:
         return "生成完整尽调报告"
     return "企业基本信息"
-
-
-def extract_company_mentions(message: str) -> list[str]:
-    """从明确法律全称中提取企业提及，简称仍由候选确认处理。"""
-    mentions = []
-    for match in _COMPANY_PATTERN.finditer(message):
-        mention = match.group(1).strip("，。；：、,.;: ")
-        changed = True
-        while changed:
-            changed = False
-            for prefix in _LEADING_MENTION_WORDS:
-                if mention.startswith(prefix) and len(mention) > len(prefix):
-                    mention = mention[len(prefix) :].strip()
-                    changed = True
-        if mention and mention not in mentions:
-            mentions.append(mention)
-    return mentions
 
 
 def presentation_for(intent: InvestigationIntent) -> Presentation:

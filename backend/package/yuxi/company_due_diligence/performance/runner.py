@@ -14,6 +14,7 @@ from yuxi.company_due_diligence.models import LatencyBreakdown
 from yuxi.company_due_diligence.mysql import CompanyDueDiligenceMySQL, company_due_diligence_mysql
 from yuxi.company_due_diligence.performance.models import (
     LatencyStatistics,
+    GlobalPerformanceSummary,
     PerformanceCachePhase,
     PerformanceEvaluationReport,
     PerformanceRegressionGate,
@@ -57,8 +58,12 @@ class PerformanceEvaluationRunner:
         *,
         run_id: str,
         context: TaskContext | None = None,
+        queue_wait_ms: float = 0,
+        worker_count: int = 1,
     ) -> PerformanceEvaluationReport:
         """顺序运行场景、场景内受控并发，并支持取消和部分结果查看。"""
+        if not request.company_refs:
+            raise ValueError("性能评测需要由服务层自动选取至少一个企业引用")
         created_at = datetime.now(UTC)
         resources_before = _resource_snapshot()
         pool_before = self._mysql.pool_health()
@@ -105,7 +110,8 @@ class PerformanceEvaluationRunner:
             completed_at=datetime.now(UTC),
             code_version=os.getenv("YUXI_VERSION", "0.7.1"),
             strategy_version=os.getenv("COMPANY_DD_PERFORMANCE_STRATEGY_VERSION", "default"),
-            request=request,
+            request=request.model_copy(update={"company_refs": [], "target_company_ref": None}),
+            sample_size=len(request.company_refs),
             data_versions=_collect_versions(scenario_results),
             model_versions={
                 "default_model": config.default_model,
@@ -114,6 +120,16 @@ class PerformanceEvaluationRunner:
             resources_before=resources_before,
             resources_after=_resource_snapshot(),
             pool=pool,
+            global_summary=_global_summary(scenario_results),
+            runtime_observations={
+                "mysql_pool_wait_ms_delta": pool.wait_ms_delta,
+                "mysql_pool_timeout_delta": pool.timeout_delta,
+                "mysql_pool_leak_detected": pool.leak_detected,
+                "tasker_queue_wait_ms": round(max(0, queue_wait_ms), 3),
+                "tasker_worker_count": max(1, worker_count),
+                "worker_cpu_count": resources_before.cpu_count,
+                "task_queue": "tasker_redis",
+            },
             scenarios=scenario_results,
             regression_gate=_regression_gate(scenario_results, pool),
         )
@@ -234,6 +250,10 @@ class PerformanceEvaluationRunner:
         return PerformanceRequestResult(
             request_index=request_index,
             company_index=company_index,
+            interface=_scenario_interface(scenario),
+            intent=scenario.value,
+            toolchain=_scenario_toolchain(scenario),
+            data_sources=_scenario_data_sources(scenario),
             cache_phase=PerformanceCachePhase.COLD if request_index == 0 else PerformanceCachePhase.HOT,
             status=status,
             started_at=started_at,
@@ -320,6 +340,49 @@ def latency_statistics(values) -> LatencyStatistics:
     )
 
 
+def _global_summary(scenarios: list[PerformanceScenarioResult]) -> GlobalPerformanceSummary:
+    """聚合全部已执行场景的全局性能指标。"""
+    completed = [item for item in scenarios if item.status == PerformanceScenarioStatus.COMPLETE]
+    requests = [request for scenario in completed for request in scenario.requests]
+    total = len(requests)
+    succeeded = sum(item.status == PerformanceRequestStatus.SUCCESS for item in requests)
+    failed = sum(item.status == PerformanceRequestStatus.ERROR for item in requests)
+    timed_out = sum(item.status == PerformanceRequestStatus.TIMEOUT for item in requests)
+    elapsed_seconds = sum(item.elapsed_seconds for item in completed)
+    successful = [item for item in requests if item.status == PerformanceRequestStatus.SUCCESS]
+    stage_latency = _average_stage_latency(successful)
+    return GlobalPerformanceSummary(
+        total_requests=total,
+        succeeded=succeeded,
+        failed=failed,
+        timed_out=timed_out,
+        elapsed_seconds=round(elapsed_seconds, 6),
+        throughput_rps=round(total / elapsed_seconds, 6) if elapsed_seconds else 0,
+        error_rate=failed / total if total else 0,
+        timeout_rate=timed_out / total if total else 0,
+        cancellation_rate=0,
+        latency=latency_statistics(item.duration_ms for item in requests),
+        average_stage_latency=stage_latency,
+        by_scenario={item.scenario.value: item.total_requests for item in completed},
+        by_status={
+            PerformanceRequestStatus.SUCCESS.value: succeeded,
+            PerformanceRequestStatus.ERROR.value: failed,
+            PerformanceRequestStatus.TIMEOUT.value: timed_out,
+        },
+        by_interface=_count_values(item.interface for item in requests),
+        by_intent=_count_values(item.intent for item in requests),
+        by_toolchain=_count_values(tool for item in requests for tool in item.toolchain),
+        by_data_source={
+            "identity": stage_latency.resolution_ms,
+            "mysql": stage_latency.mysql_ms,
+            "neo4j": stage_latency.neo4j_ms,
+            "milvus": stage_latency.milvus_ms,
+            "llm": stage_latency.llm_ms,
+        },
+        by_data_source_requests=_count_values(source for item in requests for source in item.data_sources),
+    )
+
+
 def _percentile(ordered: list[float], quantile: float) -> float:
     """返回 nearest-rank 分位数。"""
     index = max(0, math.ceil(quantile * len(ordered)) - 1)
@@ -334,6 +397,56 @@ def _average_stage_latency(records: list[PerformanceRequestResult]) -> LatencyBr
     return LatencyBreakdown(
         **{field: round(sum(getattr(item.latency, field) for item in records) / len(records), 3) for field in fields}
     )
+
+
+def _scenario_interface(scenario: PerformanceScenario) -> str:
+    """返回不包含企业明细的性能接口维度。"""
+    if scenario in {
+        PerformanceScenario.REPORT_AGGREGATE_WITHOUT_LLM,
+        PerformanceScenario.REPORT_WITH_LLM,
+    }:
+        return "company_due_diligence.report.generate_inline"
+    return "company_due_diligence.query"
+
+
+def _scenario_toolchain(scenario: PerformanceScenario) -> list[str]:
+    """返回场景会经过的受控工具链维度。"""
+    if scenario == PerformanceScenario.GRAPH_PATH_3_HOPS:
+        return ["entity_resolution", "graph_path"]
+    if scenario in {
+        PerformanceScenario.REPORT_AGGREGATE_WITHOUT_LLM,
+        PerformanceScenario.REPORT_WITH_LLM,
+    }:
+        return [
+            "entity_resolution",
+            "structured_query",
+            "graph_path",
+            "evidence_search",
+            "report_generation",
+        ]
+    return ["entity_resolution", "structured_query"]
+
+
+def _scenario_data_sources(scenario: PerformanceScenario) -> list[str]:
+    """返回场景依赖的脱敏数据源维度。"""
+    if scenario == PerformanceScenario.GRAPH_PATH_3_HOPS:
+        return ["mysql", "neo4j"]
+    if scenario in {
+        PerformanceScenario.REPORT_AGGREGATE_WITHOUT_LLM,
+        PerformanceScenario.REPORT_WITH_LLM,
+    }:
+        return ["mysql", "neo4j", "milvus"]
+    return ["mysql"]
+
+
+def _count_values(values) -> dict[str, int]:
+    """统计非空脱敏维度值。"""
+    counts: dict[str, int] = {}
+    for value in values:
+        if not value:
+            continue
+        counts[value] = counts.get(value, 0) + 1
+    return counts
 
 
 def _report_latency(report) -> LatencyBreakdown:

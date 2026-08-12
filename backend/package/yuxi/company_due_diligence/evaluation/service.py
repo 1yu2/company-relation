@@ -6,6 +6,10 @@ import asyncio
 import os
 from enum import StrEnum
 
+from yuxi.company_due_diligence.evaluation.catalog import (
+    AutoEvaluationDatasetBuilder,
+    auto_evaluation_dataset_builder,
+)
 from yuxi.company_due_diligence.evaluation.dataset import EvaluationDatasetRepository
 from yuxi.company_due_diligence.evaluation.report import (
     checksum,
@@ -42,11 +46,13 @@ class QualityEvaluationService:
         *,
         datasets: EvaluationDatasetRepository | None = None,
         runner: QualityEvaluationRunner | None = None,
+        auto_builder: AutoEvaluationDatasetBuilder | None = None,
         minio_client: MinIOClient | None = None,
         bucket_name: str = EVALUATION_BUCKET,
     ) -> None:
         self._datasets = datasets or EvaluationDatasetRepository()
         self._runner = runner or QualityEvaluationRunner()
+        self._auto_builder = auto_builder or auto_evaluation_dataset_builder
         self._minio = minio_client or get_minio_client()
         self._bucket_name = bucket_name
 
@@ -76,7 +82,15 @@ class QualityEvaluationService:
 
     async def create_run(self, request: QualityEvaluationRequest, tasker: Tasker):
         """校验数据集后提交质量评测任务。"""
-        dataset = self._datasets.get(request.dataset_id)
+        if request.dataset_id is not None:
+            dataset = self._datasets.get(request.dataset_id)
+        else:
+            dataset = await self._auto_builder.build(
+                dataset_version=request.dataset_version,
+                sampling_policy=request.sampling_policy,
+                max_samples=request.max_samples or 1000,
+                case_families=request.case_families,
+            )
 
         async def run_evaluation(context: TaskContext):
             """执行单个质量评测并发布三种产物。"""
@@ -101,9 +115,18 @@ class QualityEvaluationService:
                 "dataset_checksum": dataset.checksum,
                 "max_samples": request.max_samples,
                 "strategy_label": request.strategy_label,
+                "scope": dataset.scope,
+                "sampling_policy": dataset.sampling_policy,
+                "denominator": dataset.denominator,
+                "sampled_denominator": dataset.sampled_denominator,
             },
             coroutine=run_evaluation,
         )
+
+    async def get_coverage(self, *, sampling_policy: str = "all_or_stratified") -> dict:
+        """返回无需企业输入的全局数据目录覆盖摘要。"""
+        snapshot = await self._auto_builder.scan(sampling_policy=sampling_policy, max_samples=1000)
+        return snapshot.model_dump(mode="json")
 
     async def list_runs(self, tasker: Tasker, limit: int = 100) -> list[dict]:
         """返回质量评测 Tasker 摘要。"""

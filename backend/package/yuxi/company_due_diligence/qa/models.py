@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 from yuxi.company_due_diligence.evidence.models import EvidenceDocumentType
 from yuxi.company_due_diligence.graph.schema import GraphRelationType
 from yuxi.company_due_diligence.models import (
+    CompanyCandidate,
     CompanyReference,
     DataQuality,
     Entity,
@@ -18,6 +19,7 @@ from yuxi.company_due_diligence.models import (
     LatencyBreakdown,
     Path,
     Relation,
+    RequestScopeStatus,
     ResolutionStatus,
     ResolvedCompany,
     Source,
@@ -53,7 +55,7 @@ class QueryStepStatus(StrEnum):
 class CompanyQuestionRequest(BaseModel):
     """描述企业简单问答或最多三跳关系问题。"""
 
-    company_ref: CompanyReference
+    company_ref: CompanyReference | None = None
     target_company_ref: CompanyReference | None = None
     question: str = Field(min_length=1, max_length=2000)
     mode: QuestionMode = QuestionMode.QA
@@ -99,13 +101,37 @@ class QueryStep(BaseModel):
     message: str | None = None
 
 
+class GlobalQuestionItem(BaseModel):
+    """描述一个全局白名单统计结果及其来源。"""
+
+    key: str
+    label: str
+    value: int | float | str
+    metadata: dict[str, str | int | float | list[str]] = Field(default_factory=dict)
+    source_ids: list[str] = Field(default_factory=list)
+
+
+class GlobalQuestionResult(BaseModel):
+    """描述不依赖单一企业的固定统计结果。"""
+
+    operation: str
+    data_version: str
+    denominator: int = Field(ge=0)
+    items: list[GlobalQuestionItem] = Field(default_factory=list)
+    metrics: dict[str, int | float] = Field(default_factory=dict)
+    skipped_reasons: list[str] = Field(default_factory=list)
+
+
 class CompanyQuestionResponse(BaseModel):
     """描述包含事实、关系、路径、证据和来源的问答响应。"""
 
     question: str
+    scope_status: RequestScopeStatus = RequestScopeStatus.RESOLVED
     resolution_status: ResolutionStatus
     company: ResolvedCompany | None = None
     target_company: ResolvedCompany | None = None
+    candidates: list[CompanyCandidate] = Field(default_factory=list)
+    global_result: GlobalQuestionResult | None = None
     question_type: QuestionType | None = None
     plan: QueryPlan | None = None
     answer: str

@@ -102,6 +102,8 @@ async def test_runner_respects_concurrency_and_records_pool_delta():
             duration_seconds=5,
         ),
         run_id="performance-1",
+        queue_wait_ms=12.5,
+        worker_count=2,
     )
 
     scenario = report.scenarios[0]
@@ -113,6 +115,14 @@ async def test_runner_respects_concurrency_and_records_pool_delta():
     assert report.pool.wait_ms_delta == 3
     assert report.pool.leak_detected is False
     assert report.data_versions == {"neo4j": ["graph-v1"]}
+    assert report.request.company_refs == []
+    assert report.sample_size == 1
+    assert report.global_summary.by_interface == {"company_due_diligence.query": 6}
+    assert report.global_summary.by_intent == {"enterprise_profile": 6}
+    assert report.global_summary.by_toolchain == {"entity_resolution": 6, "structured_query": 6}
+    assert report.global_summary.by_data_source_requests == {"mysql": 6}
+    assert report.runtime_observations["tasker_queue_wait_ms"] == 12.5
+    assert report.runtime_observations["tasker_worker_count"] == 2
 
 
 @pytest.mark.asyncio

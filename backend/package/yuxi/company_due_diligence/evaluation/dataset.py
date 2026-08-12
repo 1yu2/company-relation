@@ -34,6 +34,7 @@ class ReviewStatus(StrEnum):
     """描述 Golden 是否完成独立人工复核。"""
 
     HUMAN_VERIFIED = "human_verified"
+    SOURCE_DERIVED = "source_derived"
     SOURCE_DERIVED_UNREVIEWED = "source_derived_unreviewed"
 
 
@@ -144,6 +145,12 @@ class EvaluationSample(BaseModel):
     report_request: DueDiligenceReportRequest | None = None
     investigation_request: CompanyInvestigationRequest | None = None
     expected: GoldenExpected
+    expected_origin: str | None = None
+    data_version: str | None = None
+    source_table: str | None = None
+    source_record_key: str | None = None
+    source_checksum: str | None = Field(default=None, min_length=64, max_length=64)
+    sampling_policy: str | None = None
     reviewer_note: str | None = Field(default=None, max_length=2000)
     reviewed_by: str | None = Field(default=None, min_length=1, max_length=128)
     reviewed_at: datetime | None = None
@@ -185,6 +192,14 @@ class EvaluationDataset(BaseModel):
     created_at: datetime
     description: str = Field(default="", max_length=4000)
     declared_checksum: str | None = Field(default=None, min_length=64, max_length=64)
+    scope: str = "global"
+    sampling_policy: str = "frozen"
+    denominator: int = Field(default=0, ge=0)
+    sampled_denominator: int = Field(default=0, ge=0)
+    skipped_reasons: list[str] = Field(default_factory=list)
+    source_tables: list[str] = Field(default_factory=list)
+    source_record_keys: list[str] = Field(default_factory=list)
+    coverage_metrics: dict[str, int | float] = Field(default_factory=dict)
     samples: list[EvaluationSample] = Field(min_length=1)
 
     @property

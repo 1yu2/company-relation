@@ -51,6 +51,7 @@ async def lifespan(app: FastAPI):
         async with pg_manager.get_async_session_context() as session:
             repository = AgentRepository(session)
             await repository.ensure_default_agent()
+            await repository.ensure_company_due_diligence_agent()
             await repository.ensure_general_purpose_subagent()
             await repository.ensure_web_search_subagent()
             await repository.ensure_deep_research_agents()

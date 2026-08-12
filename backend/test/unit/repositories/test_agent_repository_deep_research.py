@@ -7,8 +7,10 @@ import pytest
 
 from yuxi.repositories.agent_repository import (
     AgentRepository,
+    COMPANY_DUE_DILIGENCE_AGENT_SLUG,
     DEEP_RESEARCH_AGENT_SLUG,
     DEFAULT_AGENT_BACKEND_ID,
+    DEFAULT_SHARE_CONFIG,
     FACT_VERIFIER_AGENT_SLUG,
     RESEARCH_EXPLORER_AGENT_SLUG,
     SUB_AGENT_BACKEND_ID,
@@ -73,3 +75,20 @@ async def test_ensure_deep_research_agents_is_idempotent(monkeypatch):
 
     assert db.added == []
     db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ensure_company_due_diligence_agent_creates_one_global_instance(monkeypatch):
+    """企业尽调内置 Agent 应使用唯一 slug 和全局共享配置。"""
+    db = CollectingDb()
+    repo = AgentRepository(db)
+
+    monkeypatch.setattr(repo, "get_by_slug", AsyncMock(return_value=None))
+
+    agent = await repo.ensure_company_due_diligence_agent()
+
+    assert agent.slug == COMPANY_DUE_DILIGENCE_AGENT_SLUG
+    assert agent.backend_id == DEFAULT_AGENT_BACKEND_ID
+    assert agent.is_subagent is False
+    assert agent.share_config == DEFAULT_SHARE_CONFIG
+    assert agent.config_json["context"]["tools"] == ["investigate_company"]

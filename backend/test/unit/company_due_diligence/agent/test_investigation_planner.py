@@ -10,7 +10,11 @@ from yuxi.company_due_diligence.agent.models import (
     PresentationType,
     TimeScopeType,
 )
-from yuxi.company_due_diligence.agent.planner import InvestigationPlanner, extract_company_mentions
+from yuxi.company_due_diligence.agent.planner import (
+    InvestigationPlanner,
+    extract_company_mentions,
+    extract_company_references,
+)
 from yuxi.company_due_diligence.models import StructuredQueryType
 
 
@@ -93,6 +97,14 @@ def test_extract_company_mentions_keeps_two_legal_names():
     message = "请分析深圳示例科技有限公司和广州目标股份有限公司有什么关系"
 
     assert extract_company_mentions(message) == ["深圳示例科技有限公司", "广州目标股份有限公司"]
+
+
+def test_extract_company_references_supports_stock_and_credit_codes():
+    """问题中的股票代码和信用代码应转换为确定性企业引用。"""
+    references = extract_company_references("请查询 000001.SZ 和 914403001922038216 的风险")
+
+    assert references[0].stock_code == "000001.SZ"
+    assert references[1].credit_code == "914403001922038216"
 
 
 def test_relation_question_uses_graph_without_unrelated_profile_query():

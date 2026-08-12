@@ -157,6 +157,12 @@ make format
 
 具体命令以 `docs/develop-guides/testing-guidelines.md` 和项目 Makefile 为准，在运行中的 Docker 容器执行。
 
+## Wave 8 回归补充
+
+- 管理员 HTTP E2E 已覆盖无企业全局统计、问题内企业全称解析、`needs_context`、无企业自动评测和无企业安全性能评测。
+- 真实只读目录断言分母为 924，并校验许可/IP 覆盖、全局性能脱敏维度和性能报告不保留企业引用。
+- 自动回归通过不改变正式发布阻塞条件：仍需 `human_verified` 广东企业 Golden。
+
 ## 非目标
 
 - 不在没有数据源负责人允许时执行真实库高并发容量测试。

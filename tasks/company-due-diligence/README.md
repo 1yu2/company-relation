@@ -93,16 +93,19 @@ flowchart TD
 | [`TASK-010`](TASK-010-frontend-query-and-report.md) | 前端智能体调查工作台 | 条件并行 | 统一意图/响应契约，联调依赖 `TASK-006`、`TASK-007` | 已完成 |
 | [`TASK-011`](TASK-011-frontend-evaluation-workbench.md) | 前端全链路评测工作台 | 条件并行 | `TASK-008`、`TASK-009` API 契约 | 已完成 |
 | [`TASK-012`](TASK-012-e2e-regression-and-release.md) | 端到端回归与发布门禁 | 串行收口 | `TASK-006` 至 `TASK-011` | 自动门禁已完成；正式发布受人工 Golden 阻塞 |
-| [`TASK-013`](TASK-013-global-shared-auto-evaluation.md) | 全局共享智能体与无企业必填的自动评测 | 横切升级 | `TASK-006` 至 `TASK-012` | 待开始 |
+| [`TASK-013`](TASK-013-global-shared-auto-evaluation.md) | 全局共享智能体与无企业必填的自动评测 | 横切升级 | `TASK-006` 至 `TASK-012` | 已完成；正式发布仍受人工 Golden 阻塞 |
 
 ## 当前验收摘要
 
 截至 2026 年 8 月 11 日：
 
+- 平台启动时幂等注册唯一 slug 为 `company-due-diligence` 的全局共享 Agent，复用 `share_config.access_level=global`，不按用户复制配置。
 - `POST /api/company-due-diligence/investigations`、`CompanyDueDiligenceAgent` 和主智能体工具 `investigate_company` 已共用同一领域服务；旧 `/query`、`/reports` 保持兼容。
-- 独立工作台已改为企业确认加单一自然语言输入，完整报告按钮与自然语言报告意图共用同一内部链路，结果按 `presentation` 动态展示。
+- 工作台直接显示单一自然语言输入，企业搜索仅作为可选上下文；问题可自动提取企业全称、股票代码和信用代码，无企业全局问题返回 `global_scope`，企业依赖问题返回 `needs_context`。
+- 真实目录扫描确认 `924` 家企业，并输出股东、产品、融资、风险、许可、知识产权覆盖和关键字段非空率；自动评测按五类样本族生成 `source_derived` 数据集。
+- 性能运行不要求企业引用，自动选样并输出全局分位数、接口/意图/工具链/数据源、连接池和 Tasker 排队等待；最终性能报告不保留企业引用明细。
 - `TASK-008` 已增加企业解析、主题、时间、深度、展示、交付、必要/禁止工具、Claim Ledger、主题覆盖和无关主题规避指标；当前没有 `human_verified` 广东企业 Golden，不能冻结正式质量阈值。
-- `TASK-012` 的统一智能体 E2E 和升级发布门禁已完成；发布状态仍为 `blocked`，唯一业务阻塞项是人工 Golden，在线 LLM 未启用作为非阻塞限制展示。
+- `TASK-012` 与 `TASK-013` 的统一智能体 E2E、无企业自动评测和全局性能回归已完成；发布状态仍为 `blocked`，唯一业务阻塞项是人工 Golden，在线 LLM 未启用作为非阻塞限制展示。
 - 最新发布验收报告由 `backend/scripts/company_due_diligence/generate_release_gate.py` 生成到 `saves/company_due_diligence/release/`，生成文件不提交 Git。
 - 最新发布验收报告会同时记录 REST 入口、主智能体工具、意图/工具/展示/Claim/输入输出一致性指标和管理员部署态 E2E 状态。
 

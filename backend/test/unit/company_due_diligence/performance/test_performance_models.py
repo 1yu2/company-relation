@@ -60,3 +60,11 @@ def test_scenarios_are_deduplicated_without_reordering():
         PerformanceScenario.ENTERPRISE_PROFILE,
         PerformanceScenario.SHAREHOLDER_LIST,
     ]
+
+
+def test_global_performance_request_does_not_require_company_refs():
+    """性能入口默认由服务层从全局目录自动选样。"""
+    request = PerformanceRunRequest()
+
+    assert request.scope == "global"
+    assert request.company_refs == []

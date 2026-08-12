@@ -175,6 +175,12 @@ GET  /api/company-due-diligence/evaluations/runs/{run_id}/download?format=json|j
 - 固定小 Golden 的可重复结果。
 - 运行元数据与文件产物一致。
 
+## Wave 8 全局自动评测升级
+
+- 自动评测不再要求企业引用，按数据版本、样本族和抽样策略从 924 家只读目录生成 `source_derived` 样本。
+- 自动样本覆盖字段、关系、证据、报告和拒答/歧义，保存来源、checksum、总体分母、抽样分母和跳过原因。
+- `source_derived` 与 `human_verified` 分组统计；只有人工冻结样本可以进入正式发布门禁。
+
 ## 非目标
 
 - 不用程序生成的答案直接作为严格 Golden。

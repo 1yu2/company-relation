@@ -1,6 +1,7 @@
 """企业尽调统一问答装配与拒答单元测试。"""
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,6 +16,7 @@ from yuxi.company_due_diligence.models import (
     MatchMethod,
     Pagination,
     ResolutionStatus,
+    RequestScopeStatus,
     Relation,
     ResolvedCompany,
     Source,
@@ -28,6 +30,7 @@ from yuxi.company_due_diligence.graph.schema import GraphPathResult
 from yuxi.company_due_diligence.qa.graph import QAWorkflowResult
 from yuxi.company_due_diligence.qa.models import (
     CompanyQuestionRequest,
+    GlobalQuestionResult,
     QueryStep,
     QueryStepStatus,
 )
@@ -83,11 +86,25 @@ class FakeResolver:
     def __init__(self, result) -> None:
         self.result = result
         self.calls = 0
+        self.references = []
 
-    async def resolve(self, _reference):
+    async def resolve(self, reference):
         """记录解析调用并返回固定结果。"""
         self.calls += 1
+        self.references.append(reference)
         return self.result
+
+
+class FakeGlobalService:
+    """返回固定全局统计或声明问题不属于全局范围。"""
+
+    def __init__(self, response=None) -> None:
+        self.response = response
+        self.calls = []
+
+    async def query(self, question, *, top_k):
+        self.calls.append((question, top_k))
+        return self.response
 
 
 class FakeWorkflow:
@@ -144,6 +161,63 @@ class FakeWorkflow:
                 )
             )
         return QAWorkflowResult(structured=[structured], graph=None, evidence=None, steps=steps)
+
+
+async def test_query_without_company_returns_global_scope_for_whitelisted_question():
+    """无企业输入的固定全局问题应直接返回 global_scope。"""
+    global_service = FakeGlobalService(
+        SimpleNamespace(
+            answer="当前覆盖 924 家企业。",
+            result=GlobalQuestionResult(
+                operation="catalog_coverage",
+                data_version="catalog-v1",
+                denominator=924,
+            ),
+            sources=[],
+            data_quality=DataQuality(source_status=SourceStatus.AVAILABLE),
+            latency=LatencyBreakdown(mysql_ms=3, total_ms=3),
+        )
+    )
+    resolver = FakeResolver(_resolution())
+    service = CompanyQuestionService(resolver=resolver, global_service=global_service)
+
+    response = await service.query(CompanyQuestionRequest(question="当前数据覆盖哪些企业？"))
+
+    assert response.scope_status == RequestScopeStatus.GLOBAL_SCOPE
+    assert response.global_result.denominator == 924
+    assert resolver.calls == 0
+
+
+async def test_query_without_company_returns_needs_context_for_company_question():
+    """企业依赖问题缺少唯一范围时应返回 needs_context。"""
+    resolver = FakeResolver(_resolution())
+    service = CompanyQuestionService(resolver=resolver, global_service=FakeGlobalService())
+
+    response = await service.query(CompanyQuestionRequest(question="注册资本是多少？"))
+
+    assert response.scope_status == RequestScopeStatus.NEEDS_CONTEXT
+    assert response.company is None
+    assert resolver.calls == 0
+
+
+async def test_query_extracts_company_name_from_question_before_resolution():
+    """问题内企业全称应自动形成 company_ref，不要求调用方重复传参。"""
+    source_id = build_source_id("t_enterprise", "eid-1")
+    resolver = FakeResolver(_resolution())
+    global_service = FakeGlobalService()
+    service = CompanyQuestionService(
+        resolver=resolver,
+        workflow=FakeWorkflow(source_id),
+        global_service=global_service,
+    )
+
+    response = await service.query(
+        CompanyQuestionRequest(question="深圳示例科技有限公司的注册资本、法人和经营状态是什么？")
+    )
+
+    assert response.resolution_status == ResolutionStatus.RESOLVED
+    assert resolver.references[0].name == "深圳示例科技有限公司"
+    assert global_service.calls == []
 
 
 class GraphWorkflow:

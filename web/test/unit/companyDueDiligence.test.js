@@ -22,6 +22,8 @@ test('company resolution states distinguish resolved ambiguous and not found', (
   assert.deepEqual(statusMeta('ambiguous'), { label: '多候选', color: 'warning' })
   assert.deepEqual(statusMeta('not_found'), { label: '未找到', color: 'default' })
   assert.deepEqual(statusMeta('source_unavailable'), { label: '来源不可用', color: 'error' })
+  assert.deepEqual(statusMeta('global_scope'), { label: '全局统计', color: 'success' })
+  assert.deepEqual(statusMeta('needs_context'), { label: '需要企业范围', color: 'warning' })
 })
 
 test('investigation payload keeps company context and natural language contract', () => {
@@ -44,7 +46,7 @@ test('investigation payload keeps company context and natural language contract'
         credit_code: 'credit-1',
         stock_code: null
       },
-      message: '当前股东有哪些？',
+      question: '当前股东有哪些？',
       start_date: '2023-08-10',
       as_of: '2026-08-10',
       hop_limit: 2,
@@ -68,7 +70,12 @@ test('investigation payload supports report shortcut and rejects empty intent', 
       include_low_confidence: false
     }
   )
-  assert.throws(() => buildInvestigationPayload(null, { message: '测试' }), /请先确认唯一企业/)
+  assert.deepEqual(buildInvestigationPayload(null, { message: '测试' }), {
+    question: '测试',
+    hop_limit: 3,
+    top_k: 10,
+    include_low_confidence: false
+  })
   assert.throws(
     () => buildInvestigationPayload({ eid: 'eid-1' }, { message: '   ' }),
     /请输入调查要求/
@@ -85,6 +92,7 @@ test('presentation routes only relevant result components', () => {
     }),
     {
       clarification: false,
+      global: false,
       report: false,
       facts: false,
       relations: true,
@@ -150,37 +158,51 @@ test('dataset company references are deduplicated across QA and report samples',
 })
 
 test('performance form enforces safe limits and real database confirmation', () => {
-  const dataset = { samples: [{ qa_request: { company_ref: { eid: 'eid-1' } } }] }
   assert.throws(
     () =>
-      validatePerformanceForm(
-        {
-          scenarios: ['enterprise_profile'],
-          safetyMode: 'safe_regression',
-          concurrency: 4,
-          requestCount: 5,
-          durationSeconds: 30,
-          requestTimeoutSeconds: 60
-        },
-        dataset
-      ),
+      validatePerformanceForm({
+        scenarios: ['enterprise_profile'],
+        safetyMode: 'safe_regression',
+        concurrency: 4,
+        requestCount: 5,
+        durationSeconds: 30,
+        requestTimeoutSeconds: 60
+      }),
     /并发不得超过 3/
   )
   assert.throws(
     () =>
-      validatePerformanceForm(
-        {
-          scenarios: ['enterprise_profile'],
-          safetyMode: 'controlled_real_database',
-          concurrency: 4,
-          requestCount: 5,
-          durationSeconds: 30,
-          requestTimeoutSeconds: 60,
-          confirmation: 'wrong'
-        },
-        dataset
-      ),
+      validatePerformanceForm({
+        scenarios: ['enterprise_profile'],
+        safetyMode: 'controlled_real_database',
+        concurrency: 4,
+        requestCount: 5,
+        durationSeconds: 30,
+        requestTimeoutSeconds: 60,
+        confirmation: 'wrong'
+      }),
     new RegExp(REAL_DATABASE_CONFIRMATION)
+  )
+  assert.deepEqual(
+    validatePerformanceForm({
+      scenarios: ['enterprise_profile'],
+      safetyMode: 'safe_regression',
+      concurrency: 1,
+      requestCount: 5,
+      durationSeconds: 30,
+      requestTimeoutSeconds: 60
+    }),
+    {
+      scenarios: ['enterprise_profile'],
+      scope: 'global',
+      sampling_policy: 'all_or_stratified',
+      safety_mode: 'safe_regression',
+      concurrency: 1,
+      request_count: 5,
+      duration_seconds: 30,
+      request_timeout_seconds: 60,
+      real_database_confirmation: null
+    }
   )
 })
 

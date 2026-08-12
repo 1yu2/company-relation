@@ -15,7 +15,10 @@ const dataset = ref(null)
       <div><FlaskConical size="27" /></div>
       <section>
         <h1>企业尽调评测工作台</h1>
-        <p>严格区分广东企业人工 Golden、程序派生样本与 AkShare 公开回归基线。</p>
+        <p>
+          默认从全局数据目录自动生成评测与性能样本；冻结数据集仅作为人工 Golden 和 AkShare
+          回归基线。
+        </p>
       </section>
     </header>
 
@@ -23,7 +26,9 @@ const dataset = ref(null)
     <section class="evaluation-card">
       <a-tabs default-active-key="quality">
         <a-tab-pane key="quality" tab="质量评测"><QualityRunPanel :dataset="dataset" /></a-tab-pane>
-        <a-tab-pane key="performance" tab="性能评测"><PerformanceRunPanel :dataset="dataset" /></a-tab-pane>
+        <a-tab-pane key="performance" tab="性能评测"
+          ><PerformanceRunPanel :dataset="dataset"
+        /></a-tab-pane>
       </a-tabs>
     </section>
   </main>

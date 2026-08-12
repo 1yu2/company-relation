@@ -11,11 +11,12 @@ from yuxi.services.task_service import tasker
 class CompanyInvestigationToolInput(BaseModel):
     """描述主智能体调用企业尽调领域服务所需的最小参数。"""
 
-    message: str = Field(
-        min_length=1,
+    question: str | None = Field(
+        default=None,
         max_length=2000,
         description="用户关于企业股东、关系、风险、经营、融资、知识产权、新闻或尽调报告的原始要求",
     )
+    message: str | None = Field(default=None, max_length=2000, description="兼容旧调用的自然语言问题字段")
     company_name: str | None = Field(
         default=None,
         max_length=256,
@@ -45,7 +46,8 @@ class CompanyInvestigationToolInput(BaseModel):
     args_schema=CompanyInvestigationToolInput,
 )
 async def investigate_company(
-    message: str,
+    question: str | None = None,
+    message: str | None = None,
     company_name: str | None = None,
     confirmed_eid: str | None = None,
     target_company_name: str | None = None,
@@ -57,13 +59,16 @@ async def investigate_company(
     首次调用可传企业标准全称；后续调用应原样复用工具返回的 company_context，
     其中 eid 只能来自工具结果。若返回 clarification，应向用户展示候选或请求补充标准全称。
     """
+    question = (question or message or "").strip()
+    if not question:
+        raise ValueError("question 不能为空")
     company_context = _company_context(company_name, confirmed_eid)
     target_company_context = _company_context(target_company_name, target_confirmed_eid)
     response = await company_due_diligence_agent.investigate(
         CompanyInvestigationRequest(
             company_context=company_context,
             target_company_context=target_company_context,
-            message=message,
+            question=question,
         ),
         tasker=tasker,
     )

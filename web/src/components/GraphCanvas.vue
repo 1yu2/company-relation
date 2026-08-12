@@ -132,7 +132,7 @@ const NODE_LABEL_COLORS = [
 const EDGE_LABEL_COLORS = [
   '#b7adf9',
   '#7c6aef',
-  '#13c2c2',
+  '#a855f7',
   '#faad14',
   '#ff4d4f',
   '#a394f7',

@@ -17,6 +17,7 @@ from yuxi.company_due_diligence.models import (
     LatencyBreakdown,
     Path,
     Relation,
+    RequestScopeStatus,
     Source,
 )
 from yuxi.company_due_diligence.qa.models import QueryPlan, QueryStep
@@ -31,6 +32,10 @@ class InvestigationStatus(StrEnum):
     ACCEPTED = "accepted"
     CLARIFICATION = "clarification"
     FAILED = "failed"
+    GLOBAL_SCOPE = "global_scope"
+    NEEDS_CONTEXT = "needs_context"
+    NOT_FOUND = "not_found"
+    SOURCE_UNAVAILABLE = "source_unavailable"
 
 
 class InvestigationTopic(StrEnum):
@@ -247,6 +252,7 @@ class CompanyInvestigationRequest(BaseModel):
     company_context: CompanyContext | None = None
     target_company_context: CompanyContext | None = None
     message: str | None = Field(default=None, max_length=2000)
+    question: str | None = Field(default=None, max_length=2000)
     shortcut: InvestigationShortcut | None = None
     start_date: date | None = None
     as_of: date | None = None
@@ -254,7 +260,7 @@ class CompanyInvestigationRequest(BaseModel):
     top_k: int = Field(default=10, ge=1, le=50)
     include_low_confidence: bool = False
 
-    @field_validator("conversation_id", "message", mode="before")
+    @field_validator("conversation_id", "message", "question", mode="before")
     @classmethod
     def normalize_optional_text(cls, value):
         """去除可选文本两端空白。"""
@@ -266,8 +272,8 @@ class CompanyInvestigationRequest(BaseModel):
     @model_validator(mode="after")
     def validate_request(self) -> CompanyInvestigationRequest:
         """确保请求包含调查文本或标准快捷入口。"""
-        if self.message is None and self.shortcut is None:
-            raise ValueError("message 和 shortcut 至少提供一个")
+        if self.message is None and self.question is None and self.shortcut is None:
+            raise ValueError("question、message 和 shortcut 至少提供一个")
         if self.start_date and self.as_of and self.as_of < self.start_date:
             raise ValueError("as_of 不能早于 start_date")
         return self
@@ -277,10 +283,12 @@ class CompanyInvestigationResponse(BaseModel):
     """描述从意图理解到动态展示的统一领域智能体响应。"""
 
     status: InvestigationStatus
+    scope_status: RequestScopeStatus = RequestScopeStatus.RESOLVED
     understood_request: UnderstoodRequest
     company_context: CompanyContext | None = None
     target_company_context: CompanyContext | None = None
     candidates: list[CompanyCandidate] = Field(default_factory=list)
+    global_result: dict | None = None
     entities: list[Entity] = Field(default_factory=list)
     summary: str
     findings: list[str] = Field(default_factory=list)

@@ -84,12 +84,12 @@
   --color-info-700: #096dd9; /* 信息色-深 */
   --color-info-900: #0050b3; /* 信息色-最深 */
 
-  --color-accent-10: #f5fffe; /* 强调色-极浅 */
-  --color-accent-50: #e6fffb; /* 强调色-最浅 */
-  --color-accent-100: #87e8de; /* 强调色-浅 */
-  --color-accent-500: #13c2c2; /* 强调色-标准 */
-  --color-accent-700: #08979c; /* 强调色-深 */
-  --color-accent-900: #006d75; /* 强调色-最深 */
+  --color-accent-10: #fbf7ff; /* 强调色-极浅 */
+  --color-accent-50: #f5e8ff; /* 强调色-最浅 */
+  --color-accent-100: #e6c7ff; /* 强调色-浅 */
+  --color-accent-500: #a855f7; /* 强调色-标准 */
+  --color-accent-700: #7e22ce; /* 强调色-深 */
+  --color-accent-900: #581c87; /* 强调色-最深 */
 
   /* Chart Palette - 图表调色板 */
   --chart-palette-1: var(--main-500);

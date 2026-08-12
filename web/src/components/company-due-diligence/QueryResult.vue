@@ -103,8 +103,31 @@ const timeScopeText = computed(() => {
       </button>
       <a-empty
         v-if="!result.candidates?.length"
-        description="请补充企业标准名称或先在左侧确认企业"
+        description="请在问题中补充企业名称、股票代码或统一社会信用代码，也可以使用左侧可选企业上下文"
       />
+    </div>
+
+    <div v-else-if="sections.global" class="global-result-card">
+      <header>
+        <strong>全局数据结果</strong>
+        <code>{{ result.global_result?.data_version }}</code>
+      </header>
+      <p>数据分母：{{ result.global_result?.denominator || 0 }}</p>
+      <div class="global-metrics">
+        <span v-for="(value, key) in result.global_result?.metrics || {}" :key="key">
+          {{ key }}：{{ value }}
+        </span>
+      </div>
+      <ul v-if="result.global_result?.items?.length">
+        <li v-for="item in result.global_result.items" :key="item.key">
+          <strong>{{ item.label }}</strong>
+          <span>{{ item.value }}</span>
+          <small v-if="item.metadata?.enterprise_names?.length">
+            {{ item.metadata.enterprise_names.join('、') }}
+          </small>
+        </li>
+      </ul>
+      <a-empty v-else description="当前全局统计没有返回可展示条目" />
     </div>
 
     <a-alert
@@ -295,6 +318,51 @@ const timeScopeText = computed(() => {
   span {
     color: var(--gray-500);
     font-size: 12px;
+  }
+}
+
+.global-result-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--main-100);
+  border-radius: 10px;
+  background: var(--main-5);
+
+  header,
+  li,
+  .global-metrics {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  header {
+    justify-content: space-between;
+  }
+
+  p,
+  ul {
+    margin: 0;
+  }
+
+  ul {
+    display: grid;
+    gap: 7px;
+    padding: 0;
+    list-style: none;
+  }
+
+  li,
+  .global-metrics span {
+    padding: 7px 9px;
+    border-radius: 7px;
+    background: var(--gray-0);
+  }
+
+  small {
+    color: var(--gray-500);
   }
 }
 

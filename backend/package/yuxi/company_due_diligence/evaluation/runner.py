@@ -7,7 +7,7 @@ import json
 import os
 from datetime import UTC, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from yuxi.company_due_diligence.agent.service import CompanyDueDiligenceAgent, company_due_diligence_agent
 from yuxi.company_due_diligence.evaluation.dataset import EvaluationDataset, EvaluationSample
@@ -25,9 +25,29 @@ from yuxi.services.task_service import TaskContext
 class QualityEvaluationRequest(BaseModel):
     """描述要运行的数据集和可选样本上限。"""
 
-    dataset_id: str = Field(min_length=1, max_length=128)
+    dataset_id: str | None = Field(default=None, min_length=1, max_length=128)
+    dataset_version: str = Field(default="latest_frozen", min_length=1, max_length=64)
+    scope: str = Field(default="global", pattern="^global$")
+    sampling_policy: str = Field(default="all_or_stratified", pattern="^(all|all_or_stratified|stratified)$")
+    case_families: list[str] = Field(
+        default_factory=lambda: [
+            "field_coverage",
+            "relation_consistency",
+            "evidence_provenance",
+            "report_completeness",
+            "refusal_and_ambiguity",
+        ],
+        min_length=1,
+    )
     max_samples: int | None = Field(default=None, ge=1, le=10000)
     strategy_label: str = Field(default="default", min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_source(self):
+        """允许旧冻结数据集或新的全局自动样本入口。"""
+        if self.dataset_id is None and self.scope != "global":
+            raise ValueError("自动评测只支持 global scope")
+        return self
 
 
 class QualitySampleResult(BaseModel):
@@ -74,6 +94,14 @@ class QualityEvaluationReport(BaseModel):
     dataset_version: str
     dataset_checksum: str
     dataset_source_kind: str
+    dataset_scope: str = "global"
+    sampling_policy: str = "frozen"
+    denominator: int = Field(default=0, ge=0)
+    sampled_denominator: int = Field(default=0, ge=0)
+    skipped_reasons: list[str] = Field(default_factory=list)
+    source_tables: list[str] = Field(default_factory=list)
+    source_record_keys_checksum: str | None = None
+    catalog_coverage: dict[str, int | float] = Field(default_factory=dict)
     strategy_label: str
     business_as_of: str | None = None
     all_metrics: QualityMetrics
@@ -161,6 +189,18 @@ class QualityEvaluationRunner:
             dataset_version=dataset.version,
             dataset_checksum=dataset.checksum,
             dataset_source_kind=dataset.source_kind.value,
+            dataset_scope=dataset.scope,
+            sampling_policy=dataset.sampling_policy,
+            denominator=dataset.denominator or len(dataset.samples),
+            sampled_denominator=dataset.sampled_denominator or len(samples),
+            skipped_reasons=dataset.skipped_reasons,
+            source_tables=dataset.source_tables,
+            catalog_coverage=dataset.coverage_metrics,
+            source_record_keys_checksum=hashlib.sha256(
+                json.dumps(dataset.source_record_keys, sort_keys=True).encode()
+            ).hexdigest()
+            if dataset.source_record_keys
+            else None,
             strategy_label=strategy_label,
             business_as_of=dataset.business_as_of.isoformat() if dataset.business_as_of else None,
             all_metrics=all_metrics,

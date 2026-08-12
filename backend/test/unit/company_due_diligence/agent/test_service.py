@@ -103,18 +103,19 @@ class InvalidSourceQuestionService(FakeQuestionService):
         return result
 
 
-async def test_missing_company_context_returns_clarification_without_tools():
-    """没有上下文和完整企业名称时只返回澄清，不调用底层工具。"""
+async def test_missing_company_context_returns_needs_context_without_resolution():
+    """没有上下文和完整企业名称时返回 needs_context，不执行身份解析。"""
     resolver = FakeResolver()
     question_service = FakeQuestionService()
     agent = CompanyDueDiligenceAgent(resolver=resolver, question_service=question_service)
 
     result = await agent.investigate(CompanyInvestigationRequest(message="这家企业的股东有哪些？"))
 
-    assert result.status == InvestigationStatus.CLARIFICATION
+    assert result.status == InvestigationStatus.NEEDS_CONTEXT
     assert result.presentation.type == PresentationType.CLARIFICATION
     assert resolver.calls == []
-    assert question_service.requests == []
+    assert len(question_service.requests) == 1
+    assert question_service.requests[0].company_ref is None
 
 
 async def test_sync_investigation_reuses_context_and_keeps_time_scope():

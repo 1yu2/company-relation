@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from server.utils.auth_middleware import get_admin_user
+from yuxi.company_due_diligence.evaluation.catalog import AutoDatasetUnavailableError
 from yuxi.company_due_diligence.evaluation.runner import QualityEvaluationRequest
 from yuxi.company_due_diligence.evaluation.service import QualityExportFormat, quality_evaluation_service
 from yuxi.company_due_diligence.performance.models import PerformanceRunRequest
@@ -50,7 +51,37 @@ async def create_quality_run(
         evaluation_task = await quality_evaluation_service.create_run(request, tasker)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except AutoDatasetUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"run_id": evaluation_task.id, "task_id": evaluation_task.id, "status": "queued"}
+
+
+@company_due_diligence_evaluation_router.post("/auto-runs", status_code=status.HTTP_202_ACCEPTED)
+async def create_auto_quality_run(
+    request: QualityEvaluationRequest,
+    current_user: User = Depends(get_admin_user),
+) -> dict:
+    """从全局只读数据目录生成 source-derived 样本并提交评测。"""
+    del current_user
+    automatic_request = request.model_copy(update={"dataset_id": None, "scope": "global"})
+    try:
+        evaluation_task = await quality_evaluation_service.create_run(automatic_request, tasker)
+    except AutoDatasetUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"run_id": evaluation_task.id, "task_id": evaluation_task.id, "status": "queued"}
+
+
+@company_due_diligence_evaluation_router.get("/coverage")
+async def get_global_evaluation_coverage(
+    sampling_policy: str = Query(default="all_or_stratified"),
+    current_user: User = Depends(get_admin_user),
+) -> dict:
+    """返回全局自动评测的数据分母、覆盖率、版本和 checksum。"""
+    del current_user
+    try:
+        return await quality_evaluation_service.get_coverage(sampling_policy=sampling_policy)
+    except AutoDatasetUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @company_due_diligence_evaluation_router.get("/runs")
@@ -69,6 +100,19 @@ async def get_quality_run(
     current_user: User = Depends(get_admin_user),
 ) -> dict:
     """返回质量运行进度、部分结果和最终报告。"""
+    del current_user
+    try:
+        return await quality_evaluation_service.get_run(run_id, tasker)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@company_due_diligence_evaluation_router.get("/auto-runs/{run_id}")
+async def get_auto_quality_run(
+    run_id: str,
+    current_user: User = Depends(get_admin_user),
+) -> dict:
+    """返回自动评测任务和最终报告。"""
     del current_user
     try:
         return await quality_evaluation_service.get_run(run_id, tasker)
@@ -132,7 +176,10 @@ async def create_performance_run(
 ) -> dict:
     """提交受安全参数硬限制的性能评测任务。"""
     del current_user
-    performance_task = await performance_evaluation_service.create_run(request, tasker)
+    try:
+        performance_task = await performance_evaluation_service.create_run(request, tasker)
+    except AutoDatasetUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"run_id": performance_task.id, "task_id": performance_task.id, "status": "queued"}
 
 
@@ -144,6 +191,16 @@ async def list_performance_runs(
     """返回性能评测后台任务摘要。"""
     del current_user
     return {"runs": await performance_evaluation_service.list_runs(tasker, limit)}
+
+
+@company_due_diligence_evaluation_router.get("/performance-runs/global")
+async def get_global_performance_summary(
+    window_minutes: int = Query(default=1440, ge=1, le=43200),
+    current_user: User = Depends(get_admin_user),
+) -> dict:
+    """返回时间窗口内脱敏的全局性能聚合。"""
+    del current_user
+    return await performance_evaluation_service.get_global_summary(tasker, window_minutes=window_minutes)
 
 
 @company_due_diligence_evaluation_router.get("/performance-runs/{run_id}")

@@ -24,6 +24,20 @@ GENERAL_PURPOSE_AGENT_DESCRIPTION = (
     "面向没有专用角色约束的一般任务，使用默认运行配置独立完成分析、整理、写作或文件处理。"
 )
 
+COMPANY_DUE_DILIGENCE_AGENT_SLUG = "company-due-diligence"
+COMPANY_DUE_DILIGENCE_AGENT_NAME = "企业尽调智能体"
+COMPANY_DUE_DILIGENCE_AGENT_DESCRIPTION = (
+    "面向企业事实、股东、关系、风险和尽调报告的全局共享智能体，支持直接使用自然语言提问。"
+)
+COMPANY_DUE_DILIGENCE_SYSTEM_PROMPT = """你是平台级企业尽调智能体。
+
+处理企业基本信息、股东、企业关系、风险、融资、知识产权、新闻或尽调报告问题时，必须调用
+investigate_company 工具，不得根据模型记忆补充企业事实。用户可以直接输入自然语言，不要求先提供 eid
+或选择企业；工具会自动解析问题中的企业名称、股票代码和信用代码。工具返回 needs_context 时，向用户
+展示候选或说明需要补充的企业范围；返回 global_scope 时，直接基于工具提供的全局统计作答。
+
+所有事实必须来自工具返回的 sources 和 claim_ledger，不生成 SQL、Cypher 或无来源结论。"""
+
 WEB_SEARCH_AGENT_SLUG = "web-search"
 WEB_SEARCH_AGENT_NAME = "网页检索"
 WEB_SEARCH_AGENT_DESCRIPTION = "围绕检索目标持续搜索网页，返回带引用来源的摘要资料。"
@@ -252,6 +266,21 @@ class AgentRepository:
             description=GENERAL_PURPOSE_AGENT_DESCRIPTION,
             config_context={},
             is_subagent=True,
+            created_by=created_by,
+        )
+
+    async def ensure_company_due_diligence_agent(self, *, created_by: str | None = None) -> Agent:
+        """幂等落库唯一的全局共享企业尽调智能体。"""
+        return await self._ensure_builtin_agent(
+            slug=COMPANY_DUE_DILIGENCE_AGENT_SLUG,
+            backend_id=DEFAULT_AGENT_BACKEND_ID,
+            name=COMPANY_DUE_DILIGENCE_AGENT_NAME,
+            description=COMPANY_DUE_DILIGENCE_AGENT_DESCRIPTION,
+            config_context={
+                "system_prompt": COMPANY_DUE_DILIGENCE_SYSTEM_PROMPT,
+                "tools": ["investigate_company"],
+            },
+            is_subagent=False,
             created_by=created_by,
         )
 
