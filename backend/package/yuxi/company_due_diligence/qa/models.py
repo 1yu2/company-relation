@@ -64,6 +64,7 @@ class CompanyQuestionRequest(BaseModel):
     hop_limit: int = Field(default=3, ge=1, le=3)
     top_k: int = Field(default=10, ge=1, le=50)
     include_low_confidence: bool = False
+    enable_external_fallback: bool = True
 
     @field_validator("question", mode="before")
     @classmethod

@@ -56,6 +56,17 @@ class SourceStatus(StrEnum):
     UNAVAILABLE = "unavailable"
 
 
+class CoverageStatus(StrEnum):
+    """描述某主题在当前数据源下的覆盖状态。"""
+
+    COMPLETE = "complete"
+    PARTIAL = "partial"
+    MISSING = "missing"
+    STALE = "stale"
+    CONFLICT = "conflict"
+    UNSUPPORTED = "unsupported"
+
+
 class EntityType(StrEnum):
     """描述统一实体的业务类型。"""
 
@@ -137,7 +148,7 @@ class CompanyReference(BaseModel):
 
 
 class Source(BaseModel):
-    """描述可追溯到事实主库的稳定来源。"""
+    """描述可追溯到事实主库或外部 Provider 的稳定来源。"""
 
     source_id: str
     source_system: str = "guangdong_enterprise_mysql"
@@ -145,6 +156,11 @@ class Source(BaseModel):
     record_key: str
     business_date: date | datetime | None = None
     queried_at: datetime
+    retrieved_at: datetime | None = None
+    provider_name: str | None = None
+    upstream_api: str | None = None
+    source_url: str | None = None
+    external_metadata: dict[str, JsonValue] | None = None
 
 
 class Entity(BaseModel):
@@ -228,6 +244,7 @@ class LatencyBreakdown(BaseModel):
     mysql_ms: float = Field(default=0, ge=0)
     neo4j_ms: float = Field(default=0, ge=0)
     milvus_ms: float = Field(default=0, ge=0)
+    external_ms: float = Field(default=0, ge=0)
     llm_ms: float = Field(default=0, ge=0)
     assembly_ms: float = Field(default=0, ge=0)
     total_ms: float = Field(default=0, ge=0)

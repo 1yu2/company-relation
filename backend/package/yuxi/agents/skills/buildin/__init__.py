@@ -64,4 +64,11 @@ BUILTIN_SKILLS: list[BuiltinSkillSpec] = [
         version="2026.06.05",
         mcp_dependencies=("mcp-server-chart",),
     ),
+    BuiltinSkillSpec(
+        slug="company-due-diligence-external",
+        source_dir=_SKILLS_ROOT / "company-due-diligence-external",
+        description="企业尽调外部数据补数：仅在内部数据缺失、过期或冲突时查询 AkShare 等公开来源，结果带来源可追溯。",
+        version="2026.08.13",
+        tool_dependencies=("query_external_company_data",),
+    ),
 ]

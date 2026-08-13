@@ -94,3 +94,36 @@ def test_main_agent_tool_schema_requires_question_and_accepts_legacy_message():
     assert schema["required"] == ["question"]
     assert "message" not in schema["properties"]
     assert tools.CompanyInvestigationToolInput.model_validate({"message": "查询企业风险"}).question == "查询企业风险"
+
+
+async def test_external_data_tool_requires_confirmed_eid():
+    """外部数据 Tool 缺少 confirmed_eid 时返回错误提示。"""
+    result = await tools.query_external_company_data.coroutine(
+        question="补充外部财务数据",
+        company_name="示例企业有限公司",
+        confirmed_eid=None,
+    )
+    assert "error" in result
+    assert "confirmed_eid" in result["error"]
+
+
+async def test_external_data_tool_forwards_request(monkeypatch):
+    """外部数据 Tool 透传参数到外部数据服务。"""
+    from yuxi.company_due_diligence.external.models import ExternalCompanyDataResponse
+
+    response = ExternalCompanyDataResponse(facts=[], sources=[])
+    query = AsyncMock(return_value=response)
+    monkeypatch.setattr(tools.external_company_data_service, "query", query)
+
+    await tools.query_external_company_data.coroutine(
+        question="补充外部财务数据",
+        company_name="示例企业有限公司",
+        confirmed_eid="eid-1",
+        topics=["profile", "financials"],
+        providers=["akshare"],
+    )
+
+    request = query.await_args.args[0]
+    assert request.company_ref["eid"] == "eid-1"
+    assert request.topics == ["profile", "financials"]
+    assert request.providers == ["akshare"]

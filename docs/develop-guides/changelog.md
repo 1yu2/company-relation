@@ -6,6 +6,10 @@
 
 ## v0.7.2 (current)
 
+- 新增企业尽调外部数据补数链路（TASK-015）：内部 MySQL 优先，仅在缺失、过期、部分覆盖或冲突主题时调用 AkShare 等外部 Provider；统一外部事实、来源、覆盖状态与冲突契约，`source_system` 标记为 `external:<provider>`，进入现有 Claim Ledger 校验；新增 `query_external_company_data` Tool 与 `company-due-diligence-external` Skill，并在管理端配置中提供启停、超时、缓存和新鲜度阈值。
+- 新增企业尽调可版本化评估标准管理基础：从广东企业只读目录生成候选，管理员可手动编辑、审核和冻结；后续首阶段 QA Benchmark 将补齐逐题 Gold、公式指标和真实运行门禁，性能评测继续全局独立。
+- 重构企业尽调评测任务：第一阶段只评简单 QA，新增题库模型、候选生成、逐题人工 Gold、指标公式/分母和真实 QA 运行子任务；候选题不参与正式质量门禁，报告评测另行实施。
+- 新增平台级非实时语音输入输出：录音经 ASR 回填可编辑草稿并复用现有 AgentRun，助手正文/选区按需 TTS；Qwen-ASR/TTS 统一复用模型供应商 URL、Key 和模型配置，浏览器录音临时转 WAV，并提供能力查询、限流、缓存、清理和脱敏指标。
 - 品牌改造：用户可见的 "Yuxi/语析" 统一改为 "la-platform"（系统信息接口、发现接口、内置 Chatbot 提示词、CLI 授权凭据名、登录页与布局兜底品牌名、知识库类型标签），Logo 更换为 🐟 emoji SVG favicon，主题色由青蓝绿色阶改为浅紫色阶（`--main-700` 为 #7c6aef），深色模式同步反转为主色紫色阶；替换前端默认头像、登录背景与 Agent 占位图为浅紫渐变 + 🐟 主题，文件夹 SVG 图标主色改为 #7c6aef，MCP 默认图标与 placeholder 改为 🐟；清理 GraphCanvas、图表调色板与 TodoListTool 中残留的青色硬编码。移除前端指向默认 GitHub 仓库的 Star 入口、star 徽章卡片、GitHub 图标与实时 stars 统计及各处文档外链。Python 包名、localStorage key 等内部标识保持不变。
 - 新增企业尽调数据基础与结构化查询：安全解析本地 `mysql+aiomysql` 配置并强制只读；冻结统一 DTO、来源键和企业解析，提供 17 类参数化查询、分页、时间范围、JSON 出资/投资人解析及财务覆盖警告。
 - 新增企业尽调 Neo4j 可重建投影：MySQL 游标分批生成 SQLite checksum 快照，按独立版本幂等写入并校验后切换；提供 Tasker 管理接口、统计、删除重建及最多三跳高置信度路径服务。
@@ -42,6 +46,7 @@
 - 新增知识库 external API 与 `yuxi kb` 查询类命令：后端在 `/api/knowledge/databases/external/*` 下暴露列库、文件搜索、检索、打开和文件内查找接口，统一走认证身份校验；CLI 新增 `yuxi kb list/files/query/open/find`，补充后端 external API 集成测试与 CLI client/命令测试。管理端同步新增 `GET /api/knowledge/databases/{kb_id}/documents/search`，复用底层文件名搜索能力供前端调用；知识库详情页工具栏新增「搜索文件」按钮，打开命令面板式弹窗（与历史对话搜索弹窗同风格），输入关键词按文件名搜索并在结果列表展示状态/大小/更新时间，placeholder 明确标注仅匹配文件名、不搜索文件内容，点击结果可直接打开文件详情。搜索请求增加序号校验，连续回车与快速重搜时丢弃过期响应，避免后发先至覆盖当前关键词结果。文件名搜索改为数据库侧按 filename/status 过滤、`updated_at desc` 排序与 count 统计，避免大知识库超过仓储单页上限时静默漏结果；管理端搜索先做当前用户可见性校验再判断文档能力，external open/find 统一清晰处理只读源与预期参数错误；CLI 查询结果从 `metadata.score` 读取并展示检索得分。
 - 新增 `download_kb_file` 知识库工具：通过 `file_id` 调用 `knowledge_base.get_file_download(variant="original")` 从 MinIO 拉取原始二进制（pdf/docx/xlsx 等），落盘到沙盒 `outputs` 目录并返回沙盒内可见的虚拟路径，供后续代码工具以文件对象方式读取（`openpyxl.load_workbook`、`pdfplumber.open` 等），弥补 `query_kb`/`open_kb_document` 只返回文本切片、丢失原始文件结构的不足。复用会话可见知识库校验与 `ocr_parse_file` 的落盘范式，支持 `save_as` 指定文件名（剥离目录防穿越，重名追加 `_N` 后缀），工具只搬运不解析、不自动登记交付物。工具已登记到 knowledge-base 内置 Skill 的 `tool_dependencies`，并在 SKILL.md 可用工具段补充说明；只读源拦截下沉到 `manager.get_file_download` 内部，与 `open_document`/`find_in_document` 落点一致，工具/router/CLI 所有调用方统一获得 dify 等只读检索源的拦截；返回的 `size_bytes` 与落盘统一用下标访问 `data["content"]`，避免回退掩盖契约异常。
 - 内置网页搜索工具新增豆包联网搜索支持：新增 `WEB_SEARCH_PROVIDER`（`doubao`/`tavily`）与 `DOUBAO_SEARCH_API_KEY` 配置，未显式指定时按已配置的 API Key 自动识别 provider；两种 provider 统一注册为工具名 `web_search`，`deep-research` Skill 依赖同步从 `tavily_search` 改为 `web_search`。
+- 修复知识库语义切分因缺少 NLTK `punkt_tab` 导致入库失败：API 镜像构建时预置英文分句资源，运行期无需联网下载；纯中文段落仅走中文正则分句，不再被无关的英文资源检查阻断。
 
 ## v0.7.1 (2026-07-17)
 
@@ -432,3 +437,5 @@
 - 前端工具调用渲染出现问题
 - 当前 ReAct 智能体有消息顺序错乱的 bug，且不会默认调用工具
 - 修复文件管理：（1）文件选择的时候会跨数据库；（2）文件校验会算上失败的文件；
+- 平台语音模型配置统一复用现有模型供应商：远端 Qwen ASR/TTS 模型自动识别为 `asr`/`tts` 并补齐协议元数据，旧 `chat` 记录支持原地同步，不再要求重复创建供应商或配置 Key。
+- 修复平台语音实际可用性：主聊天输入区的麦克风入口不再依赖附件选项渲染；语音能力配置会在录音入口挂载时刷新；Qwen TTS 兼容内联 Base64 和阿里云签名临时音频地址，并已完成真实短文本调用验证。

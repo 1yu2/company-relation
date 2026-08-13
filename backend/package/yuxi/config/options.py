@@ -123,6 +123,65 @@ paddleocr_api_opts = Option(
     },
 )
 
+external_company_data_opts = Option(
+    key="external_company_data_opts",
+    name="企业尽调外部数据补数",
+    description="配置外部数据 Provider 的启停、超时、缓存和新鲜度阈值。",
+    params={
+        "fields": [
+            {
+                "key": "akshare_enabled",
+                "label": "启用 AkShare",
+                "type": "boolean",
+                "default": True,
+                "help": "关闭后问答链路不再调用 AkShare Provider。",
+            },
+            {
+                "key": "public_disclosure_enabled",
+                "label": "启用公开披露 Provider",
+                "type": "boolean",
+                "default": False,
+                "help": "首期占位，配置真实数据源后启用。",
+            },
+            {
+                "key": "financing_enabled",
+                "label": "启用融资 Provider",
+                "type": "boolean",
+                "default": False,
+                "help": "首期占位，配置商业 API 或公告源后启用。",
+            },
+            {
+                "key": "default_timeout_seconds",
+                "label": "默认超时（秒）",
+                "type": "number",
+                "default": 30,
+                "help": "单个 Provider 查询超时时间。",
+            },
+            {
+                "key": "cache_ttl_seconds",
+                "label": "缓存 TTL（秒）",
+                "type": "number",
+                "default": 300,
+                "help": "Provider 结果内存缓存有效期。",
+            },
+            {
+                "key": "stale_threshold_days",
+                "label": "数据过期阈值（天）",
+                "type": "number",
+                "default": 180,
+                "help": "内部来源业务日期早于该阈值时标记为 stale 并触发外部补数。",
+            },
+            {
+                "key": "rate_limit_per_minute",
+                "label": "每分钟限流",
+                "type": "number",
+                "default": 60,
+                "help": "单个 Provider 每分钟最大调用次数。",
+            },
+        ]
+    },
+)
+
 OPTION_DEFINITIONS = {
     option.key: option
     for option in (
@@ -130,6 +189,7 @@ OPTION_DEFINITIONS = {
         mineru_official_api_opts,
         pp_structure_v3_ocr_host_opts,
         paddleocr_api_opts,
+        external_company_data_opts,
     )
 }
 

@@ -8,8 +8,11 @@ from datetime import UTC, datetime
 
 from yuxi.company_due_diligence.entity_mentions import extract_company_references
 from yuxi.company_due_diligence.entity_resolution import EntityResolutionService, entity_resolution_service
+from yuxi.company_due_diligence.external.models import ExternalCompanyDataRequest, ExternalCompanyDataResponse
+from yuxi.company_due_diligence.external.service import ExternalCompanyDataService, external_company_data_service
 from yuxi.company_due_diligence.models import (
     ConfidenceLevel,
+    CoverageStatus,
     DataQuality,
     Entity,
     Evidence,
@@ -29,12 +32,24 @@ from yuxi.company_due_diligence.qa.models import (
     CompanyQuestionRequest,
     CompanyQuestionResponse,
     QueryPlan,
+    QueryStep,
+    QueryStepStatus,
 )
 from yuxi.company_due_diligence.qa.planner import QuestionPlanner, question_planner
 
 
 class SourceIntegrityError(RuntimeError):
     """表示问答数据包中存在无法回查的事实或关系来源。"""
+
+
+# 允许触发外部补数的覆盖状态
+_FALLBACK_ELIGIBLE_STATUSES = {
+    CoverageStatus.PARTIAL,
+    CoverageStatus.MISSING,
+    CoverageStatus.STALE,
+    CoverageStatus.CONFLICT,
+    CoverageStatus.UNSUPPORTED,
+}
 
 
 class CompanyQuestionService:
@@ -46,11 +61,13 @@ class CompanyQuestionService:
         planner: QuestionPlanner | None = None,
         workflow: QAWorkflow | None = None,
         global_service: GlobalQuestionService | None = None,
+        external_service: ExternalCompanyDataService | None = None,
     ) -> None:
         self._resolver = resolver or entity_resolution_service
         self._planner = planner or question_planner
         self._workflow = workflow or QAWorkflow()
         self._global_service = global_service or global_question_service
+        self._external_service = external_service or external_company_data_service
 
     async def query(
         self,
@@ -95,6 +112,12 @@ class CompanyQuestionService:
             request=request,
             plan=resolved_plan,
         )
+        external_response = await self._maybe_query_external(
+            request=request,
+            company=resolution.company,
+            plan=resolved_plan,
+            structured_results=workflow_result.structured,
+        )
         return _assemble_response(
             request=request,
             plan=resolved_plan,
@@ -105,8 +128,74 @@ class CompanyQuestionService:
                 resolution.latency.total_ms + (target_resolution.latency.total_ms if target_resolution else 0)
             ),
             workflow_result=workflow_result,
+            external_response=external_response,
             started_at=started_at,
         )
+
+    async def _maybe_query_external(
+        self,
+        *,
+        request: CompanyQuestionRequest,
+        company,
+        plan: QueryPlan,
+        structured_results: list,
+    ) -> ExternalCompanyDataResponse | None:
+        """当内部结果存在缺口且配置启用时，触发外部数据补数。"""
+        if not request.enable_external_fallback:
+            return None
+        if not plan.structured_queries:
+            return None
+
+        config = await _load_external_data_config()
+        enabled_providers = _enabled_external_providers(config)
+        if not enabled_providers:
+            return None
+
+        gaps = self._external_service.detect_topic_gaps(
+            plan=plan,
+            structured_results=structured_results,
+            stale_threshold_days=config.get("stale_threshold_days", 180),
+        )
+        fallback_topics = [topic for topic, status in gaps.items() if status in _FALLBACK_ELIGIBLE_STATUSES]
+        if not fallback_topics:
+            return None
+
+        return await self._external_service.query(
+            ExternalCompanyDataRequest(
+                company_ref={
+                    "eid": company.eid,
+                    "name": company.name,
+                    "credit_code": company.credit_code,
+                    "stock_code": company.stock_code,
+                },
+                topics=fallback_topics,
+                start_date=request.start_date,
+                end_date=request.as_of,
+            ),
+            enabled_providers=enabled_providers,
+        )
+
+
+async def _load_external_data_config() -> dict:
+    """读取外部数据补数配置；失败时返回空字典使用默认值。"""
+    try:
+        from yuxi.config.options import external_company_data_opts
+
+        return await external_company_data_opts.get()
+    except Exception:
+        return {}
+
+
+def _enabled_external_providers(config: dict) -> list[str]:
+    """根据配置返回启用的 Provider 列表。"""
+    enabled = []
+    if config.get("akshare_enabled", True):
+        enabled.append("akshare")
+    if config.get("public_disclosure_enabled", False):
+        enabled.append("public_disclosure")
+    if config.get("financing_enabled", False):
+        enabled.append("financing")
+    return enabled
 
 
 def _assemble_response(
@@ -118,9 +207,10 @@ def _assemble_response(
     resolution_sources,
     resolution_ms: float,
     workflow_result,
+    external_response: ExternalCompanyDataResponse | None = None,
     started_at: float,
 ) -> CompanyQuestionResponse:
-    """合并三个来源，校验来源完整性、冲突和阶段耗时。"""
+    """合并内部查询、外部补数和三个底层来源，校验完整性、冲突和阶段耗时。"""
     entities = {company.eid: _company_entity(company)}
     if target_company is not None:
         entities[target_company.eid] = _company_entity(target_company)
@@ -174,6 +264,26 @@ def _assemble_response(
         inherited_conflicts.extend(workflow_result.evidence.data_quality.conflicts)
         milvus_ms += workflow_result.evidence.latency.milvus_ms
 
+    external_latency_ms = 0.0
+    if external_response is not None:
+        facts.update({item.fact_id: item for item in external_response.facts})
+        sources.update({item.source_id: item for item in external_response.sources})
+        evidence.update({item.evidence_id: item for item in external_response.evidence})
+        inherited_conflicts.extend(external_response.conflicts)
+        if external_response.missing_topics:
+            warnings.append(
+                f"外部数据源未覆盖以下主题：{', '.join(external_response.missing_topics)}"
+            )
+        workflow_result.steps.append(
+            QueryStep(
+                source="external",
+                operation="fallback",
+                status=QueryStepStatus.COMPLETE if external_response.facts else QueryStepStatus.NO_DATA,
+                item_count=len(external_response.facts),
+            )
+        )
+        external_latency_ms = external_response.external_latency_ms
+
     _validate_source_integrity(facts.values(), relations.values(), paths.values(), evidence.values(), sources)
     conflicts = list(dict.fromkeys(inherited_conflicts + _find_fact_conflicts(facts.values())))
     unavailable_steps = [step for step in workflow_result.steps if step.status.value == "unavailable"]
@@ -220,6 +330,7 @@ def _assemble_response(
             mysql_ms=mysql_ms,
             neo4j_ms=neo4j_ms,
             milvus_ms=milvus_ms,
+            external_ms=external_latency_ms,
             total_ms=total_ms,
         ),
         steps=workflow_result.steps,
