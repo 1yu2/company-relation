@@ -173,6 +173,9 @@ class CompanyQuestionService:
                 end_date=request.as_of,
             ),
             enabled_providers=enabled_providers,
+            timeout_seconds=_config_value(config, "default_timeout_seconds", 30),
+            cache_ttl_seconds=_config_value(config, "cache_ttl_seconds", 300),
+            rate_limit_per_minute=_config_value(config, "rate_limit_per_minute", 60),
         )
 
 
@@ -189,13 +192,19 @@ async def _load_external_data_config() -> dict:
 def _enabled_external_providers(config: dict) -> list[str]:
     """根据配置返回启用的 Provider 列表。"""
     enabled = []
-    if config.get("akshare_enabled", True):
+    if config.get("akshare_enabled", False):
         enabled.append("akshare")
     if config.get("public_disclosure_enabled", False):
         enabled.append("public_disclosure")
     if config.get("financing_enabled", False):
         enabled.append("financing")
     return enabled
+
+
+def _config_value(config: dict, key: str, default):
+    """读取允许为 0 或 False 的配置值。"""
+    value = config.get(key)
+    return default if value is None else value
 
 
 def _assemble_response(
@@ -266,20 +275,30 @@ def _assemble_response(
 
     external_latency_ms = 0.0
     if external_response is not None:
-        facts.update({item.fact_id: item for item in external_response.facts})
+        for item in external_response.facts:
+            existing = facts.get(item.fact_id)
+            if existing is None:
+                facts[item.fact_id] = item
+            elif existing.normalized_value != item.normalized_value:
+                inherited_conflicts.append(f"{item.subject_id}:{item.fact_type}: internal vs external")
         sources.update({item.source_id: item for item in external_response.sources})
         evidence.update({item.evidence_id: item for item in external_response.evidence})
         inherited_conflicts.extend(external_response.conflicts)
         if external_response.missing_topics:
-            warnings.append(
-                f"外部数据源未覆盖以下主题：{', '.join(external_response.missing_topics)}"
-            )
+            warnings.append(f"外部数据源未覆盖以下主题：{', '.join(external_response.missing_topics)}")
         workflow_result.steps.append(
             QueryStep(
                 source="external",
                 operation="fallback",
-                status=QueryStepStatus.COMPLETE if external_response.facts else QueryStepStatus.NO_DATA,
+                status=(
+                    QueryStepStatus.COMPLETE
+                    if external_response.facts
+                    else QueryStepStatus.UNAVAILABLE
+                    if any(item.status in {"error", "unavailable"} for item in external_response.provider_results)
+                    else QueryStepStatus.NO_DATA
+                ),
                 item_count=len(external_response.facts),
+                message=_external_step_message(external_response),
             )
         )
         external_latency_ms = external_response.external_latency_ms
@@ -459,6 +478,16 @@ def _find_fact_conflicts(facts) -> list[str]:
         for (subject_id, fact_type, effective_date), items in values.items()
         if len(items) > 1
     ]
+
+
+def _external_step_message(response: ExternalCompanyDataResponse) -> str | None:
+    """把外部 Provider 失败分类转为问答步骤可读说明。"""
+    messages = [
+        f"{item.provider_name}: {item.error_code.value}"
+        for item in response.provider_results
+        if item.error_code is not None
+    ]
+    return "；".join(messages) if messages else None
 
 
 def _render_answer(company, facts, relations, paths, evidence) -> str:

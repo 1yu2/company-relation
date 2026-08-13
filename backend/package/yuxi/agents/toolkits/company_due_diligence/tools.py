@@ -94,8 +94,10 @@ class QueryExternalCompanyDataInput(BaseModel):
         max_length=64,
         description="仅复用上一次工具结果返回的 company_context.eid，不得根据模型猜测或自行生成",
     )
+    credit_code: str | None = Field(default=None, max_length=32, description="已确认企业的统一社会信用代码")
+    stock_code: str | None = Field(default=None, max_length=32, description="已确认企业的股票代码")
     topics: list[str] = Field(
-        default_factory=list,
+        min_length=1,
         description="要查询的外部主题，如 profile、financials、financing、shareholders、news",
     )
     providers: list[str] | None = Field(
@@ -116,6 +118,8 @@ async def query_external_company_data(
     question: str,
     company_name: str | None = None,
     confirmed_eid: str | None = None,
+    credit_code: str | None = None,
+    stock_code: str | None = None,
     topics: list[str] | None = None,
     providers: list[str] | None = None,
     start_date: date | None = None,
@@ -126,13 +130,30 @@ async def query_external_company_data(
     必须先确认企业身份（confirmed_eid）。只能补充内部数据缺失、过期或冲突的主题，
     不能用外部名称覆盖已确认 eid，也不能把“未发现”表述为“没有”。
     """
-    company_context = _company_context(company_name, confirmed_eid)
+    company_context = _company_context(company_name, confirmed_eid, credit_code=credit_code, stock_code=stock_code)
     if company_context is None or not company_context.get("eid"):
         return {
             "error": "必须先确认企业身份（confirmed_eid）才能查询外部数据。",
             "facts": [],
             "sources": [],
         }
+    from yuxi.company_due_diligence.qa.service import (
+        _config_value,
+        _enabled_external_providers,
+        _load_external_data_config,
+    )
+
+    config = await _load_external_data_config()
+    enabled_provider_names = _enabled_external_providers(config)
+    requested_providers = providers
+    if requested_providers is not None:
+        disabled_providers = set(requested_providers) - set(enabled_provider_names)
+        if disabled_providers:
+            return {
+                "error": f"Provider 未启用：{', '.join(sorted(disabled_providers))}",
+                "facts": [],
+                "sources": [],
+            }
     response = await external_company_data_service.query(
         ExternalCompanyDataRequest(
             company_ref=company_context,
@@ -140,13 +161,28 @@ async def query_external_company_data(
             providers=providers,
             start_date=start_date,
             end_date=end_date,
-        )
+        ),
+        enabled_providers=enabled_provider_names if providers is None else None,
+        timeout_seconds=_config_value(config, "default_timeout_seconds", 30),
+        cache_ttl_seconds=_config_value(config, "cache_ttl_seconds", 300),
+        rate_limit_per_minute=_config_value(config, "rate_limit_per_minute", 60),
     )
     return response.model_dump(mode="json")
 
 
-def _company_context(name: str | None, eid: str | None) -> dict | None:
+def _company_context(
+    name: str | None,
+    eid: str | None,
+    *,
+    credit_code: str | None = None,
+    stock_code: str | None = None,
+) -> dict | None:
     """仅在存在已确认企业线索时构造领域智能体上下文。"""
-    if name is None and eid is None:
+    if name is None and eid is None and credit_code is None and stock_code is None:
         return None
-    return {"name": name, "eid": eid}
+    return {
+        "name": name,
+        "eid": eid,
+        "credit_code": credit_code,
+        "stock_code": stock_code,
+    }

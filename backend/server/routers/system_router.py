@@ -3,7 +3,7 @@ from pathlib import Path
 
 import aiofiles
 import yaml
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi import config, get_version
@@ -235,6 +235,49 @@ async def put_config_option(
         raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@system.get("/external-company-data/health")
+async def get_external_company_data_health(
+    current_user: User = Depends(get_admin_user),
+):
+    """返回企业外部数据 Provider 健康状态。"""
+    from yuxi.company_due_diligence.external import external_company_data_service
+
+    return {"providers": await external_company_data_service.health()}
+
+
+@system.get("/external-company-data/cache")
+async def get_external_company_data_cache(
+    current_user: User = Depends(get_admin_user),
+):
+    """返回企业外部数据缓存统计，不暴露缓存内容。"""
+    from yuxi.company_due_diligence.external import external_company_data_service
+
+    return {"cache": external_company_data_service.cache_stats()}
+
+
+@system.delete("/external-company-data/cache")
+async def clear_external_company_data_cache(
+    provider_name: str | None = None,
+    current_user: User = Depends(get_admin_user),
+):
+    """清理全部或指定 Provider 的企业外部数据缓存。"""
+    from yuxi.company_due_diligence.external import external_company_data_service
+
+    cleared = external_company_data_service.clear_cache(provider_name)
+    return {"cleared": cleared, "provider_name": provider_name}
+
+
+@system.get("/external-company-data/audit")
+async def get_external_company_data_audit(
+    limit: int = Query(default=50, ge=1, le=200),
+    current_user: User = Depends(get_admin_user),
+):
+    """返回最近的企业外部数据脱敏查询审计。"""
+    from yuxi.company_due_diligence.external import external_company_data_service
+
+    return {"entries": external_company_data_service.audit_entries(limit)}
 
 
 @system.get("/ocr/options")

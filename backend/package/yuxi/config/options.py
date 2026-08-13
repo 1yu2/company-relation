@@ -37,10 +37,7 @@ class Option:
         if record is None:
             raise ValueError(f"配置项不存在: {self.key}")
         stored = dict(record.value or {})
-        return {
-            field["key"]: stored.get(field["key"]) or os.getenv(field.get("environment", "")) or None
-            for field in _fields(record)
-        }
+        return {field["key"]: _effective_field_value(field, stored) for field in _fields(record)}
 
 
 mineru_ocr_host_opts = Option(
@@ -133,8 +130,8 @@ external_company_data_opts = Option(
                 "key": "akshare_enabled",
                 "label": "启用 AkShare",
                 "type": "boolean",
-                "default": True,
-                "help": "关闭后问答链路不再调用 AkShare Provider。",
+                "default": False,
+                "help": "AkShare 为可选依赖；确认运行环境已安装后再启用。",
             },
             {
                 "key": "public_disclosure_enabled",
@@ -194,6 +191,19 @@ OPTION_DEFINITIONS = {
 }
 
 _URL_ADAPTER = TypeAdapter(HttpUrl)
+
+
+def _effective_field_value(field: dict[str, Any], stored: dict[str, Any]) -> Any:
+    """按数据库、环境变量和代码默认值解析配置，同时保留 False 与 0。"""
+    stored_value = stored.get(field["key"])
+    if stored_value is not None and stored_value != "":
+        return _coerce_value(field, stored_value)
+
+    environment = field.get("environment")
+    environment_value = os.getenv(environment) if environment else None
+    if environment_value is not None and environment_value != "":
+        return _coerce_environment_value(field, environment_value)
+    return _coerce_value(field, field.get("default"))
 
 
 async def ensure_options_in_db(db: AsyncSession) -> list[ConfigOption]:
@@ -299,11 +309,44 @@ def _fields(record: ConfigOption) -> list[dict[str, Any]]:
     return list((record.params or {}).get("fields") or [])
 
 
-def _normalize_value(field: dict[str, Any], value: Any) -> str:
-    normalized = str(value or "").strip()
+def _normalize_value(field: dict[str, Any], value: Any) -> Any:
+    if value is None or (isinstance(value, str) and value.strip() == ""):
+        return ""
+
+    if field.get("type") == "boolean":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
+            return value.strip().lower() == "true"
+        raise ValueError(f"配置字段 {field['key']} 必须是布尔值")
+
+    if field.get("type") == "number":
+        try:
+            normalized_number = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"配置字段 {field['key']} 必须是数字") from exc
+        return int(normalized_number) if normalized_number.is_integer() else normalized_number
+
+    normalized = "" if value is None else str(value).strip()
     if field.get("type") == "url" and normalized:
         return str(_URL_ADAPTER.validate_python(normalized))
     return normalized
+
+
+def _coerce_value(field: dict[str, Any], value: Any) -> Any:
+    """把数据库或环境变量中的配置值还原为字段声明的基础类型。"""
+    if value is None:
+        return None
+    return _normalize_value(field, value)
+
+
+def _coerce_environment_value(field: dict[str, Any], value: str) -> Any:
+    """解析环境变量的基础类型，不改变已有字符串格式。"""
+    if field.get("type") == "boolean":
+        return _normalize_value(field, value)
+    if field.get("type") == "number":
+        return _normalize_value(field, value)
+    return value
 
 
 def _mask_sensitive_value(value: str) -> str:

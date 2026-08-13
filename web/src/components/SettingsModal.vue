@@ -57,6 +57,15 @@
           </div>
           <div
             class="sider-item"
+            :class="{ activesec: activeTab === 'externalCompanyData' }"
+            @click="activeTab = 'externalCompanyData'"
+            v-if="userStore.isAdmin"
+          >
+            <Globe2 class="icon" :size="18" />
+            <span>企业外部数据</span>
+          </div>
+          <div
+            class="sider-item"
             :class="{ activesec: activeTab === 'user' }"
             @click="activeTab = 'user'"
             v-if="userStore.isAdmin"
@@ -129,6 +138,14 @@
         </div>
         <div
           class="nav-item"
+          :class="{ active: activeTab === 'externalCompanyData' }"
+          @click="activeTab = 'externalCompanyData'"
+          v-if="userStore.isAdmin"
+        >
+          企业外部数据
+        </div>
+        <div
+          class="nav-item"
           :class="{ active: activeTab === 'user' }"
           @click="activeTab = 'user'"
           v-if="userStore.isAdmin"
@@ -168,6 +185,10 @@
             <OCRSettingsSection />
           </div>
 
+          <div v-show="activeTab === 'externalCompanyData'" v-if="userStore.isAdmin">
+            <ExternalCompanyDataSettingsSection />
+          </div>
+
           <div v-show="activeTab === 'user'" v-if="userStore.isAdmin">
             <UserManagementComponent />
           </div>
@@ -189,6 +210,7 @@ import {
   Settings,
   Key,
   ScanText,
+  Globe2,
   SquareTerminal,
   User,
   Users,
@@ -198,6 +220,7 @@ import AccountSettingsComponent from '@/components/AccountSettingsComponent.vue'
 import AgentEnvSettingsCard from '@/components/AgentEnvSettingsCard.vue'
 import BasicSettingsSection from '@/components/BasicSettingsSection.vue'
 import OCRSettingsSection from '@/components/OCRSettingsSection.vue'
+import ExternalCompanyDataSettingsSection from '@/components/ExternalCompanyDataSettingsSection.vue'
 import ApiKeyManagementComponent from '@/components/ApiKeyManagementComponent.vue'
 import UserManagementComponent from '@/components/UserManagementComponent.vue'
 import DepartmentManagementComponent from '@/components/DepartmentManagementComponent.vue'
@@ -226,7 +249,7 @@ const visible = computed({
 const availableTabs = computed(() => {
   const tabs = []
   if (userStore.isLoggedIn) tabs.push('account', 'apiKeys', 'agentEnv')
-  if (userStore.isAdmin) tabs.push('base', 'ocr', 'user')
+  if (userStore.isAdmin) tabs.push('base', 'ocr', 'externalCompanyData', 'user')
   if (userStore.isSuperAdmin) tabs.push('department')
   return tabs
 })

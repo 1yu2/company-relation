@@ -96,12 +96,16 @@ async def test_complete_internal_does_not_trigger_external(monkeypatch):
         question_type=QuestionType.STRUCTURED_FIELD,
         structured_queries=[StructuredQueryType.ENTERPRISE_PROFILE],
     )
-    workflow_result = type("W", (), {
-        "structured": [_structured_result(StructuredQueryType.ENTERPRISE_PROFILE, [])],
-        "graph": None,
-        "evidence": None,
-        "steps": [],
-    })()
+    workflow_result = type(
+        "W",
+        (),
+        {
+            "structured": [_structured_result(StructuredQueryType.ENTERPRISE_PROFILE, [])],
+            "graph": None,
+            "evidence": None,
+            "steps": [],
+        },
+    )()
     service._workflow.execute = AsyncMock(return_value=workflow_result)
 
     await service.query(
@@ -119,6 +123,13 @@ async def test_missing_internal_triggers_external_and_returns_sources(monkeypatc
     """内部融资缺失时触发外部补数并返回来源。"""
     company = _resolved_company()
     resolution = _resolution_result(company)
+    from yuxi.company_due_diligence.qa import service as qa_service_module
+
+    monkeypatch.setattr(
+        qa_service_module,
+        "_load_external_data_config",
+        AsyncMock(return_value={"akshare_enabled": True}),
+    )
 
     class _Resolver:
         async def resolve(self, ref):
@@ -161,12 +172,16 @@ async def test_missing_internal_triggers_external_and_returns_sources(monkeypatc
         question_type=QuestionType.STRUCTURED_LIST,
         structured_queries=[StructuredQueryType.FINANCING_HISTORY],
     )
-    workflow_result = type("W", (), {
-        "structured": [_structured_result(StructuredQueryType.FINANCING_HISTORY, [])],
-        "graph": None,
-        "evidence": None,
-        "steps": [],
-    })()
+    workflow_result = type(
+        "W",
+        (),
+        {
+            "structured": [_structured_result(StructuredQueryType.FINANCING_HISTORY, [])],
+            "graph": None,
+            "evidence": None,
+            "steps": [],
+        },
+    )()
     service._workflow.execute = AsyncMock(return_value=workflow_result)
 
     response = await service.query(
@@ -187,6 +202,13 @@ async def test_external_unavailable_returns_internal_results_with_warning(monkey
     """外部 Provider 不可用时仍返回内部结果并带降级说明。"""
     company = _resolved_company()
     resolution = _resolution_result(company)
+    from yuxi.company_due_diligence.qa import service as qa_service_module
+
+    monkeypatch.setattr(
+        qa_service_module,
+        "_load_external_data_config",
+        AsyncMock(return_value={"akshare_enabled": True}),
+    )
 
     class _Resolver:
         async def resolve(self, ref):
@@ -215,12 +237,16 @@ async def test_external_unavailable_returns_internal_results_with_warning(monkey
         question_type=QuestionType.STRUCTURED_LIST,
         structured_queries=[StructuredQueryType.FINANCING_HISTORY],
     )
-    workflow_result = type("W", (), {
-        "structured": [_structured_result(StructuredQueryType.FINANCING_HISTORY, [])],
-        "graph": None,
-        "evidence": None,
-        "steps": [],
-    })()
+    workflow_result = type(
+        "W",
+        (),
+        {
+            "structured": [_structured_result(StructuredQueryType.FINANCING_HISTORY, [])],
+            "graph": None,
+            "evidence": None,
+            "steps": [],
+        },
+    )()
     service._workflow.execute = AsyncMock(return_value=workflow_result)
 
     response = await service.query(
@@ -233,3 +259,68 @@ async def test_external_unavailable_returns_internal_results_with_warning(monkey
 
     assert response.data_quality.warnings
     assert "外部数据源未覆盖" in response.data_quality.warnings[0]
+
+
+async def test_external_config_is_forwarded_to_provider_service(monkeypatch):
+    """管理端超时、缓存和限流配置应传给外部数据服务。"""
+    from yuxi.company_due_diligence.external.models import ExternalCompanyDataResponse
+    from yuxi.company_due_diligence.models import CoverageStatus
+    from yuxi.company_due_diligence.qa import service as qa_service_module
+
+    company = _resolved_company()
+    resolution = _resolution_result(company)
+
+    class _Resolver:
+        async def resolve(self, ref):
+            return resolution
+
+    monkeypatch.setattr(
+        qa_service_module,
+        "_load_external_data_config",
+        AsyncMock(
+            return_value={
+                "akshare_enabled": True,
+                "default_timeout_seconds": 7,
+                "cache_ttl_seconds": 0,
+                "stale_threshold_days": 90,
+                "rate_limit_per_minute": 12,
+            }
+        ),
+    )
+    external_service = MagicMock()
+    external_service.query = AsyncMock(return_value=ExternalCompanyDataResponse())
+    external_service.detect_topic_gaps.return_value = {"profile": CoverageStatus.MISSING}
+    service = CompanyQuestionService(
+        resolver=_Resolver(),
+        workflow=AsyncMock(),
+        external_service=external_service,
+    )
+    plan = QueryPlan(
+        question_type=QuestionType.STRUCTURED_FIELD,
+        structured_queries=[StructuredQueryType.ENTERPRISE_PROFILE],
+    )
+    service._workflow.execute = AsyncMock(
+        return_value=type(
+            "W",
+            (),
+            {
+                "structured": [_structured_result(StructuredQueryType.ENTERPRISE_PROFILE, [])],
+                "graph": None,
+                "evidence": None,
+                "steps": [],
+            },
+        )()
+    )
+
+    await service.query(
+        CompanyQuestionRequest(company_ref={"eid": "e-1"}, question="补充公开资料"),
+        plan=plan,
+    )
+
+    assert external_service.detect_topic_gaps.call_args.kwargs["stale_threshold_days"] == 90
+    assert external_service.query.await_args.kwargs == {
+        "enabled_providers": ["akshare"],
+        "timeout_seconds": 7,
+        "cache_ttl_seconds": 0,
+        "rate_limit_per_minute": 12,
+    }

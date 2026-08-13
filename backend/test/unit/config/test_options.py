@@ -138,6 +138,26 @@ async def test_option_get_queries_database_each_time(db_session, monkeypatch):
     assert query_count == 4
 
 
+@pytest.mark.asyncio
+async def test_external_option_applies_defaults_and_preserves_false_and_zero(db_session):
+    """外部数据配置应使用代码默认值，并保留管理员显式保存的 False 与 0。"""
+    await options.ensure_options_in_db(db_session)
+
+    defaults = await options.external_company_data_opts.get(db_session)
+    await options.update_option_value(
+        db_session,
+        "external_company_data_opts",
+        {"akshare_enabled": False, "cache_ttl_seconds": 0},
+        "tester",
+    )
+    updated = await options.external_company_data_opts.get(db_session)
+
+    assert defaults["akshare_enabled"] is False
+    assert defaults["default_timeout_seconds"] == 30
+    assert updated["akshare_enabled"] is False
+    assert updated["cache_ttl_seconds"] == 0
+
+
 def test_sensitive_fields_use_explicit_metadata():
     fields = options.mineru_official_api_opts.params["fields"]
 

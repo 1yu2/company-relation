@@ -21,6 +21,8 @@ class ExternalProviderCache:
     """基于内存的 Provider 结果缓存，不缓存敏感原始响应。"""
 
     def __init__(self, default_ttl_seconds: float = 300.0) -> None:
+        if default_ttl_seconds < 0:
+            raise ValueError("缓存 TTL 不能为负数")
         self._default_ttl = default_ttl_seconds
         self._store: dict[tuple[str, ...], _CacheEntry] = {}
 
@@ -32,7 +34,7 @@ class ExternalProviderCache:
         start_date: str | None,
         end_date: str | None,
     ) -> tuple[str, ...]:
-        return (provider_name, eid, ":".join(topics), start_date or "", end_date or "")
+        return (provider_name, eid, ":".join(sorted(topics)), start_date or "", end_date or "")
 
     def get(
         self,
@@ -63,20 +65,25 @@ class ExternalProviderCache:
         ttl_seconds: float | None = None,
     ) -> None:
         """写入缓存。"""
+        effective_ttl = self._default_ttl if ttl_seconds is None else ttl_seconds
+        if effective_ttl < 0:
+            raise ValueError("缓存 TTL 不能为负数")
         key = self._key(provider_name, eid, tuple(topics), start_date, end_date)
         self._store[key] = _CacheEntry(
             result=result,
-            expires_at=time.monotonic() + (ttl_seconds or self._default_ttl),
+            expires_at=time.monotonic() + effective_ttl,
         )
 
-    def invalidate(self, provider_name: str | None = None) -> None:
-        """清除缓存；provider_name 为 None 时清除全部。"""
+    def invalidate(self, provider_name: str | None = None) -> int:
+        """清除缓存并返回删除数量；provider_name 为 None 时清除全部。"""
         if provider_name is None:
+            cleared = len(self._store)
             self._store.clear()
-            return
+            return cleared
         keys = [key for key in self._store if key[0] == provider_name]
         for key in keys:
             del self._store[key]
+        return len(keys)
 
     def stats(self) -> dict[str, Any]:
         """返回缓存统计。"""

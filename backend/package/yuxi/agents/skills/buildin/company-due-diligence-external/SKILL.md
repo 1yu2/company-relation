@@ -24,6 +24,7 @@
   - 用户明确要求补充外部公开信息；
   - 主题属于 `profile`、`financials`、`financing`、`shareholders`、`news` 之一。
 - 传入的 `confirmed_eid` 必须来自 `investigate_company` 返回的 `company_context.eid`。
+- 查询上市公司主题时同时传入已确认的 `company_context.stock_code`，不得根据企业名称猜测股票代码。
 - `topics` 按用户意图选择；不明确时优先使用 `["profile", "financials"]`。
 
 ## 结果表述约束

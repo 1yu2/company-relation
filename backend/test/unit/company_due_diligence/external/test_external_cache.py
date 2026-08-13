@@ -32,6 +32,24 @@ def test_cache_invalidate_by_provider():
     cache = ExternalProviderCache()
     cache.set("akshare", "e-1", ["profile"], None, None, ProviderResult(provider_name="akshare"))
     cache.set("financing", "e-1", ["financing"], None, None, ProviderResult(provider_name="financing"))
-    cache.invalidate("akshare")
+    assert cache.invalidate("akshare") == 1
     assert cache.get("akshare", "e-1", ["profile"], None, None) is None
     assert cache.get("financing", "e-1", ["financing"], None, None) is not None
+
+
+def test_cache_invalidate_all_returns_cleared_count():
+    """清理全部缓存时返回实际删除数量。"""
+    cache = ExternalProviderCache()
+    cache.set("akshare", "e-1", ["profile"], None, None, ProviderResult(provider_name="akshare"))
+    cache.set("financing", "e-1", ["financing"], None, None, ProviderResult(provider_name="financing"))
+
+    assert cache.invalidate() == 2
+    assert cache.stats()["total"] == 0
+
+
+def test_cache_zero_ttl_disables_reuse():
+    """显式 TTL 为 0 时不应回退到默认 TTL。"""
+    cache = ExternalProviderCache(default_ttl_seconds=60)
+    cache.set("akshare", "e-1", ["profile"], None, None, ProviderResult(provider_name="akshare"), ttl_seconds=0)
+
+    assert cache.get("akshare", "e-1", ["profile"], None, None) is None

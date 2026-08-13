@@ -6,9 +6,9 @@ from datetime import UTC, date, datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from yuxi.company_due_diligence.models import CoverageStatus, Evidence, Fact, Source
+from yuxi.company_due_diligence.models import CompanyReference, CoverageStatus, Evidence, Fact, Source
 
 
 class ProviderStatus(StrEnum):
@@ -52,12 +52,32 @@ class ExternalCompanyDataRequest(BaseModel):
         }
     )
 
-    company_ref: dict[str, str | None] = Field(default_factory=dict)
-    topics: list[str] = Field(default_factory=list)
+    company_ref: CompanyReference
+    topics: list[str] = Field(min_length=1)
     start_date: date | None = None
     end_date: date | None = None
     providers: list[str] | None = None
     refresh: bool = False
+
+    @field_validator("topics", "providers")
+    @classmethod
+    def normalize_names(cls, value):
+        """去除空白、拒绝空名称并按请求顺序去重。"""
+        if value is None:
+            return None
+        normalized = [str(item).strip() for item in value]
+        if any(not item for item in normalized):
+            raise ValueError("主题和 Provider 名称不能为空")
+        return list(dict.fromkeys(normalized))
+
+    @model_validator(mode="after")
+    def validate_query_scope(self) -> ExternalCompanyDataRequest:
+        """确保外部查询始终绑定已确认企业和有效时间窗口。"""
+        if not self.company_ref.eid:
+            raise ValueError("外部查询必须使用已确认企业的 eid")
+        if self.start_date and self.end_date and self.end_date < self.start_date:
+            raise ValueError("end_date 不能早于 start_date")
+        return self
 
 
 class TopicCoverage(BaseModel):
@@ -96,6 +116,17 @@ class ProviderHealth(BaseModel):
     supported_topics: list[str] = Field(default_factory=list)
     message: str | None = None
     checked_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ProviderQueryAudit(BaseModel):
+    """Provider 查询脱敏审计记录。"""
+
+    provider_name: str
+    topics: list[str] = Field(default_factory=list)
+    status: ProviderStatus
+    error_code: ProviderErrorCode | None = None
+    latency_ms: float = Field(default=0, ge=0)
+    queried_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class ExternalCompanyDataResponse(BaseModel):
