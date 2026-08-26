@@ -16,6 +16,7 @@ from PIL import Image
 
 from yuxi.knowledge.parser.factory import DocumentProcessorFactory
 from yuxi.knowledge.parser.mineru import MinerUParser
+from yuxi.knowledge.parser.base import DocumentParserException
 from yuxi.knowledge.parser.mineru_official import MinerUOfficialParser
 from yuxi.knowledge.parser.rapid_ocr import RapidOCRParser
 from yuxi.knowledge.parser.registry import PROCESSOR_TYPES, get_parser_metadata
@@ -80,7 +81,7 @@ def test_mineru_official_parsing_does_not_reject_configured_health(
     monkeypatch: pytest.MonkeyPatch,
 ):
     file_path = tmp_path / "mineru.pdf"
-    file_path.write_bytes(b"pdf")
+    _build_pdf(file_path, "MinerU Official content")
     parser = MinerUOfficialParser(api_key="test-key")
 
     monkeypatch.setattr(parser, "_upload_file", lambda *args, **kwargs: "batch-id")
@@ -116,6 +117,88 @@ def _build_pdf(file_path: Path, text: str) -> None:
     page.insert_text((72, 72), text)
     doc.save(str(file_path))
     doc.close()
+
+
+def _build_multi_page_pdf(file_path: Path, page_texts: list[str]) -> None:
+    doc = fitz.open()
+    for text in page_texts:
+        page = doc.new_page()
+        page.insert_text((72, 72), text)
+    doc.save(str(file_path))
+    doc.close()
+
+
+def test_mineru_official_splits_long_pdf_and_merges_markdown_in_page_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "long.pdf"
+    _build_multi_page_pdf(file_path, ["page 1", "page 2", "page 3"])
+    parser = MinerUOfficialParser(api_key="test-key")
+    processed_parts: list[tuple[str, dict[str, object]]] = []
+
+    def _fake_process_single_file(part_path: str, params: dict[str, object]) -> str:
+        with fitz.open(part_path) as document:
+            text = "\n".join(page.get_text().strip() for page in document)
+        processed_parts.append((part_path, params.copy()))
+        return text
+
+    monkeypatch.setattr(parser, "MAX_PDF_PAGES_PER_REQUEST", 2)
+    monkeypatch.setattr(parser, "_process_single_file", _fake_process_single_file)
+
+    result = parser.process_file(str(file_path), params={"image_prefix": "kb/images"})
+
+    assert result == "page 1\npage 2\n\npage 3"
+    assert [params["image_prefix"] for _, params in processed_parts] == [
+        "kb/images/mineru-part-001",
+        "kb/images/mineru-part-002",
+    ]
+    assert all(not Path(part_path).exists() for part_path, _ in processed_parts)
+
+
+def test_mineru_official_keeps_short_pdf_on_single_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "short.pdf"
+    _build_multi_page_pdf(file_path, ["page 1", "page 2"])
+    parser = MinerUOfficialParser(api_key="test-key")
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def _fake_process_single_file(part_path: str, params: dict[str, object]) -> str:
+        calls.append((part_path, params.copy()))
+        return "short markdown"
+
+    monkeypatch.setattr(parser, "MAX_PDF_PAGES_PER_REQUEST", 2)
+    monkeypatch.setattr(parser, "_process_single_file", _fake_process_single_file)
+
+    result = parser.process_file(str(file_path), params={"image_prefix": "kb/images"})
+
+    assert result == "short markdown"
+    assert calls == [(str(file_path), {"image_prefix": "kb/images"})]
+
+
+def test_mineru_official_reports_failed_pdf_page_range(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "long.pdf"
+    _build_multi_page_pdf(file_path, ["page 1", "page 2", "page 3"])
+    parser = MinerUOfficialParser(api_key="test-key")
+    call_count = 0
+
+    def _fake_process_single_file(part_path: str, params: dict[str, object]) -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise DocumentParserException("remote failure", "mineru_official", "parsing_failed")
+        return "first part"
+
+    monkeypatch.setattr(parser, "MAX_PDF_PAGES_PER_REQUEST", 2)
+    monkeypatch.setattr(parser, "_process_single_file", _fake_process_single_file)
+
+    with pytest.raises(DocumentParserException, match="第 3-3 页"):
+        parser.process_file(str(file_path))
 
 
 def _build_docx(file_path: Path, text: str) -> None:

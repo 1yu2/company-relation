@@ -55,6 +55,8 @@ const MODALITY_DISPLAY = {
   pdf: { icon: FileText, label: 'PDF 文档输入' }
 }
 const REQUEST_BODY_OVERRIDES_PLACEHOLDER = '{\n  "enable_thinking": false\n}'
+const VOICE_MODEL_EXTRA_PLACEHOLDER =
+  '{\n  "voices": ["Cherry"],\n  "default_voice": "Cherry",\n  "language_type": "Chinese"\n}'
 
 // Provider form state
 const showProviderModal = ref(false)
@@ -90,6 +92,7 @@ const editingModel = ref({
   base_url_override: null,
   request_body_overrides: {},
   request_body_overrides_text: '{}',
+  extra_text: '{}',
   context_length: null,
   dimension: null,
   batch_size: null,
@@ -260,7 +263,9 @@ const remoteModelTypeOptions = computed(() => {
     { label: `全部 ${models.length}`, value: 'all' },
     { label: `对话 ${counts.chat || 0}`, value: 'chat' },
     { label: `向量 ${counts.embedding || 0}`, value: 'embedding' },
-    { label: `重排 ${counts.rerank || 0}`, value: 'rerank' }
+    { label: `重排 ${counts.rerank || 0}`, value: 'rerank' },
+    { label: `识别 ${counts.asr || 0}`, value: 'asr' },
+    { label: `合成 ${counts.tts || 0}`, value: 'tts' }
   ]
 })
 
@@ -268,7 +273,10 @@ const remoteModelTypeOptions = computed(() => {
 // 旧数据 capabilities 为空时回退到全集，保持现状
 const editingModelTypeOptions = computed(() => {
   const caps = currentProviderForModels.value?.capabilities
-  const types = Array.isArray(caps) && caps.length ? caps : ['chat', 'embedding', 'rerank']
+  const types = Array.isArray(caps) && caps.length ? [...caps] : ['chat', 'embedding', 'rerank', 'asr', 'tts']
+  if (editingModel.value.type && !types.includes(editingModel.value.type)) {
+    types.push(editingModel.value.type)
+  }
   return types.map((c) => ({ value: c, label: c }))
 })
 
@@ -529,6 +537,18 @@ const normalizeModel = (model = {}) => ({
   extra: model.extra || {}
 })
 
+const getEnabledRemoteModel = (remoteModel) =>
+  currentProviderForModels.value?.enabled_models?.find((model) => model.id === remoteModel.id)
+
+const remoteModelNeedsSync = (remoteModel) => {
+  const enabledModel = getEnabledRemoteModel(remoteModel)
+  if (!enabledModel) return false
+  return (
+    enabledModel.type !== remoteModel.type ||
+    (enabledModel.protocol_override || null) !== (remoteModel.protocol_override || null)
+  )
+}
+
 const testModelConnection = async (providerId, model) => {
   const spec = buildModelSpec(providerId, model.id)
   if (modelTestLoadingBySpec.value[spec]) return
@@ -564,19 +584,44 @@ const addModelFromRemote = async (providerId, remoteModel) => {
   if (!provider) return
 
   const enabledModels = provider.enabled_models || []
-  if (enabledModels.some((m) => m.id === remoteModel.id)) {
-    message.info('模型已存在')
+  const existingModel = enabledModels.find((model) => model.id === remoteModel.id)
+  if (existingModel && !remoteModelNeedsSync(remoteModel)) {
+    message.info('模型配置已是最新')
     return
   }
 
   const newModel = normalizeModel(remoteModel)
   newModel.source = 'remote' // 远端拉取的模型显式标注，避免后续被误判为旧数据
   newModel.enabled = true
-  const newEnabledModels = [...enabledModels, newModel]
+  const syncedModel = existingModel
+    ? {
+        ...existingModel,
+        type: newModel.type,
+        protocol_override: newModel.protocol_override,
+        base_url_override: newModel.base_url_override || existingModel.base_url_override || null,
+        extra: Object.keys(newModel.extra).length ? newModel.extra : existingModel.extra || {},
+        source: 'remote',
+        enabled: true
+      }
+    : newModel
+
+  if (syncedModel.type === 'asr' && !syncedModel.base_url_override) {
+    syncedModel.request_body_overrides_text = formatJsonText(syncedModel.request_body_overrides)
+    syncedModel.extra_text = formatJsonText(syncedModel.extra)
+    Object.assign(editingModel.value, syncedModel)
+    isCreating.value = !existingModel
+    showModelModal.value = true
+    message.info('请填写百炼 Workspace Base URL 后保存 ASR 模型')
+    return
+  }
+
+  const newEnabledModels = existingModel
+    ? enabledModels.map((model) => (model.id === remoteModel.id ? syncedModel : model))
+    : [...enabledModels, syncedModel]
 
   try {
     await modelProviderApi.updateProvider(providerId, { enabled_models: newEnabledModels })
-    message.success(`已添加模型 ${remoteModel.id}`)
+    message.success(existingModel ? `已同步模型 ${remoteModel.id}` : `已添加模型 ${remoteModel.id}`)
     await loadProviders()
     // Refresh current provider reference if modal is open
     if (currentProviderForModels.value?.provider_id === providerId) {
@@ -590,6 +635,7 @@ const addModelFromRemote = async (providerId, remoteModel) => {
 const openModelConfigModal = (model) => {
   const normalized = normalizeModel(model)
   normalized.request_body_overrides_text = formatJsonText(normalized.request_body_overrides)
+  normalized.extra_text = formatJsonText(normalized.extra)
   Object.assign(editingModel.value, normalized)
   isCreating.value = false
   showModelModal.value = true
@@ -598,7 +644,9 @@ const openModelConfigModal = (model) => {
 // 手动添加模型：弹出与编辑共用的 Model Config Modal，但 id 字段可编辑、type 选项受 provider 能力约束
 const openCreateModal = (provider) => {
   if (!provider) return
-  const types = provider.capabilities?.length ? provider.capabilities : ['chat']
+  const types = provider.capabilities?.length
+    ? provider.capabilities
+    : ['chat', 'embedding', 'rerank', 'asr', 'tts']
   const defaultType = types[0]
   Object.assign(editingModel.value, {
     id: '',
@@ -609,12 +657,14 @@ const openCreateModal = (provider) => {
     base_url_override: null,
     request_body_overrides: {},
     request_body_overrides_text: '{}',
+    extra_text: '{}',
     context_length: null,
     dimension: null,
     batch_size: null,
     supported_parameters: [],
     extra: {}
   })
+  handleModelTypeChange(defaultType)
   isCreating.value = true
   showModelModal.value = true
 }
@@ -625,10 +675,28 @@ const buildModelConfigPayload = () => {
     '模型请求参数'
   )
   const modelPayload = { ...editingModel.value }
+  const extra = parseJsonObject(editingModel.value.extra_text, '模型扩展参数')
   delete modelPayload.request_body_overrides_text
+  delete modelPayload.extra_text
   return {
     ...modelPayload,
-    request_body_overrides: requestBodyOverrides
+    request_body_overrides: requestBodyOverrides,
+    extra
+  }
+}
+
+const handleModelTypeChange = (type) => {
+  if (type === 'asr') {
+    editingModel.value.protocol_override = 'qwen_asr'
+    editingModel.value.base_url_override = ''
+    editingModel.value.extra_text = '{}'
+  } else if (type === 'tts') {
+    editingModel.value.protocol_override = 'qwen_tts'
+    editingModel.value.base_url_override = 'https://dashscope.aliyuncs.com/api/v1'
+    editingModel.value.extra_text = VOICE_MODEL_EXTRA_PLACEHOLDER
+  } else if (String(editingModel.value.protocol_override || '').startsWith('qwen_')) {
+    editingModel.value.protocol_override = null
+    editingModel.value.extra_text = '{}'
   }
 }
 
@@ -653,7 +721,12 @@ const saveModelConfig = async () => {
         message.error('模型 ID 已存在')
         return
       }
-      const newModel = { ...modelPayload, id: newId, source: 'manual', enabled: true }
+      const newModel = {
+        ...modelPayload,
+        id: newId,
+        source: modelPayload.source || 'manual',
+        enabled: true
+      }
       enabledModels = [...(provider.enabled_models || []), newModel]
     } else {
       enabledModels = (provider.enabled_models || []).map((m) =>
@@ -909,6 +982,8 @@ defineExpose({
             <a-select-option value="chat">chat</a-select-option>
             <a-select-option value="embedding">embedding</a-select-option>
             <a-select-option value="rerank">rerank</a-select-option>
+            <a-select-option value="asr">asr</a-select-option>
+            <a-select-option value="tts">tts</a-select-option>
           </a-select>
         </label>
 
@@ -1148,32 +1223,37 @@ defineExpose({
               <a-button
                 size="small"
                 :type="
-                  currentProviderForModels.enabled_models?.some((m) => m.id === remoteModel.id)
+                  getEnabledRemoteModel(remoteModel) && !remoteModelNeedsSync(remoteModel)
                     ? 'primary'
                     : 'default'
                 "
                 class="lucide-icon-btn"
                 :title="
-                  currentProviderForModels.enabled_models?.some((m) => m.id === remoteModel.id)
-                    ? `${getModelDisplayName(remoteModel)} 已启用`
+                  getEnabledRemoteModel(remoteModel) && !remoteModelNeedsSync(remoteModel)
+                    ? `${getModelDisplayName(remoteModel)} 已启用且配置已同步`
+                    : remoteModelNeedsSync(remoteModel)
+                      ? `同步 ${getModelDisplayName(remoteModel)} 的语音配置`
                     : `启用 ${getModelDisplayName(remoteModel)}`
                 "
                 :aria-label="
-                  currentProviderForModels.enabled_models?.some((m) => m.id === remoteModel.id)
-                    ? `${getModelDisplayName(remoteModel)} 已启用`
+                  getEnabledRemoteModel(remoteModel) && !remoteModelNeedsSync(remoteModel)
+                    ? `${getModelDisplayName(remoteModel)} 已启用且配置已同步`
+                    : remoteModelNeedsSync(remoteModel)
+                      ? `同步 ${getModelDisplayName(remoteModel)} 的语音配置`
                     : `启用 ${getModelDisplayName(remoteModel)}`
                 "
                 :disabled="
-                  currentProviderForModels.enabled_models?.some((m) => m.id === remoteModel.id)
+                  Boolean(getEnabledRemoteModel(remoteModel)) && !remoteModelNeedsSync(remoteModel)
                 "
                 @click="addModelFromRemote(currentProviderForModels.provider_id, remoteModel)"
               >
                 <CheckCircle2
                   :size="13"
                   v-if="
-                    currentProviderForModels.enabled_models?.some((m) => m.id === remoteModel.id)
+                    getEnabledRemoteModel(remoteModel) && !remoteModelNeedsSync(remoteModel)
                   "
                 />
+                <RefreshCw :size="13" v-else-if="remoteModelNeedsSync(remoteModel)" />
                 <Plus :size="13" v-else />
               </a-button>
             </div>
@@ -1219,6 +1299,7 @@ defineExpose({
               v-model:value="editingModel.type"
               :options="editingModelTypeOptions"
               :disabled="editingModelTypeOptions.length === 1"
+              @change="handleModelTypeChange"
             />
           </label>
         </div>
@@ -1226,15 +1307,34 @@ defineExpose({
         <div class="form-row">
           <label class="form-label">
             <span>协议覆盖</span>
-            <a-input v-model:value="editingModel.protocol_override" placeholder="可选" />
+            <a-select
+              v-if="editingModel.type === 'asr'"
+              v-model:value="editingModel.protocol_override"
+              :options="[{ value: 'qwen_asr', label: 'Qwen ASR' }]"
+            />
+            <a-select
+              v-else-if="editingModel.type === 'tts'"
+              v-model:value="editingModel.protocol_override"
+              :options="[{ value: 'qwen_tts', label: 'Qwen TTS' }]"
+            />
+            <a-input v-else v-model:value="editingModel.protocol_override" placeholder="可选" />
           </label>
           <label class="form-label">
             <span>Base URL 覆盖</span>
-            <a-input v-model:value="editingModel.base_url_override" placeholder="可选" />
+            <a-input
+              v-model:value="editingModel.base_url_override"
+              :placeholder="
+                editingModel.type === 'asr'
+                  ? 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'
+                  : editingModel.type === 'tts'
+                    ? 'https://dashscope.aliyuncs.com/api/v1'
+                    : '可选'
+              "
+            />
           </label>
         </div>
 
-        <label class="form-label full-width">
+        <label v-if="editingModel.type === 'chat'" class="form-label full-width">
           <span>模型请求参数 JSON</span>
           <a-textarea
             v-model:value="editingModel.request_body_overrides_text"
@@ -1244,6 +1344,18 @@ defineExpose({
           <small class="form-help">
             仅 OpenAI 兼容供应商（含 OpenRouter）的 chat 模型会通过 extra_body 透传；支持
             enable_thinking、thinking_budget、thinking、reasoning 和 reasoning_effort。
+          </small>
+        </label>
+
+        <label v-if="editingModel.type === 'asr' || editingModel.type === 'tts'" class="form-label full-width">
+          <span>语音模型扩展参数 JSON</span>
+          <a-textarea
+            v-model:value="editingModel.extra_text"
+            :rows="6"
+            :placeholder="VOICE_MODEL_EXTRA_PLACEHOLDER"
+          />
+          <small class="form-help">
+            TTS 可配置 voices、default_voice、language_type 和 max_characters；ASR 通常保持空对象。
           </small>
         </label>
 

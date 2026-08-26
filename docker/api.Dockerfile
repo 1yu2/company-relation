@@ -13,6 +13,7 @@ WORKDIR /app
 ENV TZ=Asia/Shanghai \
     UV_PROJECT_ENVIRONMENT="/usr/local" \
     UV_COMPILE_BYTECODE=1 \
+    NLTK_DATA="/usr/local/share/nltk_data:/root/nltk_data" \
     DEBIAN_FRONTEND=noninteractive
 
 # 设置 npm 镜像源，为 MCP 和 Skills 安装依赖
@@ -53,6 +54,9 @@ COPY backend/package /app/package
 
 # 如果网络还是不好，可以在后面添加 --index-url https://pypi.tuna.tsinghua.edu.cn/simple
 RUN uv sync --no-cache --group test --no-dev --frozen
+
+# 语义切分依赖 punkt_tab；随镜像预置，避免运行时联网下载或被空数据卷阻断。
+RUN python -m nltk.downloader -d /usr/local/share/nltk_data punkt_tab
 
 # 复制 server 代码
 COPY backend/server /app/server

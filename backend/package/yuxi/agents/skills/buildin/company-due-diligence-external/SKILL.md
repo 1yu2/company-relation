@@ -1,3 +1,9 @@
+---
+name: 企业尽调外部数据补数
+slug: company-due-diligence-external
+description: "企业尽调外部数据补数：仅在内部数据缺失、过期或冲突时查询 AkShare 等公开来源，结果带来源可追溯。"
+---
+
 # Skill: 企业尽调外部数据补数
 
 ## 目标

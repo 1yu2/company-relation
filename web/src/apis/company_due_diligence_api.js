@@ -2,7 +2,6 @@ import { apiAdminGet, apiAdminPost } from './base.js'
 import { buildCompanySearchUrl } from '../utils/companyDueDiligence.js'
 
 const BASE_URL = '/api/company-due-diligence'
-const EVALUATION_URL = `${BASE_URL}/evaluations`
 
 export const companyDueDiligenceApi = {
   getHealth() {
@@ -51,77 +50,6 @@ export const companyDueDiligenceApi = {
   downloadReport(reportId, format) {
     return apiAdminGet(
       `${BASE_URL}/reports/${encodeURIComponent(reportId)}/download?format=${format}`,
-      {},
-      'blob'
-    )
-  },
-
-  listEvaluationDatasets() {
-    return apiAdminGet(`${EVALUATION_URL}/datasets`)
-  },
-
-  getEvaluationDataset(datasetId) {
-    return apiAdminGet(`${EVALUATION_URL}/datasets/${encodeURIComponent(datasetId)}`)
-  },
-
-  createQualityRun(payload) {
-    return apiAdminPost(`${EVALUATION_URL}/runs`, payload)
-  },
-
-  createAutoQualityRun(payload) {
-    return apiAdminPost(`${EVALUATION_URL}/auto-runs`, payload)
-  },
-
-  getEvaluationCoverage(samplingPolicy = 'all_or_stratified') {
-    return apiAdminGet(`${EVALUATION_URL}/coverage?sampling_policy=${samplingPolicy}`)
-  },
-
-  listQualityRuns(limit = 50) {
-    return apiAdminGet(`${EVALUATION_URL}/runs?limit=${limit}`)
-  },
-
-  getQualityRun(runId) {
-    return apiAdminGet(`${EVALUATION_URL}/runs/${encodeURIComponent(runId)}`)
-  },
-
-  cancelQualityRun(runId) {
-    return apiAdminPost(`${EVALUATION_URL}/runs/${encodeURIComponent(runId)}/cancel`, {})
-  },
-
-  downloadQualityRun(runId, format) {
-    return apiAdminGet(
-      `${EVALUATION_URL}/runs/${encodeURIComponent(runId)}/download?format=${format}`,
-      {},
-      'blob'
-    )
-  },
-
-  createPerformanceRun(payload) {
-    return apiAdminPost(`${EVALUATION_URL}/performance-runs`, payload)
-  },
-
-  listPerformanceRuns(limit = 50) {
-    return apiAdminGet(`${EVALUATION_URL}/performance-runs?limit=${limit}`)
-  },
-
-  getGlobalPerformanceSummary(windowMinutes = 1440) {
-    return apiAdminGet(`${EVALUATION_URL}/performance-runs/global?window_minutes=${windowMinutes}`)
-  },
-
-  getPerformanceRun(runId) {
-    return apiAdminGet(`${EVALUATION_URL}/performance-runs/${encodeURIComponent(runId)}`)
-  },
-
-  cancelPerformanceRun(runId) {
-    return apiAdminPost(
-      `${EVALUATION_URL}/performance-runs/${encodeURIComponent(runId)}/cancel`,
-      {}
-    )
-  },
-
-  downloadPerformanceRun(runId, format) {
-    return apiAdminGet(
-      `${EVALUATION_URL}/performance-runs/${encodeURIComponent(runId)}/download?format=${format}`,
       {},
       'blob'
     )

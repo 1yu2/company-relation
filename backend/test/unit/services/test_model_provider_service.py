@@ -8,6 +8,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key")
 from yuxi.models.providers.builtin import BUILTIN_PROVIDERS
 from yuxi.models.providers.service import (
     _normalize_payload,
+    _normalize_model_for_provider,
     _normalize_remote_model,
     _validate_request_body_overrides_scope,
     check_credential_status,
@@ -204,6 +205,34 @@ def test_normalize_remote_model_uses_endpoint_model_type():
     assert model["type"] == "embedding"
 
 
+def test_normalize_remote_qwen_voice_models_uses_existing_provider_metadata():
+    asr_model = _normalize_remote_model(
+        {"id": "qwen3-asr-flash-2026-02-10", "object": "model"},
+        provider_id="alibaba-cn",
+    )
+    tts_model = _normalize_remote_model(
+        {"id": "qwen3-tts-flash", "object": "model"},
+        provider_id="alibaba-cn",
+    )
+
+    assert asr_model["type"] == "asr"
+    assert asr_model["protocol_override"] == "qwen_asr"
+    assert tts_model["type"] == "tts"
+    assert tts_model["protocol_override"] == "qwen_tts"
+    assert tts_model["base_url_override"] == "https://dashscope.aliyuncs.com/api/v1"
+    assert tts_model["extra"]["default_voice"] == "Cherry"
+
+
+def test_normalize_existing_qwen_chat_record_upgrades_without_new_provider():
+    model = _normalize_model_for_provider(
+        {"id": "qwen3-tts-flash", "type": "chat", "source": "remote"},
+        "alibaba-cn",
+    )
+
+    assert model["type"] == "tts"
+    assert model["protocol_override"] == "qwen_tts"
+
+
 @pytest.mark.asyncio
 async def test_fetch_remote_models_loads_embedding_only_when_capability_enabled(monkeypatch):
     calls = []
@@ -277,7 +306,7 @@ def test_builtin_dashscope_cn_provider_includes_default_embedding_and_rerank_mod
     provider = next(item for item in BUILTIN_PROVIDERS if item["provider_id"] == "alibaba-cn")
     models = {model["id"]: model for model in provider["enabled_models"]}
 
-    assert provider["capabilities"] == ["chat", "embedding", "rerank"]
+    assert provider["capabilities"] == ["chat", "embedding", "rerank", "asr", "tts"]
     assert provider["embedding_base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings"
     assert provider["rerank_base_url"] == "https://dashscope.aliyuncs.com/compatible-api/v1/reranks"
     assert "embedding_models_endpoint" not in provider
@@ -295,6 +324,57 @@ def test_builtin_dashscope_international_provider_uses_international_endpoint():
     assert provider["models_endpoint"] == "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models"
     assert "embedding_base_url" not in provider
     assert "rerank_base_url" not in provider
+
+
+def test_normalize_payload_accepts_qwen_voice_models():
+    payload = _normalize_payload(
+        {
+            "provider_id": "alibaba-voice",
+            "display_name": "DashScope Voice",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "capabilities": ["asr", "tts"],
+            "enabled_models": [
+                {
+                    "id": "qwen3-asr-flash",
+                    "type": "asr",
+                    "source": "manual",
+                    "protocol_override": "qwen_asr",
+                    "base_url_override": ("https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"),
+                },
+                {
+                    "id": "qwen3-tts-flash",
+                    "type": "tts",
+                    "source": "manual",
+                    "protocol_override": "qwen_tts",
+                    "base_url_override": "https://dashscope.aliyuncs.com/api/v1",
+                    "extra": {"voices": ["Cherry"], "language_type": "Chinese"},
+                },
+            ],
+        }
+    )
+
+    assert payload["enabled_models"][0]["protocol_override"] == "qwen_asr"
+    assert payload["enabled_models"][1]["extra"]["voices"] == ["Cherry"]
+
+
+def test_normalize_payload_rejects_voice_model_without_base_url_override():
+    with pytest.raises(ValueError, match="必须配置 Base URL 覆盖"):
+        _normalize_payload(
+            {
+                "provider_id": "alibaba-voice",
+                "display_name": "DashScope Voice",
+                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "capabilities": ["tts"],
+                "enabled_models": [
+                    {
+                        "id": "qwen3-tts-flash",
+                        "type": "tts",
+                        "source": "manual",
+                        "protocol_override": "qwen_tts",
+                    }
+                ],
+            }
+        )
 
 
 def testcheck_credential_status_disabled_provider_always_ok():

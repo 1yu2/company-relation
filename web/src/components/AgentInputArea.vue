@@ -63,6 +63,11 @@
     </template>
     <template #actions-left>
       <div class="input-actions-left">
+        <VoiceRecorderButton
+          :disabled="disabled"
+          :thread-id="threadId"
+          @transcript="handleVoiceTranscript"
+        />
         <slot name="actions-left-extra"></slot>
       </div>
     </template>
@@ -75,7 +80,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import MessageInputComponent from '@/components/MessageInputComponent.vue'
 import ImagePreviewComponent from '@/components/ImagePreviewComponent.vue'
 import AttachmentOptionsComponent from '@/components/AttachmentOptionsComponent.vue'
@@ -83,6 +88,7 @@ import { X } from 'lucide-vue-next'
 import { normalizeAttachmentPreviews } from '@/utils/file_utils'
 import { uploadMultimodalImage } from '@/utils/multimodal_image_upload'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
+import VoiceRecorderButton from '@/components/voice/VoiceRecorderButton.vue'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -120,6 +126,12 @@ const showInputOptions = computed(
 
 const updateValue = (val) => {
   emit('update:modelValue', val)
+}
+
+const handleVoiceTranscript = (transcript) => {
+  const currentValue = props.modelValue.trim()
+  emit('update:modelValue', currentValue ? `${props.modelValue}\n${transcript}` : transcript)
+  nextTick(() => inputRef.value?.focus())
 }
 
 const handleAttachmentUpload = (files = []) => {

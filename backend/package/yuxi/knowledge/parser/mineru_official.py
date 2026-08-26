@@ -11,6 +11,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+import fitz
 import requests
 
 from yuxi.knowledge.parser.base import BaseDocumentProcessor, DocumentParserException
@@ -24,6 +25,7 @@ class MinerUOfficialParser(BaseDocumentProcessor):
     service_name = "mineru_official"
     display_name = "MinerU Official API"
     supported_extensions = [".pdf", ".doc", ".docx", ".ppt", ".pptx", ".png", ".jpg", ".jpeg"]
+    MAX_PDF_PAGES_PER_REQUEST = 200
 
     def __init__(self, api_key: str | None = None, api_base: str | None = None):
         """使用配置中心解析后的凭证和官方端点初始化解析器。"""
@@ -73,8 +75,91 @@ class MinerUOfficialParser(BaseDocumentProcessor):
                 f"不支持的文件类型: {file_ext}", self.get_service_name(), "unsupported_file_type"
             )
 
-        # 处理参数
-        params = params or {}
+        params = dict(params or {})
+
+        if file_ext != ".pdf" or params.get("page_ranges") is not None:
+            return self._process_single_file(file_path, params)
+
+        page_count = self._get_pdf_page_count(file_path)
+        if page_count <= self.MAX_PDF_PAGES_PER_REQUEST:
+            return self._process_single_file(file_path, params)
+
+        return self._process_long_pdf(file_path, params, page_count)
+
+    def _process_long_pdf(self, file_path: str, params: dict[str, Any], page_count: int) -> str:
+        """自动分批解析超出 MinerU 单次页数限制的 PDF。"""
+
+        part_count = (page_count + self.MAX_PDF_PAGES_PER_REQUEST - 1) // self.MAX_PDF_PAGES_PER_REQUEST
+        logger.info(
+            f"MinerU Official 检测到超长 PDF: {os.path.basename(file_path)} - "
+            f"{page_count} 页，将自动拆分为 {part_count} 批解析"
+        )
+
+        markdown_parts: list[str] = []
+        image_prefix = (params.get("image_prefix") or "unknown/kb-images").rstrip("/")
+
+        with tempfile.TemporaryDirectory(prefix="mineru-official-") as output_dir:
+            for part_index, start_page in enumerate(
+                range(1, page_count + 1, self.MAX_PDF_PAGES_PER_REQUEST),
+                start=1,
+            ):
+                end_page = min(start_page + self.MAX_PDF_PAGES_PER_REQUEST - 1, page_count)
+                part_path = self._split_pdf(file_path, output_dir, start_page, end_page)
+                part_params = {
+                    **params,
+                    "image_prefix": f"{image_prefix}/mineru-part-{part_index:03d}",
+                }
+
+                logger.info(
+                    f"MinerU Official 开始解析第 {part_index}/{part_count} 批: "
+                    f"第 {start_page}-{end_page} 页"
+                )
+                try:
+                    markdown_parts.append(self._process_single_file(part_path, part_params))
+                except Exception as exc:
+                    error_message = f"MinerU Official 自动分批解析失败（第 {start_page}-{end_page} 页）: {exc}"
+                    logger.error(error_message)
+                    status_code = exc.status_code if isinstance(exc, DocumentParserException) else "processing_failed"
+                    raise DocumentParserException(error_message, self.get_service_name(), status_code) from exc
+
+        return "\n\n".join(markdown_parts)
+
+    def _get_pdf_page_count(self, file_path: str) -> int:
+        """读取 PDF 的总页数。"""
+
+        try:
+            with fitz.open(file_path) as document:
+                return document.page_count
+        except Exception as exc:
+            raise DocumentParserException(
+                f"读取 PDF 页数失败: {exc}",
+                self.get_service_name(),
+                "invalid_pdf",
+            ) from exc
+
+    def _split_pdf(self, file_path: str, output_dir: str, start_page: int, end_page: int) -> str:
+        """按 1-based 页码范围生成临时 PDF 分段文件。"""
+
+        output_path = Path(output_dir) / f"part-{start_page:06d}-{end_page:06d}.pdf"
+        try:
+            with fitz.open(file_path) as source_document, fitz.open() as part_document:
+                part_document.insert_pdf(
+                    source_document,
+                    from_page=start_page - 1,
+                    to_page=end_page - 1,
+                )
+                part_document.save(output_path)
+        except Exception as exc:
+            raise DocumentParserException(
+                f"拆分 PDF 第 {start_page}-{end_page} 页失败: {exc}",
+                self.get_service_name(),
+                "pdf_split_failed",
+            ) from exc
+
+        return str(output_path)
+
+    def _process_single_file(self, file_path: str, params: dict[str, Any]) -> str:
+        """执行一次 MinerU Official 上传、轮询和结果提取。"""
 
         # 由于官方 API 不支持直接文件上传，我们需要先上传文件到可访问的 URL
         # 这里使用批量文件上传接口

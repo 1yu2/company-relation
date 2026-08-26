@@ -6,9 +6,13 @@
 
 ## v0.7.2 (current)
 
+- 新增系统整体架构与 Agent 架构交互式架构图：使用 Archify 生成自包含 HTML 架构图并提取 SVG 嵌入 README，系统架构图覆盖浏览器 → 前端 → FastAPI → ARQ Worker → 中间件 → 数据存储全链路，Agent 架构图聚焦 11 层 LangGraph 中间件编排、沙盒隔离执行与 Skills/MCP 运行时扩展；`docs/vibe/` 存放编辑源文件，`docs/public/` 存放可提交 SVG。
+- 更新 README.md 与 VitePress 配置中的 GitHub 仓库引用： badges、clone 地址、文档链接、贡献者卡片、Star History 和 VitePress `base`/`socialLinks`/`editLink` 从 `xerrors/Yuxi` 统一切换为 `1yu2/company-relation`，项目文档站点 base path 同步调整为 `/company-relation/`。
+
+- 修复企业尽调外部数据补数内置 Skill 缺少 YAML frontmatter 导致 `worker-dev` 启动失败的问题，补齐 `name`、`slug` 和 `description`，并增加内置 Skill 格式回归测试。
+- 修复 MinerU Official 无法处理超过 200 页 PDF：平台自动按最多 200 页分批解析，隔离各批图片目录并按原页序合并完整 Markdown，不再要求用户手动拆分或丢弃后续页面。
 - 新增企业尽调外部数据补数链路（TASK-015）：内部 MySQL 优先，仅在缺失、过期、部分覆盖或冲突主题时调用 AkShare 等外部 Provider；统一外部事实、来源、覆盖状态与冲突契约，`source_system` 标记为 `external:<provider>`，进入现有 Claim Ledger 校验；新增 `query_external_company_data` Tool 与 `company-due-diligence-external` Skill，并在管理端配置中提供启停、超时、缓存和新鲜度阈值。
-- 新增企业尽调可版本化评估标准管理基础：从广东企业只读目录生成候选，管理员可手动编辑、审核和冻结；后续首阶段 QA Benchmark 将补齐逐题 Gold、公式指标和真实运行门禁，性能评测继续全局独立。
-- 重构企业尽调评测任务：第一阶段只评简单 QA，新增题库模型、候选生成、逐题人工 Gold、指标公式/分母和真实 QA 运行子任务；候选题不参与正式质量门禁，报告评测另行实施。
+- 删除企业尽调专属评测体系：移除质量评测、QA Benchmark、性能评测、评估标准、候选数据集、前端工作台、API、脚本、ORM 映射和专项测试；主聊天问答、调查、报告及通用 RAG/企业关系评测保持不变，历史 PostgreSQL 评测表和数据不执行删除。
 - 新增平台级非实时语音输入输出：录音经 ASR 回填可编辑草稿并复用现有 AgentRun，助手正文/选区按需 TTS；Qwen-ASR/TTS 统一复用模型供应商 URL、Key 和模型配置，浏览器录音临时转 WAV，并提供能力查询、限流、缓存、清理和脱敏指标。
 - 品牌改造：用户可见的 "Yuxi/语析" 统一改为 "la-platform"（系统信息接口、发现接口、内置 Chatbot 提示词、CLI 授权凭据名、登录页与布局兜底品牌名、知识库类型标签），Logo 更换为 🐟 emoji SVG favicon，主题色由青蓝绿色阶改为浅紫色阶（`--main-700` 为 #7c6aef），深色模式同步反转为主色紫色阶；替换前端默认头像、登录背景与 Agent 占位图为浅紫渐变 + 🐟 主题，文件夹 SVG 图标主色改为 #7c6aef，MCP 默认图标与 placeholder 改为 🐟；清理 GraphCanvas、图表调色板与 TodoListTool 中残留的青色硬编码。移除前端指向默认 GitHub 仓库的 Star 入口、star 徽章卡片、GitHub 图标与实时 stars 统计及各处文档外链。Python 包名、localStorage key 等内部标识保持不变。
 - 新增企业尽调数据基础与结构化查询：安全解析本地 `mysql+aiomysql` 配置并强制只读；冻结统一 DTO、来源键和企业解析，提供 17 类参数化查询、分页、时间范围、JSON 出资/投资人解析及财务覆盖警告。
@@ -16,11 +20,9 @@
 - 新增企业尽调文本证据索引：六类 MySQL 文本经去重分块写入版本化 Milvus，并归档至 MinIO；查询强制按企业、类型和日期过滤并校验来源，支持 Tasker、统计、幂等发布和删除重建。
 - 新增企业尽调统一问答：确定性白名单计划组合 MySQL、Neo4j 和 Milvus，支持身份拒答、最多三跳、来源完整性检查和无需 LLM 的引用式模板答案；无激活图投影时明确降级为来源不可用。
 - 新增企业尽调报告任务：十二章节并行聚合并锁定派生版本，复用 Tasker/PostgreSQL 进度与取消，MinIO 输出可校验 JSON/Markdown，支持列表、详情、章节重试和下载。
-- 新增企业尽调质量与性能评测：人工 Golden 强制复核人、时间、说明和冻结 checksum，输出逐题差异、分组指标与三种质量报告；提供六类性能场景、分位数、阶段耗时和连接池门禁。
-- 收敛企业尽调前端入口：企业问答、关系查询和报告统一由主聊天窗口选择全局“企业尽调智能体”执行；独立页面只保留数据集、质量评测和性能评测，旧评测路由重定向到唯一评测页。
-- 升级企业尽调发布门禁：串联后端回归、临时容器管理员 E2E、AkShare 120 题、敏感审计、质量/性能和前端构建，并显式检查统一 REST 入口、主智能体工具、意图/工具/展示/Claim/输入输出一致性；正式发布仅缺冻结人工 Golden，在线 LLM 单列为非阻塞限制。
+- 收敛企业尽调前端入口：企业问答、关系查询和报告统一由主聊天窗口选择全局“企业尽调智能体”执行，不再保留独立企业尽调页面或侧边栏入口。
 - 完成企业尽调领域智能体升级：新增统一意图、Claim Ledger 和动态 `presentation`，主聊天通过 `investigate_company` 复用 `CompanyDueDiligenceAgent.investigate`；修复领域工具未进入运行时和配置选项、历史 Agent 缺少工具/全局权限、空参数调用等问题。
-- 完成企业尽调全局共享与自动评测升级：启动时幂等注册并修复唯一全局 Agent，`question` 为必填输入并自动解析企业；增加全局统计、`needs_context`、五类自动样本和全局性能聚合。真实主聊天 E2E 已验证工具调用成功；当前部署切换到健康模型以解除原供应商 402 余额错误。
+- 完成企业尽调全局共享升级：启动时幂等注册并修复唯一全局 Agent，`question` 为必填输入并自动解析企业；增加全局统计和 `needs_context`。真实主聊天 E2E 已验证工具调用成功；当前部署切换到健康模型以解除原供应商 402 余额错误。
 - 新增企业股权关联图谱与可重复评测链路：公开数据快照可校验并导入 Neo4j，提供带来源证据的自然语言查询 API，对同一冻结题库执行 TF-IDF 向量基线、确定性 GraphRAG 与 Cypher 对照，输出逐题和汇总报告、性能探针及回归门禁。
 - 精简知识库文档内容接口响应：`GET /api/knowledge/databases/{kb_id}/documents/{doc_id}/content` 不再返回分块内部的实体 ID 与抽取结果，避免向文档预览请求传输仅供知识图谱构建使用的数据。
 - 收敛消息型 AgentRun 提交：Web Chat 与 Agent Call/Eval 共用 `run_submission_service.submit_run_command`，Call/Eval 拆为独立 Router；Request/Run 固化 `source/channel/external_id/origin_metadata` 来源快照，Eval 评估上下文继续透传到 worker 与 Langfuse，保留现有接口与响应兼容性，Resume、Subagent 生命周期不变。

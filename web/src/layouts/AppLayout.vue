@@ -4,7 +4,6 @@ import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import {
   BarChart3,
   ClipboardList,
-  FlaskConical,
   LibraryBig,
   Box,
   FolderKanban,
@@ -135,16 +134,6 @@ const mainList = computed(() => {
     icon: LibraryBig,
     activeIcon: LibraryBig
   })
-
-  if (userStore.isAdmin) {
-    items.push({
-      name: '尽调评测',
-      path: '/company-due-diligence',
-      activePaths: ['/company-due-diligence', '/company-due-diligence-evaluations'],
-      icon: FlaskConical,
-      activeIcon: FlaskConical
-    })
-  }
 
   if (userStore.isSuperAdmin) {
     items.push({

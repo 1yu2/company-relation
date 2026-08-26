@@ -3,28 +3,29 @@
 
 <p><strong>多租户 Harness + 企业知识库</strong><br/>让企业知识可被智能体检索、推理与交付</p>
 
-[![](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=ffffff)](https://github.com/xerrors/Yuxi/blob/main/docker-compose.yml)
-[![](https://img.shields.io/github/issues/xerrors/Yuxi?color=F48D73)](https://github.com/xerrors/Yuxi/issues)
-[![License](https://img.shields.io/github/license/bitcookies/winrar-keygen.svg?logo=github)](https://github.com/xerrors/Yuxi/blob/main/LICENSE)
-[![DeepWiki](https://img.shields.io/badge/DeepWiki-blue.svg)](https://deepwiki.com/xerrors/Yuxi)
-[![Bilibili](https://img.shields.io/badge/知识库演示-00A1D6?logo=bilibili&logoColor=fff)](https://www.bilibili.com/video/BV1erE26iEgv/?share_source=copy_web&vd_source=37b0bdbf95b72ea38b2dc959cfadc4d8)
+[![](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=ffffff)](https://github.com/1yu2/company-relation/blob/main/docker-compose.yml)
+[![](https://img.shields.io/github/issues/1yu2/company-relation?color=F48D73)](https://github.com/1yu2/company-relation/issues)
+[![License](https://img.shields.io/github/license/bitcookies/winrar-keygen.svg?logo=github)](https://github.com/1yu2/company-relation/blob/main/LICENSE)
 
-
-<a href="https://trendshift.io/repositories/24335" target="_blank"><img src="https://trendshift.io/api/badge/repositories/24335" alt="xerrors%2FYuxi | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-
-[[项目文档]](https://xerrors.github.io/Yuxi) · [[版本特性]](http://xhslink.com/o/5Y6QWnmjF2d) · [[🇬🇧 English README]](README.en.md)
+<a href="https://github.com/1yu2/company-relation" target="_blank"><img src="https://github.com/1yu2/company-relation/raw/main/docs/public/yuxi-system-architecture.svg" alt="Yuxi 系统架构图" style="width: 720px; max-width: 100%;"/></a>
 
 </div>
 
-![arch](https://xerrors.oss-cn-shanghai.aliyuncs.com/github/arch.png)
+## 系统架构
+
+Yuxi 基于 Docker Compose 管理全服务栈：Vue 3 前端通过 `/api` 调用 FastAPI，请求经 PostgreSQL 持久化后通过 ARQ 投递给 Worker 执行 LangGraph AgentRun，运行事件经 Redis Stream 通过 SSE 推送回前端。知识检索使用 Milvus 向量检索与 Neo4j 知识图谱，文件和附件由 MinIO 承载，工具执行在隔离沙盒中完成。
+
+<a href="https://github.com/1yu2/company-relation" target="_blank"><img src="https://github.com/1yu2/company-relation/raw/main/docs/public/yuxi-agent-architecture.svg" alt="Yuxi Agent 架构图" style="width: 720px; max-width: 100%;"/></a>
+
+## Agent 架构
+
+Agent 运行时以垂直流水线组织：ARQ Worker 加载 AgentRun 后，经 11 层 LangGraph 中间件（Steer → 文件系统 → Skills → SubAgent → Summary → …）编排，工具调用经沙盒隔离执行，Skills/MCP 扩展能力按需加载。Skill 依赖的工具只有在对应 Skill 激活后才对模型开放；基础工具与受 Skill 门控的工具保持边界。
 
 ## 简介
 
 语析（Yuxi）是一个基于大模型的智能知识库与知识图谱智能体开发平台。它把 **RAG 检索**、**Milvus 知识库内知识图谱** 与 **LangGraph 多智能体编排** 整合进统一的多租户工作台：管理员配置知识库、模型与权限，用户在类 ChatGPT 的界面中与可挂载 Skills、MCP、子智能体和沙盒工具的智能体对话，并获得带引用来源、知识图谱推理与可交付产物的回答。
 
-导航：[项目介绍](https://xerrors.github.io/Yuxi/) ｜ [快速开始](https://xerrors.github.io/Yuxi/intro/quick-start) ｜ [开发路线图](https://xerrors.github.io/Yuxi/develop-guides/roadmap) | [0.7 版本特性](http://xhslink.com/o/5Y6QWnmjF2d)；最新开发动态，详见 [changelog](https://xerrors.github.io/Yuxi/develop-guides/changelog)。
-
-> 📢 求职：作者为江南大学软件工程博士研究生，研究方向 AI Agent、知识图谱与大模型应用，预计 2027 年毕业，现寻求实习/全职机会，欢迎联系：wenjie.zhang@stu.jiangnan.edu.cn
+导航：[项目介绍](https://1yu2.github.io/company-relation/) ｜ [快速开始](https://1yu2.github.io/company-relation/intro/quick-start) ｜ [开发路线图](https://1yu2.github.io/company-relation/develop-guides/roadmap) | [0.7 版本特性](http://xhslink.com/o/5Y6QWnmjF2d)；最新开发动态，详见 [changelog](https://1yu2.github.io/company-relation/develop-guides/changelog)。
 
 ---
 
@@ -60,13 +61,13 @@
 | 数据审计与方案 | 已完成 | 924 家企业及股东、产品、融资、风险、知识产权数据只读审计 |
 | 数据接入 | 已完成 | 只读连接池、双层 SQL 守卫、企业身份解析、统一 DTO、来源与时效输出 |
 | 查询与报告 | 已完成 | 17 类结构化查询、最多三跳、文本证据、十二章节报告和 JSON/Markdown 产物；管理员部署态 HTTP E2E 已通过 |
-| 结果质量评测 | 阻塞 | 严格指标、逐题差异、导出和烟测已完成；缺少 `human_verified` 广东企业 Golden |
-| 系统性能评测 | 已完成 | 安全/受控真实库模式、P50/P95/P99、吞吐、错误率、阶段耗时和连接池观测 |
-| 前端入口 | 已完成 | 主聊天统一承载企业问答、关系查询和报告；独立页面只保留质量/性能评测，前端单测、Lint、构建和部署态接口联调通过 |
-| 发布门禁 | 阻塞 | 自动门禁与管理员 HTTP E2E 通过；仅缺少人工 `human_verified` Golden，在线 LLM 未启用作为非阻塞限制展示 |
-| 智能体输入输出升级 | 已完成 | 全局共享 Agent、自然语言唯一输入、Claim Ledger、动态 `presentation` 和输入输出一致性评测已落地 |
+| 前端入口 | 已完成 | 主聊天统一承载企业问答、关系查询和报告，不提供独立企业尽调工作台 |
+| 智能体输入输出升级 | 已完成 | 全局共享 Agent、自然语言唯一输入、Claim Ledger 和动态 `presentation` 已落地 |
+| 核心链路回归 | 已完成 | 单元、接口与 E2E 覆盖主聊天工具调用、全局问题、企业解析、关系调查和报告导出 |
 
-登录用户在主聊天窗口选择“企业尽调智能体”后直接提问；管理员通过 `/company-due-diligence` 查看全局质量与性能评测，旧 `/company-due-diligence-evaluations` 自动重定向到该页面。当前部署已将企业尽调 Agent 绑定到通过连通性检查且支持工具调用的模型；其他部署也必须配置可用对话模型。本地开发使用不提交的 `.env`，发布报告生成到 `saves/company_due_diligence/release/`，不提交运行产物。
+登录用户在主聊天窗口选择“企业尽调智能体”后直接提问。当前部署已将企业尽调 Agent 绑定到通过连通性检查且支持工具调用的模型；其他部署也必须配置可用对话模型。本地开发使用不提交的 `.env`。
+
+企业尽调专属质量评测、QA Benchmark、性能评测、评测页面和发布门禁已经从当前代码中移除。PostgreSQL 中既有历史评测表和数据未执行 `DROP` 或 `DELETE`，但当前应用不再映射、创建或访问这些表。
 
 相关文档：
 
@@ -74,6 +75,9 @@
 - [企业尽调智能体实现逐字稿](docs/agents/company-due-diligence-implementation-guide.md)
 - [企业尽调智能体全链路与效果论证逐字稿](docs/agents/company-due-diligence-end-to-end-script.md)
 - [企业尽调智能体任务清单](tasks/company-due-diligence/README.md)
+- [平台级语音交互任务清单](tasks/platform-voice/README.md)
+- [平台级语音交互使用说明](docs/agents/platform-voice.md)
+- 平台语音统一复用“模型供应商”中的 Qwen/阿里云百炼 URL、Key 与模型配置，不维护第二套语音凭据。
 - [现有公开企业关系评测基线](docs/agents/company-relation-evaluation.md)
 - 本地开发审计与架构图：`docs/vibe/2026-08-10-guangdong-enterprise-data-audit.md`、`docs/vibe/2026-08-11-company-due-diligence-end-to-end.drawio`（`docs/vibe` 默认不提交）
 
@@ -84,8 +88,8 @@
 **1. 克隆代码并初始化**
 
 ```bash
-git clone --branch v0.7.1 --depth 1 https://github.com/xerrors/Yuxi.git
-cd Yuxi
+git clone https://github.com/1yu2/company-relation.git
+cd company-relation
 
 # Linux/macOS
 ./scripts/init.sh
@@ -104,7 +108,7 @@ docker compose up --build
 
 等待启动完成后，浏览器打开 `http://localhost:5173`，使用初始化时生成的管理员账户登录即可。
 
-> 💡 不需要知识库 / 知识图谱等重依赖时，可使用 `make up-lite` 以 LITE 轻量模式启动，加快冷启动速度。更多部署说明见 [项目文档](https://xerrors.github.io/Yuxi)。
+> 💡 不需要知识库 / 知识图谱等重依赖时，可使用 `make up-lite` 以 LITE 轻量模式启动，加快冷启动速度。更多部署说明见 [项目文档](https://1yu2.github.io/company-relation/)。
 
 ## 致谢
 
@@ -121,14 +125,14 @@ docker compose up --build
 
 感谢所有贡献者的支持！
 
-<a href="https://github.com/xerrors/Yuxi/contributors">
-  <img src="https://contrib.rocks/image?repo=xerrors/Yuxi&max=100&columns=10" />
+<a href="https://github.com/1yu2/company-relation/contributors">
+  <img src="https://contrib.rocks/image?repo=1yu2/company-relation&max=100&columns=10" />
 </a>
 
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=xerrors/Yuxi)](https://star-history.com/#xerrors/Yuxi)
+[![Star History Chart](https://api.star-history.com/svg?repos=1yu2/company-relation)](https://star-history.com/#1yu2/company-relation)
 
 ## 📄 许可证
 

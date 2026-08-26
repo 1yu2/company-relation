@@ -16,7 +16,6 @@ SCAN_ROOTS = (
     BACKEND_ROOT / "test/integration/company_due_diligence",
     BACKEND_ROOT / "test/e2e/company_due_diligence",
     PROJECT_ROOT / "web/src/components/company-due-diligence",
-    PROJECT_ROOT / "web/src/views/CompanyDueDiligenceView.vue",
     PROJECT_ROOT / "docs/agents/company-due-diligence-system.md",
     PROJECT_ROOT / "docs/agents/company-due-diligence-implementation-guide.md",
     PROJECT_ROOT / "docs/agents/company-due-diligence-end-to-end-script.md",

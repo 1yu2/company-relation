@@ -53,6 +53,8 @@ def test_model_cache_prefers_model_base_url_override(monkeypatch):
                 "type": "rerank",
                 "display_name": "Qwen3 Rerank",
                 "base_url_override": "https://invalid.example/rerank",
+                "protocol_override": "custom_rerank",
+                "extra": {"language_type": "Chinese"},
             }
         ]
 
@@ -62,6 +64,68 @@ def test_model_cache_prefers_model_base_url_override(monkeypatch):
     cache.rebuild([Provider()])
 
     assert saved_cache["alibaba-cn:qwen3-rerank"].base_url == "https://invalid.example/rerank"
+    assert saved_cache["alibaba-cn:qwen3-rerank"].protocol_override == "custom_rerank"
+    assert saved_cache["alibaba-cn:qwen3-rerank"].model_extra == {"language_type": "Chinese"}
+
+
+def test_model_cache_classifies_legacy_qwen_voice_models(monkeypatch):
+    saved_cache = {}
+
+    class Provider:
+        is_enabled = True
+        provider_id = "alibaba-cn"
+        api_key = "sk-test"
+        api_key_env = None
+        provider_type = "openai"
+        base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        embedding_base_url = None
+        rerank_base_url = None
+        headers_json = {}
+        extra_json = {}
+        enabled_models = [
+            {"id": "qwen3-asr-flash", "type": "chat"},
+            {"id": "qwen3-tts-flash", "type": "chat"},
+        ]
+
+    cache = ModelCache()
+    monkeypatch.setattr(cache, "_save_cache", lambda data: saved_cache.update(data))
+
+    cache.rebuild([Provider()])
+
+    assert saved_cache["alibaba-cn:qwen3-asr-flash"].model_type == "chat"
+    assert saved_cache["alibaba-cn:qwen3-asr-flash"].protocol_override is None
+    assert saved_cache["alibaba-cn:qwen3-tts-flash"].model_type == "tts"
+
+
+def test_model_cache_classifies_qwen_asr_with_workspace_base_url(monkeypatch):
+    saved_cache = {}
+
+    class Provider:
+        is_enabled = True
+        provider_id = "alibaba-cn"
+        api_key = "sk-test"
+        api_key_env = None
+        provider_type = "openai"
+        base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        embedding_base_url = None
+        rerank_base_url = None
+        headers_json = {}
+        extra_json = {}
+        enabled_models = [
+            {
+                "id": "qwen3-asr-flash",
+                "type": "chat",
+                "base_url_override": "https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+            }
+        ]
+
+    cache = ModelCache()
+    monkeypatch.setattr(cache, "_save_cache", lambda data: saved_cache.update(data))
+
+    cache.rebuild([Provider()])
+
+    assert saved_cache["alibaba-cn:qwen3-asr-flash"].model_type == "asr"
+    assert saved_cache["alibaba-cn:qwen3-asr-flash"].protocol_override == "qwen_asr"
 
 
 def test_model_cache_loads_from_redis_and_uses_local_ttl(monkeypatch: pytest.MonkeyPatch):

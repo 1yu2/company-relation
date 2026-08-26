@@ -18,7 +18,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.e2e]
 
 
 async def _wait_for_detail(client, headers, path: str) -> dict:
-    """轮询报告或评测详情直到 Tasker 进入终态。"""
+    """轮询报告详情直到 Tasker 进入终态。"""
     for _ in range(600):
         response = await client.get(path, headers=headers)
         assert response.status_code == 200, response.text
@@ -114,14 +114,12 @@ async def test_main_chat_can_call_global_company_due_diligence_agent(e2e_client,
             await e2e_client.delete(f"/api/chat/thread/{thread_id}", headers=e2e_headers)
 
 
-async def test_admin_can_complete_investigation_report_quality_and_performance_e2e(e2e_client, e2e_headers):
-    """管理员应通过真实 HTTP 完成统一调查、报告、评测和导出闭环。"""
+async def test_admin_can_complete_investigation_and_report_e2e(e2e_client, e2e_headers):
+    """管理员应通过真实 HTTP 完成统一问答、调查、报告和导出闭环。"""
     mysql = CompanyDueDiligenceMySQL()
     minio = get_minio_client()
     task_ids = []
     report_ids = []
-    quality_ids = []
-    performance_ids = []
     try:
         me_response = await e2e_client.get("/api/auth/me", headers=e2e_headers)
         assert me_response.status_code == 200
@@ -169,15 +167,6 @@ async def test_admin_can_complete_investigation_report_quality_and_performance_e
         assert needs_context_response.status_code == 200, needs_context_response.text
         assert needs_context_response.json()["scope_status"] == "needs_context"
 
-        coverage_response = await e2e_client.get(
-            "/api/company-due-diligence/evaluations/coverage",
-            headers=e2e_headers,
-        )
-        assert coverage_response.status_code == 200, coverage_response.text
-        coverage = coverage_response.json()
-        assert coverage["denominator"] == 924
-        assert coverage["coverage"]["licenses_company_coverage_rate"] > 0
-
         natural_language_response = await e2e_client.post(
             "/api/company-due-diligence/query",
             json={"question": f"{company_name} 的注册资本、法人和经营状态是什么？"},
@@ -185,29 +174,6 @@ async def test_admin_can_complete_investigation_report_quality_and_performance_e
         )
         assert natural_language_response.status_code == 200, natural_language_response.text
         assert natural_language_response.json()["resolution_status"] == "resolved"
-
-        auto_quality_response = await e2e_client.post(
-            "/api/company-due-diligence/evaluations/auto-runs",
-            json={
-                "dataset_version": "latest_frozen",
-                "case_families": ["refusal_and_ambiguity"],
-                "max_samples": 1,
-            },
-            headers=e2e_headers,
-        )
-        assert auto_quality_response.status_code == 202, auto_quality_response.text
-        auto_quality_id = auto_quality_response.json()["run_id"]
-        task_ids.append(auto_quality_id)
-        quality_ids.append(auto_quality_id)
-        auto_quality_detail = await _wait_for_detail(
-            e2e_client,
-            e2e_headers,
-            f"/api/company-due-diligence/evaluations/auto-runs/{auto_quality_id}",
-        )
-        assert auto_quality_detail["task"]["status"] == "success"
-        auto_report = auto_quality_detail["report"]
-        assert auto_report["dataset_scope"] == "global"
-        assert auto_report["samples"][0]["review_status"] == "source_derived"
 
         search_response = await e2e_client.get(
             "/api/company-due-diligence/companies/search",
@@ -398,78 +364,10 @@ async def test_admin_can_complete_investigation_report_quality_and_performance_e
             assert download.status_code == 200
             assert download.headers.get("etag")
 
-        quality_response = await e2e_client.post(
-            "/api/company-due-diligence/evaluations/runs",
-            json={"dataset_id": "guangdong-development-smoke-v1", "strategy_label": "e2e-smoke"},
-            headers=e2e_headers,
-        )
-        assert quality_response.status_code == 202, quality_response.text
-        quality_id = quality_response.json()["run_id"]
-        task_ids.append(quality_id)
-        quality_ids.append(quality_id)
-        quality_detail = await _wait_for_detail(
-            e2e_client,
-            e2e_headers,
-            f"/api/company-due-diligence/evaluations/runs/{quality_id}",
-        )
-        assert quality_detail["task"]["status"] == "success"
-        assert quality_detail["report"]["all_metrics"]["sample_count"] == 2
-        assert quality_detail["report"]["regression_gate"]["eligible"] is False
-        for export_format in ("json", "jsonl", "markdown"):
-            download = await e2e_client.get(
-                f"/api/company-due-diligence/evaluations/runs/{quality_id}/download",
-                params={"format": export_format},
-                headers=e2e_headers,
-            )
-            assert download.status_code == 200
-            assert download.headers.get("etag")
-
-        performance_response = await e2e_client.post(
-            "/api/company-due-diligence/evaluations/performance-runs",
-            json={
-                "scenarios": ["enterprise_profile"],
-                "concurrency": 1,
-                "request_count": 2,
-                "duration_seconds": 10,
-                "request_timeout_seconds": 10,
-            },
-            headers=e2e_headers,
-        )
-        assert performance_response.status_code == 202, performance_response.text
-        performance_id = performance_response.json()["run_id"]
-        task_ids.append(performance_id)
-        performance_ids.append(performance_id)
-        performance_detail = await _wait_for_detail(
-            e2e_client,
-            e2e_headers,
-            f"/api/company-due-diligence/evaluations/performance-runs/{performance_id}",
-        )
-        assert performance_detail["task"]["status"] == "success"
-        scenario = performance_detail["report"]["scenarios"][0]
-        assert scenario["latency"]["p50_ms"] is not None
-        assert scenario["latency"]["p95_ms"] is not None
-        assert scenario["latency"]["p99_ms"] is not None
-        assert performance_detail["report"]["pool"]["after"]["checked_out"] == 0
-        assert performance_detail["report"]["request"]["company_refs"] == []
-        assert performance_detail["report"]["sample_size"] > 0
-        assert performance_detail["report"]["global_summary"]["by_interface"]
-        for export_format in ("json", "markdown"):
-            download = await e2e_client.get(
-                f"/api/company-due-diligence/evaluations/performance-runs/{performance_id}/download",
-                params={"format": export_format},
-                headers=e2e_headers,
-            )
-            assert download.status_code == 200
-            assert download.headers.get("etag")
     finally:
         for task_id in task_ids:
             await e2e_client.delete(f"/api/tasks/{task_id}", headers=e2e_headers)
         report_bucket = os.getenv("COMPANY_DD_REPORT_BUCKET", "company-due-diligence")
-        evaluation_bucket = os.getenv("COMPANY_DD_EVALUATION_BUCKET", "company-due-diligence")
         for report_id in report_ids:
             await minio.adelete_objects_by_prefix(report_bucket, f"reports/{report_id}/")
-        for run_id in quality_ids:
-            await minio.adelete_objects_by_prefix(evaluation_bucket, f"evaluations/quality/{run_id}/")
-        for run_id in performance_ids:
-            await minio.adelete_objects_by_prefix(evaluation_bucket, f"evaluations/performance/{run_id}/")
         await mysql.close()

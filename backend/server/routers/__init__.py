@@ -19,6 +19,7 @@ from server.routers.system_router import system
 from server.routers.system_task_router import tasks
 from server.routers.tool_router import tools
 from server.routers.user_router import user_router
+from server.routers.voice_router import voice_router
 from server.routers.workspace_router import workspace
 
 _LITE_MODE = os.environ.get("LITE_MODE", "").lower() in ("true", "1")
@@ -33,6 +34,7 @@ router.include_router(agent_invocation_call_router)  # /api/agent-invocation/age
 router.include_router(agent_invocation_channel_router)  # /api/agent-invocation/channel/*
 router.include_router(agent_invocation_eval_router)  # /api/agent-invocation/eval/*
 router.include_router(chat)  # /api/chat/* 对话线程、消息历史与附件
+router.include_router(voice_router)  # /api/voice/* 平台级语音转写与按需朗读
 
 # 管理与工作台接口：后台任务、权限域以及工具体系配置。
 router.include_router(dashboard)  # /api/dashboard/* 仪表盘聚合数据
@@ -49,7 +51,6 @@ router.include_router(workspace)  # /api/workspace/* 用户个人工作区
 router.include_router(mention_router)  # /api/mention/* 提及文件搜索接口
 
 if not _LITE_MODE:
-    from server.routers.company_due_diligence_evaluation_router import company_due_diligence_evaluation_router
     from server.routers.company_due_diligence_router import company_due_diligence_router
     from server.routers.company_relation_router import company_relation
     from server.routers.external_kb_router import external_kb
@@ -64,6 +65,3 @@ if not _LITE_MODE:
     router.include_router(graph)  # /api/graph/* 图谱查询与管理
     router.include_router(company_relation)  # /api/company-relations/* 企业关系查询与评测
     router.include_router(company_due_diligence_router)  # /api/company-due-diligence/* 企业尽调
-    router.include_router(
-        company_due_diligence_evaluation_router
-    )  # /api/company-due-diligence/evaluations/* 质量与性能评测

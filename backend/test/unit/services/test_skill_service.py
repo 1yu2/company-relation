@@ -450,6 +450,15 @@ def test_mysql_reporter_builtin_skill_spec_replaces_reporter_and_deep_reporter()
         assert script_path.read_text(encoding="utf-8").startswith("# /// script")
 
 
+def test_company_due_diligence_external_builtin_skill_spec_has_valid_frontmatter():
+    specs = {spec["slug"]: spec for spec in svc.list_builtin_skill_specs()}
+
+    external_skill = specs["company-due-diligence-external"]
+    assert external_skill["name"] == "企业尽调外部数据补数"
+    assert external_skill["tool_dependencies"] == ["query_external_company_data"]
+    assert (external_skill["source_dir"] / "SKILL.md").exists()
+
+
 def test_is_valid_skill_slug():
     # Test valid slugs
     assert svc.is_valid_skill_slug("demo-skill") is True

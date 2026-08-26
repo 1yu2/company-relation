@@ -64,6 +64,7 @@
       <!-- 消息内容 -->
       <MarkdownPreview
         v-if="parsedData.content"
+        ref="assistantContentRef"
         :key="message.id"
         :content="parsedData.content"
         code-copy
@@ -71,6 +72,17 @@
       />
 
       <div v-else-if="parsedData.reasoning_content" class="empty-block"></div>
+
+      <div
+        v-if="message.status === 'finished' && readableAssistantText"
+        class="assistant-message-actions"
+      >
+        <VoicePlaybackControl
+          :playback-id="`assistant-message-${message.id}`"
+          :text="readableAssistantText"
+          :resolve-text="resolveReadableText"
+        />
+      </div>
 
       <!-- 错误提示块 -->
       <div v-if="displayError" class="error-hint">
@@ -170,6 +182,8 @@ import { inferImageMimeTypeFromBase64, normalizeAttachmentPreviews } from '@/uti
 import { buildMentionDisplayLabels } from '@/utils/mention_utils'
 import FileTypeIcon from '@/components/common/FileTypeIcon.vue'
 import { enrichTaskToolCalls } from '@/components/ToolCallingResult/toolRegistry'
+import VoicePlaybackControl from '@/components/voice/VoicePlaybackControl.vue'
+import { getContainedSelectionText, markdownToSpeechText } from '@/utils/voice_text'
 
 const props = defineProps({
   // 消息角色：'user'|'assistant'|'sent'|'received'
@@ -213,6 +227,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['retry', 'retryStoppedMessage', 'openRefs'])
+const assistantContentRef = ref(null)
 
 // 图片全屏预览
 const imagePreview = ref({ visible: false, src: '', alt: '' })
@@ -338,6 +353,13 @@ const parsedData = computed(() => {
     reasoning_content: reasoningContent
   }
 })
+
+const readableAssistantText = computed(() => markdownToSpeechText(parsedData.value.content))
+
+const resolveReadableText = () => {
+  const contentElement = assistantContentRef.value?.$el || assistantContentRef.value
+  return getContainedSelectionText(contentElement) || readableAssistantText.value
+}
 </script>
 
 <style lang="less" scoped>
@@ -516,6 +538,20 @@ const parsedData = computed(() => {
 
   .assistant-message {
     width: 100%;
+  }
+
+  .assistant-message-actions {
+    display: flex;
+    align-items: center;
+    min-height: 26px;
+    margin-top: 6px;
+    opacity: 0.72;
+    transition: opacity 0.2s ease;
+  }
+
+  &:hover .assistant-message-actions,
+  .assistant-message-actions:focus-within {
+    opacity: 1;
   }
 
   .error-hint {

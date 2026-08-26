@@ -707,6 +707,7 @@ import { useAgentStreamHandler } from '@/composables/useAgentStreamHandler'
 import { useStreamSmoother } from '@/composables/useStreamSmoother'
 import { useAgentRequestQueue } from '@/composables/useAgentRequestQueue'
 import { useAgentMentionConfig } from '@/composables/useAgentMentionConfig'
+import { stopVoicePlayback } from '@/composables/useVoicePlayback'
 import AgentArtifactsCard from '@/components/AgentArtifactsCard.vue'
 import AgentPanel from '@/components/AgentPanel.vue'
 import AttachmentTmpUploadModal from '@/components/AttachmentTmpUploadModal.vue'
@@ -2253,6 +2254,7 @@ onActivated(() => {
 onDeactivated(() => {
   stopChatMainResizeObserver()
   stopStreamingStateRefresh()
+  stopVoicePlayback()
 })
 
 onUnmounted(() => {
@@ -2262,6 +2264,7 @@ onUnmounted(() => {
   scrollController.cleanup()
   stopChatMainResizeObserver()
   stopStreamingStateRefresh()
+  stopVoicePlayback()
   if (sendCooldownTimer) {
     clearTimeout(sendCooldownTimer)
     sendCooldownTimer = null
@@ -3293,6 +3296,7 @@ watch(
 
 watch(currentChatId, (threadId, oldThreadId) => {
   if (threadId === oldThreadId) return
+  stopVoicePlayback()
   if (!threadId || approvalState.threadId !== threadId) {
     hideApprovalState()
   }

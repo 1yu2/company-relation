@@ -26,18 +26,20 @@ class ModelInfo:
 
     provider_id: str
     model_id: str
-    model_type: str  # chat / embedding / rerank
+    model_type: str  # chat / embedding / rerank / asr / tts
     display_name: str
 
     # 运行时配置
     api_key: str
     base_url: str
     provider_type: str  # openai / anthropic / gemini / openrouter
+    protocol_override: str | None = None
 
     # 可选配置
     headers: dict[str, str] = field(default_factory=dict)
     # provider 级 extra_json，不是 OpenAI chat 的 extra_body。
     extra: dict[str, Any] = field(default_factory=dict)
+    model_extra: dict[str, Any] = field(default_factory=dict)
     request_body_overrides: dict[str, Any] = field(default_factory=dict)
 
     # Embedding 专属
@@ -57,8 +59,10 @@ class ModelInfo:
             "api_key": self.api_key,
             "base_url": self.base_url,
             "provider_type": self.provider_type,
+            "protocol_override": self.protocol_override,
             "headers": self.headers,
             "extra": self.extra,
+            "model_extra": self.model_extra,
             "request_body_overrides": self.request_body_overrides,
             "dimension": self.dimension,
             "batch_size": self.batch_size,
@@ -74,8 +78,10 @@ class ModelInfo:
             api_key=data["api_key"],
             base_url=data["base_url"],
             provider_type=data["provider_type"],
+            protocol_override=data.get("protocol_override"),
             headers=data.get("headers", {}),
             extra=data.get("extra", {}),
+            model_extra=data.get("model_extra", {}),
             request_body_overrides=data.get("request_body_overrides", {}),
             dimension=data.get("dimension"),
             batch_size=data.get("batch_size", 40),
@@ -136,7 +142,7 @@ class ModelCache:
         return grouped
 
     def rebuild(self, providers: list[Any]) -> None:
-        from yuxi.models.providers.service import resolve_api_key
+        from yuxi.models.providers.service import _normalize_model_for_provider, resolve_api_key
 
         new_cache: dict[str, ModelInfo] = {}
 
@@ -146,7 +152,8 @@ class ModelCache:
 
             api_key = resolve_api_key(provider)
 
-            for model in provider.enabled_models or []:
+            for raw_model in provider.enabled_models or []:
+                model = _normalize_model_for_provider(raw_model, provider.provider_id)
                 model_type = model.get("type", "chat")
                 base_url = model.get("base_url_override") or self._get_base_url_for_type(provider, model_type)
 
@@ -158,8 +165,10 @@ class ModelCache:
                     api_key=api_key or "",
                     base_url=base_url,
                     provider_type=provider.provider_type,
+                    protocol_override=model.get("protocol_override"),
                     headers=dict(provider.headers_json or {}),
                     extra=dict(provider.extra_json or {}),
+                    model_extra=dict(model.get("extra") or {}),
                     request_body_overrides=dict(model.get("request_body_overrides") or {}),
                     dimension=model.get("dimension"),
                     batch_size=model.get("batch_size", 40),

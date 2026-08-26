@@ -7,7 +7,7 @@ export default defineConfig({
   lang: 'zh-CN',
   title: "Yuxi",
   description: "语析",
-  base: '/Yuxi/',
+  base: '/company-relation/',
   ignoreDeadLinks: [
     /localhost/,
     /CONTRIBUTING$/,
@@ -54,7 +54,8 @@ export default defineConfig({
           { text: '沙盒架构与设计', link: '/agents/sandbox-architecture' },
           { text: 'MCP 集成', link: '/agents/mcp-integration' },
           { text: 'Skills 管理', link: '/agents/skills-management' },
-          { text: '子智能体', link: '/agents/subagents-management' }
+          { text: '子智能体', link: '/agents/subagents-management' },
+          { text: '平台级语音交互', link: '/agents/platform-voice' }
         ]
       },
       {
@@ -82,7 +83,7 @@ export default defineConfig({
     ],
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/xerrors/Yuxi' }
+      { icon: 'github', link: 'https://github.com/1yu2/company-relation' }
     ],
 
     footer: {
@@ -91,7 +92,7 @@ export default defineConfig({
     },
 
     editLink: {
-      pattern: 'https://github.com/xerrors/Yuxi/edit/main/docs/:path',
+      pattern: 'https://github.com/1yu2/company-relation/edit/main/docs/:path',
       text: '在 GitHub 上编辑此页'
     },
 

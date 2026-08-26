@@ -140,6 +140,10 @@ async def lifespan(app: FastAPI):
     yield
     await tasker.shutdown()
     shutdown_sandbox_provider()
+    from yuxi.voice.providers import close_qwen_http_client, close_voice_http_client
+
+    await close_voice_http_client()
+    await close_qwen_http_client()
     await close_queue_clients()
     close_shared_neo4j_connection()
     if company_due_diligence_mysql is not None:

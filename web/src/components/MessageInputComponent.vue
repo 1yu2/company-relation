@@ -12,8 +12,9 @@
       <slot name="top"></slot>
     </div>
 
-    <div class="expand-options" v-if="hasOptionsLeft">
+    <div class="expand-options">
       <a-dropdown
+        v-if="hasOptionsLeft"
         v-model:open="optionsExpanded"
         :trigger="['click']"
         placement="topLeft"

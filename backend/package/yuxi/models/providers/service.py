@@ -19,7 +19,7 @@ from yuxi.models.providers.repository import (
 )
 from yuxi.storage.postgres.models_business import ModelProvider
 
-VALID_MODEL_TYPES = {"chat", "embedding", "rerank"}
+VALID_MODEL_TYPES = {"chat", "embedding", "rerank", "asr", "tts"}
 VALID_MODEL_SOURCES = {"manual", "remote"}
 VALID_PROVIDER_TYPES = {"openai", "anthropic", "gemini", "openrouter"}
 OPENAI_COMPATIBLE_REQUEST_BODY_PROVIDER_TYPES = {"openai", "openrouter"}
@@ -31,6 +31,9 @@ ALLOWED_EXTRA_BODY_FIELDS = {
     "thinking_budget",
 }
 _PROVIDER_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{1,99}$")
+_QWEN_ASR_MODEL_RE = re.compile(r"^qwen3-asr-flash(?:-\d{4}-\d{2}-\d{2})?$", re.IGNORECASE)
+_QWEN_TTS_MODEL_RE = re.compile(r"^qwen3-tts-flash(?:-\d{4}-\d{2}-\d{2})?$", re.IGNORECASE)
+_QWEN_TTS_BASE_URL = "https://dashscope.aliyuncs.com/api/v1"
 
 
 def _normalize_list(value: Any) -> list:
@@ -39,6 +42,35 @@ def _normalize_list(value: Any) -> list:
 
 def _normalize_dict(value: Any) -> dict:
     return value if isinstance(value, dict) else {}
+
+
+def _qwen_voice_model_config(
+    provider_id: str | None,
+    model_id: str,
+) -> dict[str, Any]:
+    """返回百炼远端语音模型的运行元数据，避免重复配置供应商凭据。"""
+
+    normalized_provider_id = str(provider_id or "").strip().lower()
+    if normalized_provider_id != "alibaba-cn":
+        return {}
+    if _QWEN_ASR_MODEL_RE.fullmatch(model_id):
+        return {
+            "type": "asr",
+            "protocol_override": "qwen_asr",
+        }
+    if _QWEN_TTS_MODEL_RE.fullmatch(model_id):
+        return {
+            "type": "tts",
+            "protocol_override": "qwen_tts",
+            "base_url_override": _QWEN_TTS_BASE_URL,
+            "extra": {
+                "voices": ["Cherry"],
+                "default_voice": "Cherry",
+                "language_type": "Chinese",
+                "max_characters": 600,
+            },
+        }
+    return {}
 
 
 def _validate_provider_id(provider_id: str) -> None:
@@ -54,7 +86,7 @@ def _normalize_model_item(model: dict[str, Any]) -> dict[str, Any]:
 
     model_type = str(model.get("type") or "unknown").strip()
     if model_type not in VALID_MODEL_TYPES:
-        raise ValueError(f"启用模型 {model_id} 的 type 必须是 chat、embedding 或 rerank")
+        raise ValueError(f"启用模型 {model_id} 的 type 必须是 chat、embedding、rerank、asr 或 tts")
 
     # source 区分手动添加 vs 远端拉取，用于跳过远端清单存在性的视觉警告。
     source = str(model.get("source") or "remote").strip()
@@ -67,6 +99,19 @@ def _normalize_model_item(model: dict[str, Any]) -> dict[str, Any]:
     normalized["source"] = source
     normalized["display_name"] = str(model.get("display_name") or model.get("name") or model_id)
     normalized["extra"] = _normalize_dict(model.get("extra"))
+    protocol_override = str(model.get("protocol_override") or "").strip().lower()
+    base_url_override = str(model.get("base_url_override") or "").strip()
+    if protocol_override:
+        normalized["protocol_override"] = protocol_override
+    if base_url_override:
+        normalized["base_url_override"] = base_url_override
+
+    expected_voice_protocol = {"asr": "qwen_asr", "tts": "qwen_tts"}.get(model_type)
+    if expected_voice_protocol and protocol_override != expected_voice_protocol:
+        raise ValueError(f"语音模型 {model_id} 的 protocol_override 必须是 {expected_voice_protocol}")
+    if expected_voice_protocol and not base_url_override:
+        raise ValueError(f"语音模型 {model_id} 必须配置 Base URL 覆盖")
+
     if "request_body_overrides" in model:
         overrides = model.get("request_body_overrides")
         if not isinstance(overrides, dict):
@@ -102,13 +147,33 @@ def _normalize_model_item(model: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def _normalize_model_list(models: Any) -> list[dict[str, Any]]:
+def _normalize_model_for_provider(
+    model: dict[str, Any],
+    provider_id: str | None,
+) -> dict[str, Any]:
+    """补齐已知供应商的模型协议元数据，兼容旧的 chat 模型记录。"""
+
+    normalized = dict(model)
+    model_id = str(normalized.get("id") or "").strip()
+    model_type = str(normalized.get("type") or "chat").strip().lower()
+    if model_type == "chat":
+        voice_config = _qwen_voice_model_config(provider_id, model_id)
+        if voice_config.get("type") != "asr" or normalized.get("base_url_override"):
+            normalized.update(voice_config)
+    return _normalize_model_item(normalized)
+
+
+def _normalize_model_list(
+    models: Any,
+    *,
+    provider_id: str | None = None,
+) -> list[dict[str, Any]]:
     normalized_models: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     for item in _normalize_list(models):
         if not isinstance(item, dict):
             raise ValueError("模型配置必须是对象列表")
-        normalized = _normalize_model_item(item)
+        normalized = _normalize_model_for_provider(item, provider_id)
         if normalized["id"] in seen_ids:
             raise ValueError(f"模型 id 重复: {normalized['id']}")
         seen_ids.add(normalized["id"])
@@ -200,6 +265,12 @@ def _normalize_payload(data: dict[str, Any], *, partial: bool = False) -> dict[s
         elif not partial:
             payload[field] = default
 
+    if "enabled_models" in payload:
+        payload["enabled_models"] = _normalize_model_list(
+            payload["enabled_models"],
+            provider_id=payload.get("provider_id"),
+        )
+
     # 仅当本次 payload 同时携带 capabilities 与 enabled_models 时做一致性校验，
     # 防止前端把超出 provider.capabilities 的模型 type 写入。
     # partial 模式下若只更新其中一项，跳过校验避免误判（DB 已有值不可见）。
@@ -244,7 +315,13 @@ def _models_url(base_url: str, endpoint: str | None = None) -> str:
     return f"{base}/{endpoint.lstrip('/')}"
 
 
-def _normalize_remote_model(raw_model: dict[str, Any], model_type: str = "chat") -> dict[str, Any]:
+def _normalize_remote_model(
+    raw_model: dict[str, Any],
+    model_type: str = "chat",
+    provider_id: str | None = None,
+) -> dict[str, Any]:
+    """规范化远端模型，并识别百炼列表中的非实时 Qwen 语音模型。"""
+
     model_id = str(raw_model.get("id") or "").strip()
     if not model_id:
         return {}
@@ -253,6 +330,8 @@ def _normalize_remote_model(raw_model: dict[str, Any], model_type: str = "chat")
     top_provider = _normalize_dict(raw_model.get("top_provider"))
     raw_type = raw_model.get("type")
     normalized_type = raw_type if raw_type in VALID_MODEL_TYPES else model_type
+    voice_config = _qwen_voice_model_config(provider_id, model_id)
+    normalized_type = voice_config.get("type", normalized_type)
     normalized = {
         "id": model_id,
         "object": raw_model.get("object"),
@@ -271,6 +350,7 @@ def _normalize_remote_model(raw_model: dict[str, Any], model_type: str = "chat")
         "raw_metadata": raw_model,
         "extra": {},
     }
+    normalized.update(voice_config)
     return {key: value for key, value in normalized.items() if value is not None}
 
 
@@ -335,9 +415,18 @@ async def update_provider_config(
     if provider is None:
         return None
     payload = _normalize_payload(data, partial=True)
+    if "enabled_models" in payload:
+        payload["enabled_models"] = _normalize_model_list(
+            payload["enabled_models"],
+            provider_id=provider.provider_id,
+        )
     # partial 更新时仅传 enabled_models，结合 DB 中现有 capabilities 校验
     if "enabled_models" in payload and "capabilities" not in payload:
         existing_caps = set(provider.capabilities or [])
+        voice_capabilities = {model["type"] for model in payload["enabled_models"] if model["type"] in {"asr", "tts"}}
+        if voice_capabilities:
+            payload["capabilities"] = sorted(existing_caps | voice_capabilities)
+            existing_caps = set(payload["capabilities"])
         if existing_caps:
             _validate_models_capabilities(payload.get("enabled_models"), existing_caps)
     if "enabled_models" in payload or "provider_type" in payload:
@@ -380,7 +469,11 @@ async def _fetch_models_from_endpoint(
     models = []
     for raw_model in raw_models:
         if isinstance(raw_model, dict):
-            normalized = _normalize_remote_model(raw_model, model_type)
+            normalized = _normalize_remote_model(
+                raw_model,
+                model_type,
+                provider.provider_id,
+            )
             if normalized:
                 models.append(normalized)
     return models
@@ -434,6 +527,13 @@ async def test_model_status_by_spec(spec: str) -> dict:
         return {"spec": spec, "status": "error", "message": f"未找到模型: {spec}"}
 
     try:
+        if info.model_type in {"asr", "tts"}:
+            return {
+                "spec": spec,
+                "status": "unsupported",
+                "message": "语音模型请在主窗口通过录音或朗读进行真实链路验证",
+                "model_type": info.model_type,
+            }
         if info.model_type == "embedding":
             from yuxi.models.embed import select_embedding_model
 

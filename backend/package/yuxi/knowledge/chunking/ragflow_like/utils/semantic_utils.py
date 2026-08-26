@@ -60,8 +60,6 @@ def split_mixed_sentences(text: str) -> list[str]:
     Returns:
         List[str]: 分割后的句子列表。
     """
-    _ensure_punkt_tab()
-
     chunks = re.split(r"(\n+)", text)
     sentences = []
 
@@ -69,6 +67,7 @@ def split_mixed_sentences(text: str) -> list[str]:
         if not ch.strip():
             continue
         if re.search(r"[A-Za-z]", ch):
+            _ensure_punkt_tab()
             parts = sent_tokenize(ch)
             sentences.extend([p.strip() for p in parts if p.strip()])
         else:
