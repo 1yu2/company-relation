@@ -76,6 +76,45 @@ async def test_resolve_agent_runtime_includes_subagents_only_when_requested(monk
     assert agent_config == {}
 
 
+@pytest.mark.asyncio
+async def test_resolve_agent_runtime_rejects_internal_conversation(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    class FakeConversationRepository:
+        def __init__(self, _db):
+            pass
+
+        async def get_conversation_by_thread_id(self, thread_id: str):
+            return SimpleNamespace(
+                uid="user-1",
+                agent_id="worker",
+                thread_id=thread_id,
+                status="active",
+                extra_metadata={"visibility": "internal", "source": "agent_evaluation"},
+            )
+
+    class FakeAgentRepository:
+        def __init__(self, _db):
+            pass
+
+        async def get_visible_by_slug(self, **_kwargs):
+            calls.append("agent_lookup")
+            return None
+
+    monkeypatch.setattr(svc, "ConversationRepository", FakeConversationRepository)
+    monkeypatch.setattr(svc, "AgentRepository", FakeAgentRepository)
+
+    with pytest.raises(ValueError, match="对话线程不存在"):
+        await svc._resolve_agent_runtime(
+            db=object(),
+            user=SimpleNamespace(uid="user-1"),
+            requested_agent_slug="worker",
+            thread_id="internal-thread",
+        )
+
+    assert calls == []
+
+
 class _FakeConvRepo:
     def __init__(self, _db):
         self.db = _db

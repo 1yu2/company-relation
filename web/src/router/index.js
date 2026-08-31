@@ -98,6 +98,19 @@ const router = createRouter({
       ]
     },
     {
+      path: '/evaluation',
+      name: 'EvaluationPlatform',
+      component: AppLayout,
+      children: [
+        {
+          path: '',
+          name: 'EvaluationPlatformComp',
+          component: () => import('../views/EvaluationPlatformView.vue'),
+          meta: { keepAlive: false, requiresAuth: true, requiresAdmin: true }
+        }
+      ]
+    },
+    {
       path: '/extensions',
       name: 'extensions',
       component: AppLayout,

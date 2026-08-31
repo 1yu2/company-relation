@@ -17,7 +17,12 @@ from yuxi.agents.buildin import agent_manager
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.agent_run_repository import AgentRunRepository
 from yuxi.repositories.agent_run_request_repository import AgentRunRequestRepository
-from yuxi.repositories.conversation_repository import ConversationRepository
+from yuxi.repositories.conversation_repository import (
+    INTERNAL_CONVERSATION_VISIBILITY,
+    INVOCATION_CONVERSATION_SOURCES,
+    ConversationRepository,
+    is_internal_conversation,
+)
 from yuxi.services.agent_request_queue_service import finalize_intake, intake_request
 from yuxi.services.input_message_service import AgentRunInputMessage
 from yuxi.storage.postgres.models_business import User
@@ -118,21 +123,30 @@ async def submit_run_command(
 
     conversation_repo = ConversationRepository(db)
     conversation = await conversation_repo.get_conversation_by_thread_id(command.thread_id)
+    if (
+        conversation
+        and origin.source in INVOCATION_CONVERSATION_SOURCES
+        and not is_internal_conversation(conversation)
+    ):
+        raise HTTPException(status_code=409, detail="外部调用不能复用普通对话线程")
     if not conversation:
         if not command.create_conversation:
             raise HTTPException(status_code=404, detail="对话线程不存在")
         try:
+            conversation_metadata = {
+                **origin_metadata,
+                "source": origin.source,
+                "channel": origin.channel,
+            }
+            if origin.source in INVOCATION_CONVERSATION_SOURCES:
+                conversation_metadata["visibility"] = INTERNAL_CONVERSATION_VISIBILITY
             async with db.begin_nested():
                 conversation = await conversation_repo.add_conversation(
                     uid=str(current_user.uid),
                     agent_id=agent_item.slug,
                     title=command.conversation_title,
                     thread_id=command.thread_id,
-                    metadata={
-                        **origin_metadata,
-                        "source": origin.source,
-                        "channel": origin.channel,
-                    },
+                    metadata=conversation_metadata,
                 )
         except IntegrityError:
             conversation = await conversation_repo.get_conversation_by_thread_id(command.thread_id)

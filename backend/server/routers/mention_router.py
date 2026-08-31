@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from server.utils.auth_middleware import get_db, get_required_user
 from sqlalchemy.ext.asyncio import AsyncSession
-from yuxi.repositories.conversation_repository import ConversationRepository
+from yuxi.repositories.conversation_repository import ConversationRepository, is_internal_conversation
 from yuxi.services.mention_search_service import search_mention_files_in_index
 from yuxi.storage.postgres.models_business import User
 
@@ -38,7 +38,11 @@ async def search_mention_files(
         conv_repo = ConversationRepository(db)
         conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
         if conversation:
-            if conversation.uid != uid or conversation.status == "deleted":
+            if (
+                conversation.uid != uid
+                or conversation.status == "deleted"
+                or is_internal_conversation(conversation)
+            ):
                 raise HTTPException(status_code=404, detail="对话线程不存在")
             effective_thread_id = thread_id
         else:

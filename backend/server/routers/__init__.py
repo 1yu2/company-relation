@@ -56,12 +56,14 @@ if not _LITE_MODE:
     from server.routers.external_kb_router import external_kb
     from server.routers.graph_router import graph
     from server.routers.knowledge_eval_router import evaluation
+    from server.routers.evaluation_platform_router import evaluation_platform_router
     from server.routers.knowledge_router import knowledge
 
     # 知识库与图谱能力依赖较重，LITE 模式下跳过这组接口。
     router.include_router(external_kb)  # /api/knowledge/databases/external* CLI 与外部 Agent 调用
     router.include_router(knowledge)  # /api/knowledge/* 知识库管理与检索
     router.include_router(evaluation)  # /api/evaluation/* 知识库评估
+    router.include_router(evaluation_platform_router)  # /api/platform-evaluations/* 平台级统一评测
     router.include_router(graph)  # /api/graph/* 图谱查询与管理
     router.include_router(company_relation)  # /api/company-relations/* 企业关系查询与评测
     router.include_router(company_due_diligence_router)  # /api/company-due-diligence/* 企业尽调

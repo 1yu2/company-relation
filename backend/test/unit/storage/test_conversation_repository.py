@@ -8,10 +8,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from yuxi.repositories.conversation_repository import (
     ConversationRepository,
+    INTERNAL_CONVERSATION_VISIBILITY,
     INVOCATION_CONVERSATION_SOURCES,
     MAX_CONVERSATION_TITLE_LENGTH,
 )
-from yuxi.storage.postgres.models_business import Base, Conversation, Message
+from yuxi.storage.postgres.models_business import AgentRun, Base, Conversation, Message
 from yuxi.utils.datetime_utils import utc_now_naive
 
 pytestmark = pytest.mark.unit
@@ -93,6 +94,62 @@ async def test_list_conversations_excludes_invocation_sources(conversation_sessi
     )
 
     assert [item.thread_id for item in items] == ["thread-normal"]
+
+
+@pytest.mark.asyncio
+async def test_list_conversations_excludes_internal_visibility(conversation_session):
+    now = utc_now_naive()
+    normal = Conversation(
+        thread_id="thread-normal-visible",
+        uid="user-a",
+        agent_id="agent-a",
+        title="Normal",
+        status="active",
+        created_at=now,
+        updated_at=now,
+        extra_metadata={},
+    )
+    internal = Conversation(
+        thread_id="thread-internal",
+        uid="user-a",
+        agent_id="agent-a",
+        title="Internal evaluation run",
+        status="active",
+        created_at=now,
+        updated_at=now + timedelta(minutes=1),
+        extra_metadata={"visibility": INTERNAL_CONVERSATION_VISIBILITY, "source": "platform_eval"},
+    )
+    legacy_internal = Conversation(
+        thread_id="thread-legacy-internal",
+        uid="user-a",
+        agent_id="agent-a",
+        title="Legacy evaluation run",
+        status="active",
+        created_at=now,
+        updated_at=now + timedelta(minutes=2),
+        extra_metadata={},
+    )
+    conversation_session.add_all([normal, internal, legacy_internal])
+    await conversation_session.flush()
+    conversation_session.add(
+        AgentRun(
+            id="legacy-evaluation-run",
+            conversation_thread_id=legacy_internal.thread_id,
+            agent_slug="agent-a",
+            uid="user-a",
+            request_id="legacy-evaluation-request",
+            source="agent_evaluation",
+            conversation_id=legacy_internal.id,
+            input_payload={},
+            status="completed",
+        )
+    )
+    await conversation_session.commit()
+
+    repo = ConversationRepository(conversation_session)
+    items = await repo.list_conversations(uid="user-a", limit=20)
+
+    assert [item.thread_id for item in items] == ["thread-normal-visible"]
 
 
 @pytest.mark.asyncio

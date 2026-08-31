@@ -15,7 +15,11 @@ from yuxi.agents.buildin import agent_manager
 from yuxi.config import config as app_config
 from yuxi.knowledge.parser.factory import DocumentProcessorFactory
 from yuxi.repositories.agent_repository import AgentRepository
-from yuxi.repositories.conversation_repository import INVOCATION_CONVERSATION_SOURCES, ConversationRepository
+from yuxi.repositories.conversation_repository import (
+    INVOCATION_CONVERSATION_SOURCES,
+    ConversationRepository,
+    is_internal_conversation,
+)
 from yuxi.services.mention_search_service import invalidate_mention_cache
 from yuxi.services.ocr_service import parse_document
 from yuxi.storage.minio import StorageError, get_minio_client
@@ -105,7 +109,12 @@ async def _convert_upload_to_markdown(upload: UploadFile) -> ConversionResult:
 
 async def require_user_conversation(conv_repo: ConversationRepository, thread_id: str, uid: str):
     conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
-    if not conversation or conversation.uid != str(uid) or conversation.status == "deleted":
+    if (
+        not conversation
+        or conversation.uid != str(uid)
+        or conversation.status == "deleted"
+        or is_internal_conversation(conversation)
+    ):
         raise HTTPException(status_code=404, detail="对话线程不存在")
     return conversation
 
@@ -920,7 +929,12 @@ async def get_thread_history_view(
     """获取对话历史消息，包含用户反馈状态"""
     conv_repo = ConversationRepository(db)
     conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
-    if not conversation or conversation.uid != str(current_uid) or conversation.status == "deleted":
+    if (
+        not conversation
+        or conversation.uid != str(current_uid)
+        or conversation.status == "deleted"
+        or is_internal_conversation(conversation)
+    ):
         raise HTTPException(status_code=404, detail="对话线程不存在")
 
     messages = await conv_repo.get_messages_by_thread_id(thread_id)

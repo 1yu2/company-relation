@@ -11,6 +11,9 @@ from sqlalchemy.orm import declarative_base
 from yuxi.storage.postgres.models_business import AGENT_RUN_TERMINAL_STATUSES
 from yuxi.storage.postgres.models_business import Base as BusinessBase
 from yuxi.storage.postgres.models_knowledge import Base as KnowledgeBase
+# Import platform evaluation models so they are registered on BusinessBase.metadata
+# before the existing create_all lifecycle runs.
+from yuxi.storage.postgres import models_evaluation as _models_evaluation  # noqa: F401
 from yuxi.utils import logger
 from yuxi.utils.singleton import SingletonMeta
 

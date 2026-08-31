@@ -28,7 +28,7 @@ from yuxi.agents.context import build_agent_input_context, normalize_agent_conte
 from yuxi.agents.state import AgentStatePayload
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.agent_run_repository import AgentRunRepository
-from yuxi.repositories.conversation_repository import ConversationRepository
+from yuxi.repositories.conversation_repository import ConversationRepository, is_internal_conversation
 from yuxi.repositories.subagent_thread_repository import SubagentThreadRepository
 from yuxi.services.conversation_service import serialize_attachment
 from yuxi.services.input_message_service import AgentRunInputMessage
@@ -683,7 +683,11 @@ async def _resolve_agent_runtime(
     if thread_id:
         conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
         if conversation:
-            if conversation.uid != str(user.uid) or conversation.status == "deleted":
+            if (
+                conversation.uid != str(user.uid)
+                or conversation.status == "deleted"
+                or is_internal_conversation(conversation)
+            ):
                 raise ValueError("对话线程不存在")
             # Conversation.agent_id 是历史字段名，实际保存的是 Agent.slug。
             if requested_agent_slug and requested_agent_slug != conversation.agent_id:
@@ -1378,7 +1382,11 @@ async def get_agent_state_view(
     run_repo = AgentRunRepository(db)
     conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
     if conversation:
-        if conversation.uid != str(current_uid) or conversation.status == "deleted":
+        if (
+            conversation.uid != str(current_uid)
+            or conversation.status == "deleted"
+            or is_internal_conversation(conversation)
+        ):
             raise HTTPException(status_code=404, detail="对话线程不存在")
 
         agent_item = await agent_repo.get_by_slug(conversation.agent_id)

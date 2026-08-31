@@ -4,12 +4,19 @@
 
 import uuid as uuid_lib
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import flag_modified
 
-from yuxi.storage.postgres.models_business import Conversation, ConversationStats, Message, ToolCall
+from yuxi.storage.postgres.models_business import (
+    AgentRun,
+    AgentRunRequest,
+    Conversation,
+    ConversationStats,
+    Message,
+    ToolCall,
+)
 from yuxi.utils import logger
 from yuxi.utils.datetime_utils import utc_now_naive
 
@@ -20,6 +27,19 @@ MESSAGE_SEARCH_SNIPPETS_PER_THREAD = 2
 MESSAGE_SEARCH_ROLES = ("user", "assistant")
 MESSAGE_SEARCH_EXCLUDED_TYPES = ("tool_call", "tool_result")
 INVOCATION_CONVERSATION_SOURCES = ("agent_call", "agent_evaluation")
+INTERNAL_CONVERSATION_VISIBILITY = "internal"
+
+
+def is_internal_conversation(conversation: Conversation | None) -> bool:
+    """判断对话是否属于 Agent Call 或评测等内部运行线程。"""
+    if conversation is None:
+        return False
+    metadata = getattr(conversation, "extra_metadata", None) or {}
+    if not isinstance(metadata, dict):
+        return False
+    return metadata.get("source") in INVOCATION_CONVERSATION_SOURCES or (
+        metadata.get("visibility") == INTERNAL_CONVERSATION_VISIBILITY
+    )
 
 
 class ConversationRepository:
@@ -60,6 +80,40 @@ class ConversationRepository:
                 source.is_(None),
                 source.notin_(sources),
             )
+        ]
+
+    def _exclude_internal_conversation_conditions(self):
+        """构造过滤内部运行线程的查询条件。"""
+        metadata = Conversation.extra_metadata
+        source = metadata["source"].as_string()
+        visibility = metadata["visibility"].as_string()
+        return [
+            or_(
+                metadata.is_(None),
+                source.is_(None),
+                source.notin_(INVOCATION_CONVERSATION_SOURCES),
+            ),
+            or_(
+                metadata.is_(None),
+                visibility.is_(None),
+                visibility != INTERNAL_CONVERSATION_VISIBILITY,
+            ),
+            ~exists(
+                select(1)
+                .select_from(AgentRun)
+                .where(
+                    AgentRun.conversation_id == Conversation.id,
+                    AgentRun.source.in_(INVOCATION_CONVERSATION_SOURCES),
+                )
+            ),
+            ~exists(
+                select(1)
+                .select_from(AgentRunRequest)
+                .where(
+                    AgentRunRequest.conversation_thread_id == Conversation.thread_id,
+                    AgentRunRequest.source.in_(INVOCATION_CONVERSATION_SOURCES),
+                )
+            ),
         ]
 
     def _build_message_search_snippet(self, content: str, query: str) -> str:
@@ -315,6 +369,7 @@ class ConversationRepository:
         if agent_id:
             base_conditions.append(Conversation.agent_id == agent_id)
         base_conditions.extend(self._exclude_source_conditions(exclude_sources))
+        base_conditions.extend(self._exclude_internal_conversation_conditions())
 
         # First, get all pinned conversations (no limit)
         pinned_query = (
@@ -375,6 +430,7 @@ class ConversationRepository:
         if agent_id:
             conversation_conditions.append(Conversation.agent_id == agent_id)
         conversation_conditions.extend(self._exclude_source_conditions(exclude_sources))
+        conversation_conditions.extend(self._exclude_internal_conversation_conditions())
 
         message_conditions = self._message_search_conditions(normalized_query)
         summary = (

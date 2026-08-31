@@ -121,6 +121,13 @@ const mainList = computed(() => {
   })
 
   items.push({
+    name: 'Agent 评测',
+    path: '/evaluation',
+    icon: ClipboardList,
+    activeIcon: ClipboardList
+  })
+
+  items.push({
     name: '工作区',
     path: '/workspace',
     icon: FolderKanban,

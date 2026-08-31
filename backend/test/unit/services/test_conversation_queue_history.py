@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 import pytest
 import pytest_asyncio
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from yuxi.services.conversation_service import get_thread_history_view
 from yuxi.storage.postgres.models_business import AgentRun, Base, Conversation, Message
@@ -119,3 +120,25 @@ async def test_queue_history_keeps_each_request_with_its_reply(session):
         "B",
         "B reply",
     ]
+
+
+async def test_internal_conversation_history_is_not_user_visible(session):
+    session.add(
+        Conversation(
+            thread_id="internal-thread",
+            uid="user-1",
+            agent_id="main",
+            status="active",
+            extra_metadata={"visibility": "internal", "source": "agent_evaluation"},
+        )
+    )
+    await session.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_thread_history_view(
+            thread_id="internal-thread",
+            current_uid="user-1",
+            db=session,
+        )
+
+    assert exc_info.value.status_code == 404

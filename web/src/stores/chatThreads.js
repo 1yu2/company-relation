@@ -4,6 +4,15 @@ import { threadApi } from '@/apis'
 import { handleChatError } from '@/utils/errorHandler'
 
 const PAGE_SIZE = 100
+const INTERNAL_CONVERSATION_SOURCES = new Set(['agent_call', 'agent_evaluation'])
+
+const isUserVisibleThread = (thread) => {
+  const metadata = thread?.metadata || {}
+  return (
+    metadata.visibility !== 'internal' &&
+    !INTERNAL_CONVERSATION_SOURCES.has(metadata.source)
+  )
+}
 
 export const useChatThreadsStore = defineStore('chatThreads', () => {
   const threads = ref([])
@@ -22,6 +31,13 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
 
   const upsertThread = (thread) => {
     if (!thread?.id) return
+    if (!isUserVisibleThread(thread)) {
+      threads.value = threads.value.filter((item) => item.id !== thread.id)
+      if (currentThreadId.value === thread.id) {
+        currentThreadId.value = null
+      }
+      return
+    }
     const index = threads.value.findIndex((item) => item.id === thread.id)
     if (index >= 0) {
       threads.value[index] = { ...threads.value[index], ...thread }
@@ -33,7 +49,7 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
   const loadThreads = async (agentId = null) => {
     try {
       const fetchedThreads = await threadApi.getThreads(agentId, PAGE_SIZE, 0)
-      threads.value = fetchedThreads || []
+      threads.value = (fetchedThreads || []).filter(isUserVisibleThread)
       hasMoreThreads.value = Boolean(fetchedThreads && fetchedThreads.length >= PAGE_SIZE)
       if (
         currentThreadId.value &&
@@ -58,7 +74,9 @@ export const useChatThreadsStore = defineStore('chatThreads', () => {
       if (fetchedThreads && fetchedThreads.length > 0) {
         // 后端分页会重复返回置顶项，这里只追加列表中尚不存在的线程。
         const existingIds = new Set(threads.value.map((thread) => thread.id))
-        const newThreads = fetchedThreads.filter((thread) => !existingIds.has(thread.id))
+        const newThreads = fetchedThreads
+          .filter(isUserVisibleThread)
+          .filter((thread) => !existingIds.has(thread.id))
         threads.value = [...threads.value, ...newThreads]
         hasMoreThreads.value = newThreads.length >= PAGE_SIZE
       } else {
