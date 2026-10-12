@@ -846,15 +846,26 @@ const statusClass = (status) => {
 }
 
 .pipeline-icon {
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
   width: 34px;
   height: 34px;
   border-radius: 9px;
   background: var(--main-50);
   color: var(--main-700);
+  line-height: 0;
+
+  svg {
+    display: block;
+    width: 18px;
+    height: 18px;
+    margin: 0;
+  }
 }
 
 .pipeline-step strong,
-.pipeline-step span {
+.pipeline-step div span {
   display: block;
 }
 

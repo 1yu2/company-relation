@@ -3,11 +3,15 @@ from pathlib import Path
 
 import aiofiles
 import yaml
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from yuxi import config, get_version
 from yuxi.storage.postgres.models_business import User
+from yuxi.storage.postgres.manager import pg_manager
+from yuxi.services.run_queue_service import WORKER_HEARTBEAT_KEY, get_redis_client
+from sqlalchemy import text
 from yuxi.utils.logging_config import logger
 
 from server.utils.auth_middleware import get_admin_user, get_db, get_required_user
@@ -23,6 +27,34 @@ system = APIRouter(prefix="/system", tags=["system"])
 async def health_check():
     """系统健康检查接口（公开接口）"""
     return {"status": "ok", "message": "服务正常运行", "version": get_version()}
+
+
+@system.get("/ready")
+async def readiness_check():
+    """检查普通聊天所需的 PostgreSQL、Redis 和 worker 消费能力。"""
+    checks: dict[str, str] = {}
+    try:
+        async with pg_manager.get_async_session_context() as db:
+            await db.execute(text("SELECT 1"))
+        checks["postgres"] = "ok"
+    except Exception:
+        checks["postgres"] = "unavailable"
+
+    try:
+        redis = await get_redis_client()
+        await redis.ping()
+        checks["redis"] = "ok"
+        checks["worker"] = "ok" if await redis.get(WORKER_HEARTBEAT_KEY) else "unavailable"
+    except Exception:
+        checks["redis"] = "unavailable"
+        checks["worker"] = "unavailable"
+
+    ready = all(value == "ok" for value in checks.values())
+    payload = {"status": "ready" if ready else "not_ready", "checks": checks}
+    return JSONResponse(
+        status_code=status.HTTP_200_OK if ready else status.HTTP_503_SERVICE_UNAVAILABLE,
+        content=payload,
+    )
 
 
 @system.get("/discovery")

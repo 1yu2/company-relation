@@ -6,14 +6,14 @@ import asyncio
 import hashlib
 import json
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from yuxi.company_due_diligence.entity_resolution import EntityResolutionService, entity_resolution_service
 from yuxi.company_due_diligence.evidence.indexer import EvidenceIndexUnavailableError
 from yuxi.company_due_diligence.evidence.service import EvidenceIndexService, evidence_index_service
 from yuxi.company_due_diligence.graph.repository import GraphUnavailableError
 from yuxi.company_due_diligence.graph.service import GraphProjectionService, graph_projection_service
-from yuxi.company_due_diligence.models import ResolutionStatus
+from yuxi.company_due_diligence.models import ResolutionStatus, ResolvedCompany, Source
 from yuxi.company_due_diligence.report.graph import DueDiligenceReportWorkflow, _assemble_report
 from yuxi.company_due_diligence.report.models import (
     DueDiligenceReport,
@@ -29,12 +29,17 @@ from yuxi.company_due_diligence.report.renderers import (
     render_report_markdown,
 )
 from yuxi.config import config
+from yuxi.repositories.task_repository import TaskRepository
+from yuxi.services.run_queue_service import get_arq_pool
 from yuxi.services.task_service import TaskContext, Tasker
 from yuxi.storage.minio import MinIOClient, StorageError, get_minio_client
+from yuxi.utils.datetime_utils import utc_now_naive
 
 REPORT_TASK_TYPE = "company_due_diligence_report"
 REPORT_SECTION_RETRY_TASK_TYPE = "company_due_diligence_report_section_retry"
 REPORT_BUCKET = os.getenv("COMPANY_DD_REPORT_BUCKET", "company-due-diligence")
+REPORT_RECOVERY_STALE_SECONDS = 15 * 60
+REPORT_MAX_RECOVERY_ATTEMPTS = 1
 
 
 class ReportNotFoundError(LookupError):
@@ -43,6 +48,32 @@ class ReportNotFoundError(LookupError):
 
 class ReportValidationError(ValueError):
     """表示报告企业身份或状态不满足操作前提。"""
+
+
+class ReportDispatchError(RuntimeError):
+    """表示报告任务已持久化，但未能确认投递。"""
+
+
+class ReportTaskContext:
+    """通过 PostgreSQL 更新报告进度并读取跨进程取消信号。"""
+
+    def __init__(self, task_id: str, repository: TaskRepository) -> None:
+        self.task_id = task_id
+        self._repository = repository
+
+    async def set_progress(self, progress: float, message: str) -> None:
+        """持久化报告进度。"""
+        await self._repository.update_status(
+            self.task_id,
+            expected_status="running",
+            values={"progress": progress, "message": message},
+        )
+
+    async def raise_if_cancelled(self) -> None:
+        """在章节边界检查其他进程写入的取消请求。"""
+        record = await self._repository.get_by_id(self.task_id)
+        if record is None or record.cancel_requested:
+            raise asyncio.CancelledError("报告任务已取消")
 
 
 class DueDiligenceReportService:
@@ -67,16 +98,68 @@ class DueDiligenceReportService:
         self._report_locks: dict[str, asyncio.Lock] = {}
 
     async def create(self, request: DueDiligenceReportRequest, tasker: Tasker):
-        """先解析并锁定唯一企业身份，再提交报告后台任务。"""
+        """先持久化报告参数，再投递独立 worker 执行。"""
         resolution = await self._resolver.resolve(request.company_ref)
         if resolution.status != ResolutionStatus.RESOLVED or resolution.company is None:
             raise ReportValidationError("企业无法唯一解析，未创建报告任务")
         versions = await self._lock_versions(request)
         company = resolution.company
         created_at = datetime.now(UTC)
+        task = await tasker.create_persisted(
+            name=f"企业尽调报告：{company.name}",
+            task_type=REPORT_TASK_TYPE,
+            payload={
+                "company": company.model_dump(mode="json"),
+                "request": request.model_dump(mode="json"),
+                "versions": versions.model_dump(mode="json"),
+                "identity_sources": [source.model_dump(mode="json") for source in resolution.sources],
+                "created_at": created_at.isoformat(),
+            },
+        )
+        try:
+            await self._enqueue_report(task.id)
+        except Exception as exc:
+            await TaskRepository().update_status(
+                task.id,
+                expected_status="pending",
+                values={
+                    "status": "failed",
+                    "message": "报告任务投递失败",
+                    "error": "报告执行队列不可用",
+                    "completed_at": utc_now_naive(),
+                },
+            )
+            raise ReportDispatchError("报告执行队列不可用") from exc
+        return task
 
-        async def run_report(context: TaskContext):
-            """执行单个完整报告任务并发布双格式产物。"""
+    async def execute_task(self, task_id: str) -> None:
+        """认领持久化报告任务并发布产物；重复投递只执行一次。"""
+        repository = TaskRepository()
+        record = await repository.claim_pending(task_id, REPORT_TASK_TYPE)
+        if record is None:
+            pending = await repository.get_by_id(task_id)
+            if (
+                pending
+                and pending.type == REPORT_TASK_TYPE
+                and pending.status == "pending"
+                and pending.cancel_requested
+            ):
+                await repository.update_status(
+                    task_id,
+                    expected_status="pending",
+                    values={"status": "cancelled", "message": "报告任务已取消", "completed_at": utc_now_naive()},
+                )
+            return
+
+        context = ReportTaskContext(task_id, repository)
+        try:
+            payload = record.payload
+            request = DueDiligenceReportRequest.model_validate(payload["request"])
+            company = ResolvedCompany.model_validate(payload["company"])
+            versions = ReportVersions.model_validate(payload["versions"])
+            sources = [Source.model_validate(source) for source in payload["identity_sources"]]
+            created_at = datetime.fromisoformat(payload["created_at"])
+            await context.raise_if_cancelled()
             await context.set_progress(5, "企业身份和派生版本已锁定")
 
             async def report_progress(progress: float, message: str) -> None:
@@ -85,10 +168,10 @@ class DueDiligenceReportService:
                 await context.set_progress(progress, message)
 
             report = await self._workflow.run(
-                report_id=context.task_id,
+                report_id=task_id,
                 request=request,
                 company=company,
-                identity_sources=resolution.sources,
+                identity_sources=sources,
                 versions=versions,
                 created_at=created_at,
                 progress=report_progress,
@@ -96,20 +179,85 @@ class DueDiligenceReportService:
             await context.raise_if_cancelled()
             await context.set_progress(92, "开始发布 JSON 和 Markdown 报告")
             report = await self._publish_report(report)
-            result = report.model_dump(mode="json")
-            await context.set_result(result)
-            return result
+            await context.raise_if_cancelled()
+            await repository.update_status(
+                task_id,
+                expected_status="running",
+                values={
+                    "status": "success",
+                    "progress": 100.0,
+                    "message": "任务已完成",
+                    "result": report.model_dump(mode="json"),
+                    "completed_at": utc_now_naive(),
+                },
+            )
+        except asyncio.CancelledError:
+            current = await repository.get_by_id(task_id)
+            cancelled = current is not None and current.cancel_requested
+            await repository.update_status(
+                task_id,
+                expected_status="running",
+                values={
+                    "status": "cancelled" if cancelled else "failed",
+                    "progress": 100.0,
+                    "message": "报告任务已取消" if cancelled else "报告任务执行中断",
+                    "completed_at": utc_now_naive(),
+                },
+            )
+            raise
+        except Exception as exc:
+            await repository.update_status(
+                task_id,
+                expected_status="running",
+                values={
+                    "status": "failed",
+                    "progress": 100.0,
+                    "message": "报告任务执行失败",
+                    "error": str(exc),
+                    "completed_at": utc_now_naive(),
+                },
+            )
+            raise
 
-        return await tasker.enqueue(
-            name=f"企业尽调报告：{company.name}",
-            task_type=REPORT_TASK_TYPE,
-            payload={
-                "company": company.model_dump(mode="json"),
-                "request": request.model_dump(mode="json"),
-                "versions": versions.model_dump(mode="json"),
-            },
-            coroutine=run_report,
-        )
+    async def recover_pending_tasks(self) -> None:
+        """只恢复明确过期的报告，避免多 worker 启动时误伤活跃任务。"""
+        repository = TaskRepository()
+        records = await repository.list_by_type(REPORT_TASK_TYPE)
+        stale_before = utc_now_naive() - timedelta(seconds=REPORT_RECOVERY_STALE_SECONDS)
+        for record in records:
+            if record.status == "pending":
+                await self._enqueue_report(record.id)
+                continue
+            if record.status != "running" or record.updated_at is None or record.updated_at > stale_before:
+                continue
+
+            payload = dict(record.payload or {})
+            recovery_attempts = int(payload.get("_recovery_attempts", 0) or 0)
+            if recovery_attempts < REPORT_MAX_RECOVERY_ATTEMPTS:
+                payload["_recovery_attempts"] = recovery_attempts + 1
+                claimed = await repository.update_status(
+                    record.id,
+                    expected_status="running",
+                    values={"status": "pending", "payload": payload, "message": "恢复过期报告任务"},
+                )
+                if claimed:
+                    await self._enqueue_report(record.id)
+                continue
+
+            await repository.update_status(
+                record.id,
+                expected_status="running",
+                values={
+                    "status": "failed",
+                    "message": "报告执行器重启，任务超过最大恢复次数",
+                    "completed_at": utc_now_naive(),
+                },
+            )
+
+    async def _enqueue_report(self, task_id: str) -> None:
+        """用稳定 Job ID 投递报告，避免重复入队。"""
+        queue = await get_arq_pool()
+        await queue.enqueue_job("process_due_diligence_report", task_id, _job_id=f"report:{task_id}")
 
     async def generate_inline(
         self,

@@ -15,6 +15,14 @@ import { message } from 'ant-design-vue'
  * @returns {Promise} - 请求结果
  */
 export async function apiRequest(url, options = {}, requiresAuth = true, responseType = 'json') {
+  const method = options.method || 'GET'
+  const requestMethod = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].includes(
+    method
+  )
+    ? method
+    : 'OTHER'
+  let responseStatus = null
+
   try {
     const isFormData = options?.body instanceof FormData
     // 默认请求配置
@@ -38,19 +46,13 @@ export async function apiRequest(url, options = {}, requiresAuth = true, respons
 
     // 发送请求
     const response = await fetch(url, requestOptions)
+    responseStatus = response.status
 
     // 处理API返回的错误
     if (!response.ok) {
       // 尝试解析错误信息
       let errorMessage = `请求失败: ${response.status}, ${response.statusText}`
       let errorData = null
-
-      console.log('API请求失败:', {
-        url,
-        status: response.status,
-        statusText: response.statusText,
-        headers: Object.fromEntries(response.headers.entries())
-      })
 
       try {
         errorData = await response.json()
@@ -62,21 +64,8 @@ export async function apiRequest(url, options = {}, requiresAuth = true, respons
         } else {
           errorMessage = detail || errorData.message || errorMessage
         }
-        console.log('API错误详情:', errorData)
-
-        // 如果是422错误，打印更详细的信息
-        if (response.status === 422) {
-          console.error('422验证错误详情:', {
-            url,
-            requestMethod: requestOptions.method,
-            requestHeaders: requestOptions.headers,
-            requestBody: requestOptions.body,
-            responseData: errorData
-          })
-        }
-      } catch (e) {
+      } catch {
         // 如果无法解析JSON，使用默认错误信息
-        console.log('无法解析错误响应JSON:', e)
       }
 
       // 特殊处理401和403错误
@@ -136,7 +125,7 @@ export async function apiRequest(url, options = {}, requiresAuth = true, respons
     }
   } catch (error) {
     if (error.name !== 'AbortError') {
-      console.error('API请求错误:', error)
+      console.error('API请求错误:', { method: requestMethod, status: responseStatus })
     }
     throw error
   }

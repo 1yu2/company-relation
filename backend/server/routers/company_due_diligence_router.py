@@ -3,10 +3,9 @@
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-
-from server.utils.auth_middleware import get_admin_user
 from yuxi.company_due_diligence.agent.models import CompanyInvestigationRequest, CompanyInvestigationResponse
 from yuxi.company_due_diligence.agent.service import company_due_diligence_agent
+from yuxi.company_due_diligence.entity_resolution import entity_resolution_service
 from yuxi.company_due_diligence.evidence.indexer import EvidenceIndexUnavailableError
 from yuxi.company_due_diligence.evidence.models import (
     EvidenceIndexInfo,
@@ -16,7 +15,6 @@ from yuxi.company_due_diligence.evidence.models import (
 )
 from yuxi.company_due_diligence.evidence.query_service import evidence_query_service
 from yuxi.company_due_diligence.evidence.service import evidence_index_service
-from yuxi.company_due_diligence.entity_resolution import entity_resolution_service
 from yuxi.company_due_diligence.graph.repository import GraphUnavailableError
 from yuxi.company_due_diligence.graph.schema import GraphProjectionInfo, GraphProjectionRequest
 from yuxi.company_due_diligence.graph.service import graph_projection_service
@@ -32,6 +30,7 @@ from yuxi.company_due_diligence.qa.models import CompanyQuestionRequest, Company
 from yuxi.company_due_diligence.qa.service import company_question_service
 from yuxi.company_due_diligence.report.models import DueDiligenceReportRequest, ReportFormat, ReportSection
 from yuxi.company_due_diligence.report.service import (
+    ReportDispatchError,
     ReportNotFoundError,
     ReportValidationError,
     due_diligence_report_service,
@@ -39,6 +38,8 @@ from yuxi.company_due_diligence.report.service import (
 from yuxi.company_due_diligence.structured_query_service import structured_query_service
 from yuxi.services.task_service import tasker
 from yuxi.storage.postgres.models_business import User
+
+from server.utils.auth_middleware import get_admin_user
 
 company_due_diligence_router = APIRouter(
     prefix="/company-due-diligence",
@@ -118,6 +119,8 @@ async def create_due_diligence_report(
         task = await due_diligence_report_service.create(request, tasker)
     except ReportValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ReportDispatchError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"report_id": task.id, "task_id": task.id, "status": "queued"}
 
 

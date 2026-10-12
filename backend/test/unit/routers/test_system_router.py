@@ -7,7 +7,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from server.routers.system_router import system
+from server.routers.system_router import readiness_check, system
 from server.utils.auth_middleware import get_admin_user
 from yuxi.company_due_diligence.external import external_company_data_service
 from yuxi.company_due_diligence.external.models import (
@@ -16,7 +16,65 @@ from yuxi.company_due_diligence.external.models import (
     ProviderStatus,
 )
 
-pytestmark = pytest.mark.unit
+
+
+@pytest.mark.asyncio
+async def test_readiness_requires_postgres_redis_and_worker(monkeypatch):
+    class SessionContext:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def execute(self, _statement):
+            return None
+
+    class Redis:
+        async def ping(self):
+            return True
+
+        async def get(self, _key):
+            return "1"
+
+    monkeypatch.setattr("server.routers.system_router.pg_manager.get_async_session_context", lambda: SessionContext())
+    monkeypatch.setattr("server.routers.system_router.get_redis_client", lambda: _async_value(Redis()))
+
+    response = await readiness_check()
+
+    assert response.status_code == 200
+    assert response.body == b'{"status":"ready","checks":{"postgres":"ok","redis":"ok","worker":"ok"}}'
+
+
+@pytest.mark.asyncio
+async def test_readiness_returns_503_without_worker_heartbeat(monkeypatch):
+    class Redis:
+        async def ping(self):
+            return True
+
+        async def get(self, _key):
+            return None
+
+    class UnavailableSession:
+        async def __aenter__(self):
+            raise ConnectionError("postgres unavailable")
+
+        async def __aexit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        "server.routers.system_router.pg_manager.get_async_session_context", lambda: UnavailableSession()
+    )
+    monkeypatch.setattr("server.routers.system_router.get_redis_client", lambda: _async_value(Redis()))
+
+    response = await readiness_check()
+
+    assert response.status_code == 503
+    assert response.body == b'{"status":"not_ready","checks":{"postgres":"unavailable","redis":"ok","worker":"unavailable"}}'
+
+
+async def _async_value(value):
+    return value
 
 
 def test_discovery_endpoint_is_public(monkeypatch):

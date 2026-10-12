@@ -56,6 +56,11 @@ async def test_evaluation_chain_compares_vector_and_graph_strategies(company_rel
     assert report["system_metrics"]["concurrency_10"]["graph_rag"]["error_rate"] == 0.0
     assert "no online LLM inference" in report["inputs"]["strategy_implementation"]["graph_rag"]
     assert len(report["measurement_limitations"]) == 4
+    assert report["inputs"]["review_summary"]["manual_review_coverage"] == 0.0
+    quality_contract = report["inputs"]["quality_metric_contract"]
+    assert quality_contract["entity_resolution"]["status"] == "not_measured"
+    assert quality_contract["fact_correctness"]["score"] == "exact_accuracy"
+    assert quality_contract["refusal_correctness"]["denominator"] == "loaded_refusal_questions"
     artifact_report = json.loads((tmp_path / "results" / f"{report['run']['run_id']}.json").read_text())
     assert artifact_report["artifacts"] == report["artifacts"]
 

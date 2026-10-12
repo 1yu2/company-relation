@@ -586,7 +586,7 @@ load_company_context
 - LLM 输出必须通过实体、事实、数值、日期、路径和来源引用检查，无法匹配 `source_id` 的企业事实不得进入最终答案；
 - 后置校验失败时回退模板输出，不以流畅度覆盖正确结构化结果。
 
-短问题应同步响应；耗时较长的专题报告、完整报告和评测使用后台任务与 SSE/轮询进度，复用现有 Tasker 和前端任务模式。
+短问题应同步响应；专题与完整报告使用 PostgreSQL 持久化任务和 ARQ worker 执行，通过任务查询/轮询获取进度。其他后台任务按各自现有执行方式处理。
 
 > 实施状态（2026 年 8 月 11 日）：`POST /api/company-due-diligence/investigations` 已完成企业上下文解析、确定性意图、白名单计划、短链路工具抑制、最多三跳图查询、企业过滤证据检索、报告任务路由、Claim Ledger 和动态 `presentation`；`/query` 保持兼容，管理员部署态 HTTP E2E 已通过。
 
@@ -684,7 +684,7 @@ load_company_context
 
 - 展示主聊天输入输出；
 - 展示工具执行状态和来源；
-- 对异步报告显示 Tasker 进度；
+- 对异步报告显示数据库任务进度；
 - 提供报告 JSON/Markdown 下载；
 - 展示 `needs_context`、`not_found` 和 `source_unavailable` 等明确状态。
 

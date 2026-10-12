@@ -9,11 +9,17 @@ from datetime import datetime
 from typing import Any
 
 from yuxi.repositories.task_repository import TaskRepository
+from yuxi.services.run_queue_service import get_arq_pool
 from yuxi.utils.datetime_utils import coerce_any_to_utc_datetime, utc_isoformat
 from yuxi.utils.logging_config import logger
 
 TaskCoroutine = Callable[["TaskContext"], Awaitable[Any]]
 TERMINAL_STATUSES = {"success", "failed", "cancelled"}
+PERSISTED_TASK_TYPES = {
+    "company_due_diligence_report",
+    "company_due_diligence_graph_projection",
+    "company_due_diligence_evidence_index",
+}
 # 纯进度推进时，进度增量小于该阈值则只更新内存、不落库（前端读内存，不受影响）
 PROGRESS_PERSIST_DELTA = 2.0
 # 内存与数据库各保留最近多少条终态任务，超出的自动清理
@@ -78,6 +84,32 @@ class Task:
             error=data.get("error"),
             cancel_requested=data.get("cancel_requested", False),
         )
+
+
+class PersistedTaskContext:
+    """为 ARQ 持久化任务提供数据库状态和取消检查。"""
+
+    def __init__(self, task_id: str, repository: TaskRepository, payload: dict[str, Any]):
+        self.task_id = task_id
+        self._repository = repository
+        self.payload = payload
+
+    async def set_progress(self, progress: float, message: str | None = None) -> None:
+        """更新持久化任务进度。"""
+        values: dict[str, Any] = {"progress": max(0.0, min(progress, 100.0))}
+        if message is not None:
+            values["message"] = message
+        await self._repository.update_status(self.task_id, expected_status="running", values=values)
+
+    async def set_result(self, result: Any) -> None:
+        """保存持久化任务结果。"""
+        await self._repository.update_status(self.task_id, expected_status="running", values={"result": result})
+
+    async def raise_if_cancelled(self) -> None:
+        """在阶段边界读取跨进程取消状态。"""
+        record = await self._repository.get_by_id(self.task_id)
+        if record is None or record.cancel_requested:
+            raise asyncio.CancelledError("任务已取消")
 
 
 class TaskContext:
@@ -172,6 +204,35 @@ class Tasker:
         logger.info("Enqueued task {} ({})", task_id, name)
         return task
 
+    async def enqueue_persisted_arq(
+        self,
+        *,
+        name: str,
+        task_type: str,
+        payload: dict[str, Any],
+        job_name: str,
+        job_id: str,
+    ) -> tuple[Task, bool]:
+        """创建持久化任务并投递稳定 ARQ job。"""
+        if task_type not in PERSISTED_TASK_TYPES:
+            raise ValueError(f"不支持的持久化任务类型: {task_type}")
+        for record in await self._repo.list_by_type(task_type):
+            if record.status in {"pending", "running"} and all(
+                record.payload.get(key) == value for key, value in payload.items() if key.endswith("_key")
+            ):
+                return Task.from_dict(record.to_dict()), False
+        task = await self.create_persisted(name=name, task_type=task_type, payload=payload)
+        queue = await get_arq_pool()
+        await queue.enqueue_job(job_name, task.id, _job_id=job_id)
+        return task, True
+
+    async def create_persisted(self, *, name: str, task_type: str, payload: dict[str, Any]) -> Task:
+        """创建由独立队列消费的任务，不放入当前进程的内存队列。"""
+        if task_type not in PERSISTED_TASK_TYPES:
+            raise ValueError(f"不支持的持久化任务类型: {task_type}")
+        record = await self._repo.create_task(name=name, task_type=task_type, payload=payload)
+        return Task.from_dict(record.to_dict())
+
     async def find_task_by_payload(
         self,
         *,
@@ -234,6 +295,9 @@ class Tasker:
     async def list_tasks(self, status: str | None = None, limit: int = 100) -> dict[str, Any]:
         async with self._lock:
             all_tasks = list(self._tasks.values())
+        for task_type in PERSISTED_TASK_TYPES:
+            records = await self._repo.list_by_type(task_type)
+            all_tasks.extend(Task.from_dict(record.to_dict()) for record in records)
 
         status_counter = Counter(task.status for task in all_tasks)
         type_counter = Counter(task.type for task in all_tasks)
@@ -260,13 +324,19 @@ class Tasker:
     async def get_task(self, task_id: str) -> dict[str, Any] | None:
         async with self._lock:
             task = self._tasks.get(task_id)
-        return task.to_dict() if task else None
+        if task:
+            return task.to_dict()
+        record = await self._repo.get_by_id(task_id)
+        return record.to_dict() if record and record.type in PERSISTED_TASK_TYPES else None
 
     async def cancel_task(self, task_id: str) -> bool:
         async with self._lock:
             task = self._tasks.get(task_id)
             if not task:
-                return False
+                record = await self._repo.get_by_id(task_id)
+                if record is None or record.type not in PERSISTED_TASK_TYPES:
+                    return False
+                return await self._repo.request_cancel(task_id)
             if task.status in TERMINAL_STATUSES:
                 return False
             task.cancel_requested = True
@@ -279,7 +349,10 @@ class Tasker:
         """Delete a task by id. Returns True if deleted, False if not found."""
         async with self._lock:
             if task_id not in self._tasks:
-                return False
+                record = await self._repo.get_by_id(task_id)
+                if record is None or record.type not in PERSISTED_TASK_TYPES:
+                    return False
+                return await self._repo.delete(task_id)
             del self._tasks[task_id]
             self._last_persisted_progress.pop(task_id, None)
         await self._repo.delete(task_id)
@@ -475,6 +548,8 @@ class Tasker:
         interrupted = 0
         for record in records:
             task = Task.from_dict(record.to_dict())
+            if task.type in PERSISTED_TASK_TYPES:
+                continue
             if task.status not in TERMINAL_STATUSES:
                 # 进程重启后内存队列已丢失，无法续跑，统一标记为失败
                 task.message = "服务重启时任务中断" if task.status == "running" else "服务重启时任务未继续执行"

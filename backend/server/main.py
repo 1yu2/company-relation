@@ -1,4 +1,5 @@
 import asyncio
+import ipaddress
 import os
 import sys
 
@@ -11,9 +12,6 @@ if sys.platform == "win32":
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-import time
-from collections import defaultdict, deque
-
 import uvicorn
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,6 +22,7 @@ from server.routers import router
 from server.utils.lifespan import lifespan
 from server.utils.common_utils import setup_logging
 from server.utils.access_log_middleware import AccessLogMiddleware
+from yuxi.storage.redis import get_async_redis_client
 
 # 设置日志配置
 setup_logging()
@@ -35,9 +34,62 @@ DEFAULT_DEVELOPMENT_CORS_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5
 EXPLICIT_CORS_METHODS = ("DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT")
 EXPLICIT_CORS_HEADERS = ("Accept", "Authorization", "Content-Type", "Last-Event-ID", "X-Requested-With")
 
-# In-memory login attempt tracker to reduce brute-force exposure per worker
-_login_attempts: defaultdict[str, deque[float]] = defaultdict(deque)
-_attempt_lock = asyncio.Lock()
+# Redis key contains only the client address and expires with the rate window.
+LOGIN_RATE_LIMIT_KEY_PREFIX = "security:login-rate:"
+
+
+def _trusted_proxy_networks() -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+    configured = os.getenv("YUXI_TRUSTED_PROXY_NETWORKS", "")
+    networks = []
+    for value in configured.split(","):
+        value = value.strip()
+        if not value:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(value, strict=False))
+        except ValueError as exc:
+            raise RuntimeError(f"Invalid YUXI_TRUSTED_PROXY_NETWORKS entry: {value}") from exc
+    return tuple(networks)
+
+
+def _extract_client_ip(request: Request) -> str:
+    peer = request.client.host if request.client else "unknown"
+    try:
+        peer_address = ipaddress.ip_address(peer)
+    except ValueError:
+        return peer
+
+    if any(peer_address in network for network in _trusted_proxy_networks()):
+        forwarded_for = request.headers.get("x-forwarded-for")
+        if forwarded_for:
+            for address in reversed([item.strip() for item in forwarded_for.split(",") if item.strip()]):
+                try:
+                    ipaddress.ip_address(address)
+                except ValueError:
+                    continue
+                return address
+
+    return peer
+
+
+async def _increment_login_attempt(client_ip: str) -> int:
+    redis = await get_async_redis_client()
+    key = f"{LOGIN_RATE_LIMIT_KEY_PREFIX}{client_ip}"
+    count = await redis.incr(key)
+    if count == 1:
+        await redis.expire(key, RATE_LIMIT_WINDOW_SECONDS)
+    return int(count)
+
+
+async def _login_retry_after(client_ip: str) -> int:
+    redis = await get_async_redis_client()
+    ttl = await redis.ttl(f"{LOGIN_RATE_LIMIT_KEY_PREFIX}{client_ip}")
+    return int(max(1, ttl if ttl > 0 else RATE_LIMIT_WINDOW_SECONDS))
+
+
+async def _clear_login_attempts(client_ip: str) -> None:
+    redis = await get_async_redis_client()
+    await redis.delete(f"{LOGIN_RATE_LIMIT_KEY_PREFIX}{client_ip}")
 
 
 def _parse_cors_origins() -> list[str]:
@@ -83,49 +135,40 @@ app.add_middleware(
 )
 
 
-def _extract_client_ip(request: Request) -> str:
-    forwarded_for = request.headers.get("x-forwarded-for")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-    if request.client:
-        return request.client.host
-    return "unknown"
-
-
 class LoginRateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         normalized_path = request.url.path.rstrip("/") or "/"
         request_signature = (normalized_path, request.method.upper())
+        if request_signature not in RATE_LIMIT_ENDPOINTS:
+            return await call_next(request)
 
-        if request_signature in RATE_LIMIT_ENDPOINTS:
-            client_ip = _extract_client_ip(request)
-            now = time.monotonic()
+        client_ip = _extract_client_ip(request)
+        try:
+            attempt_count = await _increment_login_attempt(client_ip)
+        except Exception:
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={"detail": "登录服务暂时不可用，请稍后重试"},
+            )
 
-            async with _attempt_lock:
-                attempt_history = _login_attempts[client_ip]
+        if attempt_count > RATE_LIMIT_MAX_ATTEMPTS:
+            try:
+                retry_after = await _login_retry_after(client_ip)
+            except Exception:
+                retry_after = RATE_LIMIT_WINDOW_SECONDS
+            return JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content={"detail": "登录尝试过于频繁，请稍后再试"},
+                headers={"Retry-After": str(retry_after)},
+            )
 
-                while attempt_history and now - attempt_history[0] > RATE_LIMIT_WINDOW_SECONDS:
-                    attempt_history.popleft()
-
-                if len(attempt_history) >= RATE_LIMIT_MAX_ATTEMPTS:
-                    retry_after = int(max(1, RATE_LIMIT_WINDOW_SECONDS - (now - attempt_history[0])))
-                    return JSONResponse(
-                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                        content={"detail": "登录尝试过于频繁，请稍后再试"},
-                        headers={"Retry-After": str(retry_after)},
-                    )
-
-                attempt_history.append(now)
-
-            response = await call_next(request)
-
-            if response.status_code < 400:
-                async with _attempt_lock:
-                    _login_attempts.pop(client_ip, None)
-
-            return response
-
-        return await call_next(request)
+        response = await call_next(request)
+        if response.status_code < 400:
+            try:
+                await _clear_login_attempts(client_ip)
+            except Exception:
+                pass
+        return response
 
 
 # 添加访问日志中间件（记录请求处理时间）

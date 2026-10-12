@@ -7,6 +7,7 @@ import json
 import time
 from dataclasses import dataclass, field
 
+from arq import func
 from sqlalchemy import select, update
 from sqlalchemy.exc import OperationalError
 from yuxi.agents.mcp.service import ensure_builtin_mcp_servers_in_db
@@ -21,8 +22,10 @@ from yuxi.services.agent_request_queue_service import (
 from yuxi.services.chat_service import stream_agent_chat, stream_agent_resume
 from yuxi.services.input_message_service import restore_chat_input_message
 from yuxi.services.run_queue_service import (
+    WORKER_HEARTBEAT_KEY,
     append_run_stream_event,
     clear_cancel_signal,
+    get_redis_client,
     has_cancel_signal,
     wait_for_cancel_signal,
 )
@@ -35,7 +38,35 @@ from yuxi.utils.thread_utils import extract_thread_id
 LOADING_FLUSH_INTERVAL_MS = 100
 LOADING_FLUSH_MAX_CHARS = 512
 RUN_CANCEL_POLL_SECONDS = 0.2
+WORKER_HEARTBEAT_TTL_SECONDS = 30
+WORKER_HEARTBEAT_INTERVAL_SECONDS = 10
 SUPPORTED_RUN_TYPES = {"chat", "resume", "subagent"}
+
+
+_heartbeat_task: asyncio.Task | None = None
+
+
+async def _worker_heartbeat_loop() -> None:
+    """定期写入短 TTL 心跳，供 API readiness 判断 worker 是否可消费。"""
+    redis = await get_redis_client()
+    while True:
+        await redis.set(WORKER_HEARTBEAT_KEY, "1", ex=WORKER_HEARTBEAT_TTL_SECONDS)
+        await asyncio.sleep(WORKER_HEARTBEAT_INTERVAL_SECONDS)
+
+
+async def _start_worker_heartbeat() -> None:
+    global _heartbeat_task
+    if _heartbeat_task is None:
+        _heartbeat_task = asyncio.create_task(_worker_heartbeat_loop(), name="worker-heartbeat")
+
+
+async def _stop_worker_heartbeat() -> None:
+    global _heartbeat_task
+    if _heartbeat_task is None:
+        return
+    _heartbeat_task.cancel()
+    await asyncio.gather(_heartbeat_task, return_exceptions=True)
+    _heartbeat_task = None
 
 
 class RetryableRunError(Exception):
@@ -643,11 +674,36 @@ async def _load_input_message(message_id: int | None) -> Message | None:
         return result.scalar_one_or_none()
 
 
+async def process_due_diligence_report(ctx, task_id: str) -> None:
+    """由 ARQ 独立执行已持久化的企业尽调报告。"""
+    del ctx
+    from yuxi.company_due_diligence.report.service import due_diligence_report_service
+
+    await due_diligence_report_service.execute_task(task_id)
+
+
+async def process_due_diligence_graph_projection(ctx, task_id: str) -> None:
+    """由 ARQ 独立执行持久化 Neo4j 投影任务。"""
+    del ctx
+    from yuxi.company_due_diligence.graph.service import graph_projection_service
+
+    await graph_projection_service.execute_task(task_id)
+
+
+async def process_due_diligence_evidence_index(ctx, task_id: str) -> None:
+    """由 ARQ 独立执行持久化文本证据索引任务。"""
+    del ctx
+    from yuxi.company_due_diligence.evidence.service import evidence_index_service
+
+    await evidence_index_service.execute_task(task_id)
+
+
 async def _worker_startup(ctx):
     """初始化 worker 依赖。"""
 
     pg_manager.initialize()
     await pg_manager.create_business_tables()
+    await pg_manager.run_versioned_migrations()
     await pg_manager.ensure_business_schema()
     await ensure_builtin_mcp_servers_in_db()
     async with pg_manager.get_async_session_context() as session:
@@ -656,18 +712,32 @@ async def _worker_startup(ctx):
 
         await ensure_options_in_db(session)
     sys_config.start_runtime_sync()
+    await _start_worker_heartbeat()
     await recover_pending_dispatches()
+    from yuxi.company_due_diligence.evidence.service import evidence_index_service
+    from yuxi.company_due_diligence.graph.service import graph_projection_service
+    from yuxi.company_due_diligence.report.service import due_diligence_report_service
+
+    await due_diligence_report_service.recover_pending_tasks()
+    await graph_projection_service.recover_pending_tasks()
+    await evidence_index_service.recover_pending_tasks()
 
 
 async def _worker_shutdown(ctx):
     """关闭 worker 数据库连接。"""
 
     del ctx
+    await _stop_worker_heartbeat()
     await pg_manager.close()
 
 
 class WorkerSettings:
-    functions = [process_agent_run]
+    functions = [
+        process_agent_run,
+        func(process_due_diligence_report, timeout=6 * 60 * 60, max_tries=1),
+        func(process_due_diligence_graph_projection, timeout=6 * 60 * 60, max_tries=1),
+        func(process_due_diligence_evidence_index, timeout=6 * 60 * 60, max_tries=1),
+    ]
     max_tries = 2
     retry_jobs = True
     job_timeout = 3600

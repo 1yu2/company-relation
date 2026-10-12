@@ -503,6 +503,9 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     async def fake_create_business_tables():
         calls.append("create_business_tables")
 
+    async def fake_run_versioned_migrations():
+        calls.append("run_versioned_migrations")
+
     async def fake_ensure_business_schema():
         calls.append("ensure_business_schema")
 
@@ -523,23 +526,51 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     async def fake_recover_pending_dispatches():
         calls.append("recover_pending_dispatches")
 
+    async def fake_ensure_options_in_db(session):
+        del session
+        calls.append("ensure_options_in_db")
+
+    async def fake_recover_reports():
+        calls.append("recover_reports")
+
+    async def fake_recover_graph():
+        calls.append("recover_graph")
+
+    async def fake_recover_evidence():
+        calls.append("recover_evidence")
+
     monkeypatch.setattr(run_worker.pg_manager, "initialize", fake_initialize)
     monkeypatch.setattr(run_worker.pg_manager, "create_business_tables", fake_create_business_tables)
+    monkeypatch.setattr(run_worker.pg_manager, "run_versioned_migrations", fake_run_versioned_migrations)
     monkeypatch.setattr(run_worker.pg_manager, "ensure_business_schema", fake_ensure_business_schema)
     monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session_ctx)
     monkeypatch.setattr(run_worker, "ensure_builtin_mcp_servers_in_db", fake_ensure_builtin_mcp_servers_in_db)
     monkeypatch.setattr(run_worker, "init_builtin_skills", fake_init_builtin_skills)
     monkeypatch.setattr(run_worker.sys_config, "start_runtime_sync", fake_start_runtime_sync)
     monkeypatch.setattr(run_worker, "recover_pending_dispatches", fake_recover_pending_dispatches)
+    from yuxi.config import options
+    from yuxi.company_due_diligence.evidence.service import evidence_index_service
+    from yuxi.company_due_diligence.graph.service import graph_projection_service
+    from yuxi.company_due_diligence.report.service import due_diligence_report_service
+
+    monkeypatch.setattr(options, "ensure_options_in_db", fake_ensure_options_in_db)
+    monkeypatch.setattr(due_diligence_report_service, "recover_pending_tasks", fake_recover_reports)
+    monkeypatch.setattr(graph_projection_service, "recover_pending_tasks", fake_recover_graph)
+    monkeypatch.setattr(evidence_index_service, "recover_pending_tasks", fake_recover_evidence)
 
     await run_worker._worker_startup({})
 
     assert calls == [
         "initialize",
         "create_business_tables",
+        "run_versioned_migrations",
         "ensure_business_schema",
         "ensure_builtin_mcp_servers_in_db",
         "init_builtin_skills",
+        "ensure_options_in_db",
         "start_runtime_sync",
         "recover_pending_dispatches",
+        "recover_reports",
+        "recover_graph",
+        "recover_evidence",
     ]

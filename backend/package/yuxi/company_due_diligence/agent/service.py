@@ -31,8 +31,8 @@ from yuxi.company_due_diligence.models import (
     Entity,
     EntityType,
     LatencyBreakdown,
-    ResolutionStatus,
     RequestScopeStatus,
+    ResolutionStatus,
     ResolvedCompany,
     SourceStatus,
 )
@@ -41,6 +41,7 @@ from yuxi.company_due_diligence.qa.service import CompanyQuestionService, compan
 from yuxi.company_due_diligence.report.intent import report_request_from_intent
 from yuxi.company_due_diligence.report.service import (
     DueDiligenceReportService,
+    ReportDispatchError,
     ReportValidationError,
     due_diligence_report_service,
 )
@@ -156,7 +157,7 @@ class CompanyDueDiligenceAgent:
         resolution_sources,
         tasker: Tasker | None,
     ) -> CompanyInvestigationResponse:
-        """把专题或完整报告意图提交到现有 Tasker 工作流。"""
+        """把专题或完整报告意图提交到持久化报告任务。"""
         if tasker is None:
             return _failed_response(plan, company, "报告任务执行器不可用。", resolution_latency)
         report_request = report_request_from_intent(
@@ -166,7 +167,7 @@ class CompanyDueDiligenceAgent:
         )
         try:
             task = await self._report_service.create(report_request, tasker)
-        except ReportValidationError as exc:
+        except (ReportValidationError, ReportDispatchError) as exc:
             return _failed_response(plan, company, str(exc), resolution_latency)
         return CompanyInvestigationResponse(
             status=InvestigationStatus.ACCEPTED,

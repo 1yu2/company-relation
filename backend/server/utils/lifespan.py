@@ -26,10 +26,12 @@ async def lifespan(app: FastAPI):
     try:
         pg_manager.initialize()
         await pg_manager.create_tables()
+        await pg_manager.run_versioned_migrations()
         await pg_manager.ensure_business_schema()
         await pg_manager.ensure_knowledge_schema()
     except Exception as e:
         logger.error(f"Failed to initialize database during startup: {e}")
+        raise
 
     # 确保内置 MCP 服务器定义存在于数据库
     try:

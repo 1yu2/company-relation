@@ -79,6 +79,7 @@ docs/vibe
 .cursorrules
 
 /models
+resume/
 
 .taskr/
 web/src/utils/__tests__/

@@ -8,12 +8,13 @@ from psycopg_pool import AsyncConnectionPool
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
-from yuxi.storage.postgres.models_business import AGENT_RUN_TERMINAL_STATUSES
-from yuxi.storage.postgres.models_business import Base as BusinessBase
-from yuxi.storage.postgres.models_knowledge import Base as KnowledgeBase
+
 # Import platform evaluation models so they are registered on BusinessBase.metadata
 # before the existing create_all lifecycle runs.
 from yuxi.storage.postgres import models_evaluation as _models_evaluation  # noqa: F401
+from yuxi.storage.postgres.models_business import AGENT_RUN_TERMINAL_STATUSES
+from yuxi.storage.postgres.models_business import Base as BusinessBase
+from yuxi.storage.postgres.models_knowledge import Base as KnowledgeBase
 from yuxi.utils import logger
 from yuxi.utils.singleton import SingletonMeta
 
@@ -114,13 +115,12 @@ class PostgresManager(metaclass=SingletonMeta):
             await conn.run_sync(BusinessBase.metadata.create_all)
         logger.info("PostgreSQL business tables created/checked")
 
-    async def drop_tables(self):
-        """删除所有表（慎用！）"""
+    async def run_versioned_migrations(self):
+        """执行受数据库锁保护的版本化迁移入口。"""
         self._check_initialized()
-        async with self.async_engine.begin() as conn:
-            await conn.run_sync(BusinessBase.metadata.drop_all)
-            await conn.run_sync(KnowledgeBase.metadata.drop_all)
-        logger.info("PostgreSQL tables dropped")
+        from yuxi.storage.postgres.migrations import run_versioned_migrations
+
+        await run_versioned_migrations(self.async_engine)
 
     async def ensure_knowledge_schema(self):
         """确保知识库 schema 包含所有必要字段"""

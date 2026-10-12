@@ -6,6 +6,28 @@
 
 ## v0.7.2 (current)
 
+- 修复企业尽调长任务跨进程恢复边界：报告、Neo4j 图投影和文本证据索引统一保存可恢复请求参数并由 ARQ worker 按任务 ID 原子认领；启动时补投递 pending，活跃任务不被误判，过期任务按最多一次策略恢复，失败或取消不发布半成品版本。
+
+- 建立 PostgreSQL 版本迁移入口：API 与 worker 启动在 advisory lock 下幂等登记 `yuxi_schema_migrations` baseline，迁移版本可查询；保留历史启动 DDL 兼容路径，后续 schema 变更进入版本入口，数据库初始化失败不再静默继续提供服务。
+
+- 区分 API 存活与发布就绪：保留轻量公开 `/api/system/health`，新增 `/api/system/ready` 检查 PostgreSQL、Redis 和带 TTL 的 worker heartbeat；知识库、图谱和企业 MySQL 等可选能力不阻塞 LITE 就绪。
+
+- 建立只读 Docker 质量门禁 `make verify`：按改动范围运行后端 unit、Ruff、前端 unit、只读 ESLint、build 和 diff 检查；门禁不会自动格式化文件，已有基线失败会明确阻断并报告。
+
+- 明确企业尽调权限边界：当前报告、任务、图投影和文本证据索引由管理员全局共享，普通用户不开放管理 API；暂不新增用户/部门归属或租户隔离。
+
+- 拆分聊天排队请求面板：将队列列表、暂停提示、引导和取消按钮提取为无状态 `QueuedRequestPanel`，继续由 `AgentChatComponent` 持有队列和流式状态；补充空态、暂停、引导和取消前端单测。
+
+- 为前端 Run/SSE 边界增加 JSDoc 状态契约：集中定义 Run、Request、Queue 状态，未知 Run 状态显式失败，并补充状态契约单测。
+
+- 冻结企业关系评测质量口径：明确 source-derived、人工复核和真实模型 E2E 三类证据，补充企业解析、路由、事实正确性、证据支持度、拒答正确性和请求延迟的分母与未测规则；当前确定性基准不再解释为生产 LLM 准确率。
+
+- 修复登录限流跨 API 实例失效和客户端伪造 `X-Forwarded-For` 绕过问题：仅对显式可信代理网段解析转发地址，Redis 以原子计数和 TTL 共享窗口；Redis 不可用时拒绝登录请求并返回 503，超限返回 `Retry-After`。
+
+- 修复前端 API 错误日志泄露认证头、Cookie、请求体和服务端回显的问题：错误诊断只记录标准请求方法与状态码，保留原有错误提示、异常响应与中止请求行为。
+
+- 修复 `make up-lite` 冷启动缺少 AgentRun worker、导致聊天请求无法执行：轻量模式现在连同沙盒 provisioner 启动 worker，保留知识库/图谱/评测禁用边界；移除已无前端消费方的 `VITE_USE_RUNS_API` 配置。
+
 - 新增平台级统一评测闭环：PostgreSQL 保存 Dataset/Version/Task/Experiment/Rollout/Trace/Metric/Failure 事实，支持 Agent/Tool/MCP、RAG、Graph 只读适配、确定性答案/工具/轨迹校验、pass@1/pass@k/pass^k/best@k、管理员 API 游标分页和 `/evaluation` 只读结果页；首轮仅运行无副作用 Fixture，Semantica 因外部元数据不可核验暂不引入。
 
 - 收紧平台评测运行隔离：Agent Call/评测后台线程写入 `visibility=internal`，普通聊天列表、搜索、历史、状态和文件接口不再暴露内部线程；当前评测阶段仅使用 fake/fixture 验证，不执行真实 Agent E2E。
@@ -23,7 +45,7 @@
 - 新增企业尽调 Neo4j 可重建投影：MySQL 游标分批生成 SQLite checksum 快照，按独立版本幂等写入并校验后切换；提供 Tasker 管理接口、统计、删除重建及最多三跳高置信度路径服务。
 - 新增企业尽调文本证据索引：六类 MySQL 文本经去重分块写入版本化 Milvus，并归档至 MinIO；查询强制按企业、类型和日期过滤并校验来源，支持 Tasker、统计、幂等发布和删除重建。
 - 新增企业尽调统一问答：确定性白名单计划组合 MySQL、Neo4j 和 Milvus，支持身份拒答、最多三跳、来源完整性检查和无需 LLM 的引用式模板答案；无激活图投影时明确降级为来源不可用。
-- 新增企业尽调报告任务：十二章节并行聚合并锁定派生版本，复用 Tasker/PostgreSQL 进度与取消，MinIO 输出可校验 JSON/Markdown，支持列表、详情、章节重试和下载。
+- 新增并修复企业尽调报告任务：十二章节聚合并锁定派生版本；专题/完整报告先持久化参数再由 ARQ worker 执行，解决主聊天跨进程提交后无人消费的问题。PostgreSQL 统一读取进度与取消，MinIO 输出可校验 JSON/Markdown；保留列表、详情、章节重试和下载。
 - 收敛企业尽调前端入口：企业问答、关系查询和报告统一由主聊天窗口选择全局“企业尽调智能体”执行，不再保留独立企业尽调页面或侧边栏入口。
 - 完成企业尽调领域智能体升级：新增统一意图、Claim Ledger 和动态 `presentation`，主聊天通过 `investigate_company` 复用 `CompanyDueDiligenceAgent.investigate`；修复领域工具未进入运行时和配置选项、历史 Agent 缺少工具/全局权限、空参数调用等问题。
 - 完成企业尽调全局共享升级：启动时幂等注册并修复唯一全局 Agent，`question` 为必填输入并自动解析企业；增加全局统计和 `needs_context`。真实主聊天 E2E 已验证工具调用成功；当前部署切换到健康模型以解除原供应商 402 余额错误。

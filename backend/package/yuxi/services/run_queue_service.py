@@ -12,6 +12,7 @@ from yuxi.storage.redis import close_async_redis_client, create_arq_redis_pool, 
 from yuxi.utils.logging_config import logger
 
 RUN_CANCEL_KEY_TTL_SECONDS = int(os.getenv("RUN_CANCEL_KEY_TTL_SECONDS", "1800"))
+WORKER_HEARTBEAT_KEY = "yuxi:worker:heartbeat"
 RUN_EVENTS_STREAM_TTL_SECONDS = int(os.getenv("RUN_EVENTS_STREAM_TTL_SECONDS", "7200"))
 RUN_EVENTS_STREAM_MAXLEN = int(os.getenv("RUN_EVENTS_STREAM_MAXLEN", "0"))
 RUN_CANCEL_CHANNEL = os.getenv("RUN_CANCEL_CHANNEL", "run:cancel:ch")

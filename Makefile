@@ -1,5 +1,5 @@
 
-.PHONY: up up-lite down logs lint format seed reset
+.PHONY: up up-lite down logs lint format seed reset verify
 
 PYTEST_ARGS ?=
 BACKEND_PYTHON ?= $(shell cat backend/.python-version)
@@ -31,7 +31,7 @@ up-lite:
 		echo "Error: .env file not found. Please create it from .env.template"; \
 		exit 1; \
 	fi
-	LITE_MODE=true VITE_USE_RUNS_API=false docker compose up -d postgres redis minio api web
+	LITE_MODE=true docker compose up -d postgres redis minio sandbox-provisioner api worker web
 
 logs:
 	@docker logs --tail=50 api-dev
@@ -45,6 +45,9 @@ seed:
 ######################
 # LINTING AND FORMATTING
 ######################
+
+verify:
+	./scripts/verify_docker.sh
 
 format:
 	cd backend && UV_PYTHON=$(BACKEND_PYTHON) uv run ruff format package

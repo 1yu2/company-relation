@@ -169,14 +169,14 @@ docker compose exec api uv run --group test pytest test/e2e -m e2e
 docker compose exec api uv run --group test pytest test
 ```
 
-也可以使用：
+只读 PR 门禁（必须在已启动的 Docker Compose 中执行）：
 
 ```bash
-backend/test/run_tests.sh unit
-backend/test/run_tests.sh integration
-backend/test/run_tests.sh e2e
-backend/test/run_tests.sh all
+make verify
 ```
+
+该命令依次运行后端 unit（排除 slow）、后端 Ruff check/format check、前端 unit、只读 ESLint、前端 build 和 `git diff --check`。`make format` 与 `pnpm run lint` 会自动修改文件，只用于开发修复，不作为门禁命令。真实 HTTP integration 和关键 E2E 由改动范围单独执行；依赖外部模型的测试必须在受控环境运行，不能用全部 skip 代替验收。
+
 
 运行前端单元测试：
 

@@ -8,17 +8,38 @@ import os
 import uuid
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import text
-
 from yuxi.company_due_diligence.mysql import CompanyDueDiligenceMySQL
 from yuxi.company_due_diligence.report.models import ReportSection
+from yuxi.company_due_diligence.report.service import (
+    REPORT_TASK_TYPE,
+    ReportTaskContext,
+    due_diligence_report_service,
+)
+from yuxi.repositories.task_repository import TaskRepository
+from yuxi.services.task_service import Tasker
 from yuxi.storage.minio import get_minio_client
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e]
 
 
+@pytest_asyncio.fixture
+async def report_company():
+    """从只读测试企业库选取可解析主体，并显式校验数据前置条件。"""
+    mysql = CompanyDueDiligenceMySQL()
+    try:
+        async with mysql.connection() as connection:
+            row = (await connection.execute(text("SELECT eid, name FROM t_enterprise ORDER BY eid LIMIT 1"))).first()
+        if row is None:
+            pytest.fail("报告 E2E 需要预置至少一家可解析企业")
+        return row
+    finally:
+        await mysql.close()
+
+
 async def _wait_for_detail(client, headers, path: str) -> dict:
-    """轮询报告详情直到 Tasker 进入终态。"""
+    """轮询报告详情直到持久化任务进入终态。"""
     for _ in range(600):
         response = await client.get(path, headers=headers)
         assert response.status_code == 200, response.text
@@ -112,6 +133,180 @@ async def test_main_chat_can_call_global_company_due_diligence_agent(e2e_client,
                 await e2e_client.post(f"/api/agent/runs/{run_id}/cancel", headers=e2e_headers)
         if thread_id:
             await e2e_client.delete(f"/api/chat/thread/{thread_id}", headers=e2e_headers)
+
+
+async def test_main_chat_report_completes_in_worker_and_can_be_downloaded(e2e_client, e2e_headers, report_company):
+    """主聊天发起的报告须在独立 worker 完成并可下载双格式产物。"""
+    minio = get_minio_client()
+    thread_id = None
+    run_id = None
+    report_id = None
+    try:
+        company_name = report_company.name
+
+        thread_response = await e2e_client.post(
+            "/api/chat/thread",
+            json={
+                "agent_id": "company-due-diligence",
+                "title": f"company-dd-report-e2e-{uuid.uuid4().hex[:8]}",
+                "metadata": {"test": "company-due-diligence-report"},
+            },
+            headers=e2e_headers,
+        )
+        assert thread_response.status_code == 200, thread_response.text
+        thread_id = str(thread_response.json().get("thread_id") or thread_response.json().get("id"))
+
+        run_response = await e2e_client.post(
+            "/api/agent/runs",
+            json={
+                "query": (
+                    f"请调用 investigate_company 工具为{company_name}生成企业基本信息专题报告，"
+                    f"company_name 填写{company_name}，question 明确写生成专题报告。"
+                    "不要只返回企业查询结果；取得报告任务编号后再回复。"
+                ),
+                "agent_slug": "company-due-diligence",
+                "thread_id": thread_id,
+                "tool_approval_mode": "always_trust",
+                "meta": {"request_id": f"company-dd-report-{uuid.uuid4().hex[:16]}"},
+            },
+            headers=e2e_headers,
+        )
+        assert run_response.status_code == 200, run_response.text
+        run_id = str(run_response.json()["run_id"])
+        run = await _wait_for_agent_run(e2e_client, e2e_headers, run_id)
+        assert run["status"] == "completed", run
+
+        history_response = await e2e_client.get(f"/api/chat/thread/{thread_id}/history", headers=e2e_headers)
+        assert history_response.status_code == 200, history_response.text
+        tool_calls = [
+            call
+            for message in history_response.json().get("history") or []
+            for call in message.get("tool_calls") or []
+            if call.get("name") == "investigate_company" and call.get("status") == "success"
+        ]
+        assert tool_calls, "主聊天未成功调用企业尽调工具"
+        report_results = []
+        for call in tool_calls:
+            content = (call.get("tool_call_result") or {}).get("content")
+            if not content:
+                continue
+            try:
+                result = json.loads(content)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(result, dict):
+                report_results.append(result)
+        accepted_reports = [
+            result for result in report_results if result.get("status") == "accepted" and result.get("task")
+        ]
+        assert accepted_reports, "主聊天未创建企业尽调报告任务"
+        report_id = accepted_reports[-1]["task"]["id"]
+
+        detail = await _wait_for_detail(e2e_client, e2e_headers, f"/api/company-due-diligence/reports/{report_id}")
+        assert detail["task"]["status"] == "success"
+        assert detail["report"]["company"]["name"] == company_name
+        for report_format in ("json", "markdown"):
+            response = await e2e_client.get(
+                f"/api/company-due-diligence/reports/{report_id}/download",
+                params={"format": report_format},
+                headers=e2e_headers,
+            )
+            assert response.status_code == 200
+            assert response.content
+    finally:
+        if run_id:
+            run = await e2e_client.get(f"/api/agent/runs/{run_id}", headers=e2e_headers)
+            if run.status_code == 200 and (run.json().get("run") or {}).get("status") not in {
+                "completed",
+                "failed",
+                "cancelled",
+                "interrupted",
+            }:
+                await e2e_client.post(f"/api/agent/runs/{run_id}/cancel", headers=e2e_headers)
+        if thread_id:
+            await e2e_client.delete(f"/api/chat/thread/{thread_id}", headers=e2e_headers)
+        if report_id:
+            await e2e_client.delete(f"/api/tasks/{report_id}", headers=e2e_headers)
+            await minio.adelete_objects_by_prefix(
+                os.getenv("COMPANY_DD_REPORT_BUCKET", "company-due-diligence"),
+                f"reports/{report_id}/",
+            )
+
+
+async def test_admin_report_http_completes_in_worker_and_can_be_downloaded(e2e_client, e2e_headers, report_company):
+    """管理员直接提交的报告应由独立 worker 完成并保留下载接口。"""
+    minio = get_minio_client()
+    report_id = None
+    try:
+        response = await e2e_client.post(
+            "/api/company-due-diligence/reports",
+            json={
+                "company_ref": {"eid": report_company.eid},
+                "sections": ["identity", "business", "data_quality"],
+                "output_formats": ["json", "markdown"],
+            },
+            headers=e2e_headers,
+        )
+        assert response.status_code == 202, response.text
+        report_id = response.json()["report_id"]
+
+        detail = await _wait_for_detail(e2e_client, e2e_headers, f"/api/company-due-diligence/reports/{report_id}")
+        assert detail["task"]["status"] == "success"
+        assert set(detail["report"]["sections"]) == {"identity", "business", "data_quality"}
+
+        reports_response = await e2e_client.get("/api/company-due-diligence/reports", headers=e2e_headers)
+        assert reports_response.status_code == 200, reports_response.text
+        assert any(item["id"] == report_id for item in reports_response.json()["reports"])
+
+        for report_format in ("json", "markdown"):
+            download = await e2e_client.get(
+                f"/api/company-due-diligence/reports/{report_id}/download",
+                params={"format": report_format},
+                headers=e2e_headers,
+            )
+            assert download.status_code == 200
+            assert download.content
+    finally:
+        if report_id:
+            await e2e_client.delete(f"/api/tasks/{report_id}", headers=e2e_headers)
+            await minio.adelete_objects_by_prefix(
+                os.getenv("COMPANY_DD_REPORT_BUCKET", "company-due-diligence"),
+                f"reports/{report_id}/",
+            )
+
+
+async def test_admin_report_cancel_reaches_independent_executor(e2e_client, e2e_headers):
+    """API 取消请求应被另一进程的待执行或运行中报告观察。"""
+    tasker = Tasker()
+    repository = TaskRepository()
+    for running in (False, True):
+        task = await tasker.create_persisted(
+            name="待取消的企业尽调报告",
+            task_type=REPORT_TASK_TYPE,
+            payload={},
+        )
+        try:
+            if running:
+                assert await repository.claim_pending(task.id, REPORT_TASK_TYPE) is not None
+
+            response = await e2e_client.post(
+                f"/api/company-due-diligence/reports/{task.id}/cancel",
+                headers=e2e_headers,
+            )
+            assert response.status_code == 202, response.text
+            assert response.json()["cancel_requested"] is True
+
+            if running:
+                with pytest.raises(asyncio.CancelledError):
+                    await ReportTaskContext(task.id, repository).raise_if_cancelled()
+            else:
+                await due_diligence_report_service.execute_task(task.id)
+
+            detail_response = await e2e_client.get(f"/api/company-due-diligence/reports/{task.id}", headers=e2e_headers)
+            assert detail_response.status_code == 200, detail_response.text
+            assert detail_response.json()["task"]["status"] == ("running" if running else "cancelled")
+        finally:
+            await tasker.delete_task(task.id)
 
 
 async def test_admin_can_complete_investigation_and_report_e2e(e2e_client, e2e_headers):

@@ -37,6 +37,10 @@ class FakeRepo:
     async def list_all(self) -> list[FakeRecord]:
         return self.preset
 
+    async def list_by_type(self, task_type: str) -> list[FakeRecord]:
+        """返回匹配类型的持久化任务。"""
+        return [record for record in self.preset if record.to_dict().get("type") == task_type]
+
 
 async def _make_tasker(
     repo: FakeRepo,

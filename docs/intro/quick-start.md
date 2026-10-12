@@ -83,7 +83,7 @@ docker compose up --build -d
 make up-lite  # macOS or Linux
 ```
 
-轻量模式仅启动核心服务（前端、后端、PostgreSQL、Redis、MinIO），前端侧边栏会自动隐藏知识库和图谱入口。切换回完整模式只需运行 `make up`。
+轻量模式启动前端、API、AgentRun worker、沙盒 provisioner、PostgreSQL、Redis 和 MinIO；配置有效的聊天模型凭据后，普通智能体聊天仍由 worker 执行。新环境不会启动 Milvus、Neo4j、etcd，也不会注册知识库、图谱、知识库/平台评测及企业尽调管理接口，前端会隐藏相关入口。它不会停止此前已运行的完整模式容器。切换回完整模式运行 `make up`。
 :::
 
 ### 步骤四：访问系统
@@ -112,7 +112,10 @@ docker logs api-dev -f
 docker logs web-dev -f
 ```
 
-### 部署故障排查
+### 反向代理与登录限流
+
+生产环境通过反向代理访问 API 时，将代理的 CIDR 写入 `YUXI_TRUSTED_PROXY_NETWORKS`，多个网段用逗号分隔；直连部署保持为空。内置 Nginx 会覆盖 `X-Forwarded-For`，应用只有在 TCP 对端属于该配置网段时才读取转发地址。Redis 不可用时登录会返回 503，避免静默绕过跨实例限流。
+
 
 <details>
 <summary><strong>Docker 镜像拉取失败</strong></summary>

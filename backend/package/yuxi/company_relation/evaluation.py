@@ -14,8 +14,52 @@ from typing import Any
 from yuxi.company_relation.paths import get_default_questions_path, get_default_results_dir
 from yuxi.company_relation.query_service import CompanyRelationQueryResult, CompanyRelationQueryService
 
-
 DEFAULT_EVALUATION_STRATEGIES = ("vector_rag", "graph_rag", "cypher_direct")
+
+QUALITY_METRIC_CONTRACT = {
+    "entity_resolution": {
+        "status": "not_measured",
+        "score": None,
+        "denominator": "reviewed_questions_requiring_entity_resolution",
+        "unavailable": "no reviewed business set",
+        "scope": "企业名称、简称、代码和重名消歧",
+    },
+    "routing": {
+        "status": "not_measured",
+        "score": None,
+        "denominator": "reviewed_questions_with_expected_intent",
+        "unavailable": "deterministic baseline has no production intent router",
+        "scope": "问题意图与查询计划选择",
+    },
+    "fact_correctness": {
+        "status": "measured_source_derived_only",
+        "score": "exact_accuracy",
+        "denominator": "all_loaded_questions; reviewed subset reported separately",
+        "unavailable": "failed or unavailable query is not silently removed",
+        "scope": "实体、事实 ID 和关系路径严格匹配",
+    },
+    "evidence_support": {
+        "status": "measured_source_derived_only",
+        "score": "evidence_alignment_rate",
+        "denominator": "all_items_with_returned_facts",
+        "unavailable": "no expected evidence means not applicable",
+        "scope": "返回事实是否能在检索证据中回查",
+    },
+    "refusal_correctness": {
+        "status": "measured_source_derived_only",
+        "score": "refusal_accuracy",
+        "denominator": "loaded_refusal_questions",
+        "unavailable": "no refusal questions means not applicable",
+        "scope": "应拒答问题的拒答状态和无事实输出",
+    },
+    "request_latency": {
+        "status": "measured_deterministic_only",
+        "score": "latency_ms.p50/p95/max",
+        "denominator": "all completed deterministic requests",
+        "unavailable": "failed request has no latency percentile contribution",
+        "scope": "冻结快照本地查询端到端耗时，不代表生产模型耗时",
+    },
+}
 
 
 class CompanyRelationEvaluationService:
@@ -87,6 +131,7 @@ class CompanyRelationEvaluationService:
                 "question_checksum": question_checksum,
                 "gold_standard_method": "source-derived frozen answers; manual review status is recorded per item",
                 "review_summary": review_summary,
+                "quality_metric_contract": QUALITY_METRIC_CONTRACT,
                 "source_summary": _source_summary(snapshot.sources),
                 "strategy_implementation": {
                     "vector_rag": (
@@ -134,6 +179,7 @@ class CompanyRelationEvaluationService:
         probe_question = next(question["query"] for question in questions if question["category"] == "multi_hop")
         results = {}
         for strategy in strategies:
+
             async def run_once() -> float:
                 started_at = time.perf_counter()
                 if strategy == "vector_rag":
@@ -470,12 +516,8 @@ def _source_summary(sources) -> list[dict[str, Any]]:
 def _paired_comparison(item_results: list[dict[str, Any]], strategies) -> dict[str, Any]:
     if "vector_rag" not in strategies or "graph_rag" not in strategies:
         return {}
-    vector_by_id = {
-        item["question_id"]: item for item in item_results if item["strategy"] == "vector_rag"
-    }
-    graph_by_id = {
-        item["question_id"]: item for item in item_results if item["strategy"] == "graph_rag"
-    }
+    vector_by_id = {item["question_id"]: item for item in item_results if item["strategy"] == "vector_rag"}
+    graph_by_id = {item["question_id"]: item for item in item_results if item["strategy"] == "graph_rag"}
     improved = []
     regressed = []
     for question_id, vector_item in vector_by_id.items():
@@ -499,9 +541,7 @@ def _build_regression_gate(
     graph_metrics = strategy_summaries.get("graph_rag")
     vector_metrics = strategy_summaries.get("vector_rag")
     score_not_decreased = bool(
-        graph_metrics
-        and vector_metrics
-        and graph_metrics["overall_score"] >= vector_metrics["overall_score"]
+        graph_metrics and vector_metrics and graph_metrics["overall_score"] >= vector_metrics["overall_score"]
     )
     zero_hallucination = bool(graph_metrics and graph_metrics["hallucination_rate"] == 0)
     zero_new_failures = not paired_comparison.get("graph_rag_regressed_question_ids")

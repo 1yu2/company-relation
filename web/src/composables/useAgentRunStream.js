@@ -4,6 +4,7 @@ import { handleChatError } from '@/utils/errorHandler'
 import { isSteerableMainChatRun } from '@/utils/agentRun'
 import { compareRunSeq, normalizeRunSeq, resolveRunResumeAfterSeq } from '@/utils/runStreamResume'
 import { hasPendingInterruptPayload } from '@/utils/toolApproval'
+import { assertRunStatus } from '@/types/agent_run'
 
 const RUN_INTERRUPTED_STATUS = 'interrupted'
 const RUN_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled'])
@@ -299,7 +300,8 @@ export function useAgentRunStream({
             source: payload.source
           })
         }
-        const terminalStatus = event === 'end' ? payload.status : data.status
+        const receivedStatus = event === 'end' ? payload.status : data.status
+        const terminalStatus = receivedStatus ? assertRunStatus(receivedStatus) : ''
         const isRetryableError =
           event === 'error' && (payload?.retryable === true || payload?.chunk?.retryable === true)
         if (isRetryableError) {
