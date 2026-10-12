@@ -8,7 +8,7 @@
 
 - 修复企业尽调长任务跨进程恢复边界：报告、Neo4j 图投影和文本证据索引统一保存可恢复请求参数并由 ARQ worker 按任务 ID 原子认领；启动时补投递 pending，活跃任务不被误判，过期任务按最多一次策略恢复，失败或取消不发布半成品版本。
 
-- 建立 PostgreSQL 版本迁移入口：API 与 worker 启动在 advisory lock 下幂等登记 `yuxi_schema_migrations` baseline，迁移版本可查询；保留历史启动 DDL 兼容路径，后续 schema 变更进入版本入口，数据库初始化失败不再静默继续提供服务。
+- 明确数据库迁移基线：当前部署没有上一版本升级路径，PostgreSQL 版本表和 advisory lock 用于当前基线及后续新增 schema 变更；不执行不存在的历史升级验证。
 
 - 区分 API 存活与发布就绪：保留轻量公开 `/api/system/health`，新增 `/api/system/ready` 检查 PostgreSQL、Redis 和带 TTL 的 worker heartbeat；知识库、图谱和企业 MySQL 等可选能力不阻塞 LITE 就绪。
 
