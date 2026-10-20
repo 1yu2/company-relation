@@ -1077,3 +1077,43 @@ async def test_failed_experiment_can_be_started_again(evaluation_session, monkey
     assert restarted["status"] == "QUEUED"
     assert restarted["error_message"] is None
     assert enqueued == [experiment["experiment_id"]]
+
+
+@pytest.mark.unit
+async def test_async_judge_evaluator_is_awaited_and_persisted(evaluation_session, monkeypatch):
+    """LLM Judge 类 evaluator 是协程：实验服务要 await 它并落库 Judge 判定；校准前 task_pass 不可测。"""
+    from yuxi.evaluation import llm_judge
+
+    async def call(prompt, stream=False):
+        return SimpleNamespace(content='{"verdict": "pass", "reason": "ok"}')
+
+    monkeypatch.setattr(llm_judge, "select_model", lambda model_spec: SimpleNamespace(call=call))
+    service = PlatformEvaluationService()
+    dataset = await service.create_dataset(
+        db=evaluation_session, name="open", description="", source_kind="fixture", created_by="admin"
+    )
+    version = await service.create_version(
+        db=evaluation_session,
+        dataset_id=dataset["dataset_id"],
+        source={"type": "inline"},
+        tasks=[
+            {
+                "task_key": "open-1",
+                "protocol": "agent_open_answer_v1",
+                "input": {"query": "hello"},
+                "expected": {"reference_answer": "fixture-ok: hello", "rubric_points": ["fixture-ok"]},
+            }
+        ],
+    )
+    await service.publish_version(db=evaluation_session, version_id=version["version_id"])
+    experiment = await service.create_experiment(
+        db=evaluation_session, data={"dataset_version_id": version["version_id"]}, created_by="admin"
+    )
+
+    result = await service.run_experiment(db=evaluation_session, experiment_id=experiment["experiment_id"])
+
+    metrics = {item["metric_name"]: item for item in result["metrics"]}
+    assert metrics["judge_correct"]["status"] == "passed"
+    assert metrics["judge_correct"]["metric_version"] == llm_judge.METRIC_VERSION
+    assert metrics["task_pass"]["reason_code"] == "judge_not_calibrated"
+    assert experiment["config_snapshot"]["captured"]["evaluators"] == {"agent_open_answer_v1": llm_judge.METRIC_VERSION}
