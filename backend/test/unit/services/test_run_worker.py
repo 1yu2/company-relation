@@ -637,3 +637,36 @@ async def test_platform_experiment_job_marks_failed_when_run_crashes(monkeypatch
         await run_worker.process_platform_evaluation_experiment({}, "pex_1")
 
     assert marked == [("pex_1", "database went away")]
+
+
+@pytest.mark.asyncio
+async def test_platform_experiment_job_marks_failed_when_executor_lock_is_lost(monkeypatch: pytest.MonkeyPatch):
+    """执行锁续期失败的异常在锁退出时抛出，同样要把实验标为 FAILED，而不是停在 RUNNING。"""
+    from yuxi.evaluation import experiment_service
+
+    marked: list[tuple[str, str]] = []
+
+    @asynccontextmanager
+    async def lost(experiment_id):
+        yield True
+        raise experiment_service.ExperimentLockLostError("lock lost")
+
+    @asynccontextmanager
+    async def fake_session_ctx():
+        yield object()
+
+    async def finish(self, *, db, experiment_id):
+        return None
+
+    async def fake_mark_failed(self, *, db, experiment_id, error_message):
+        marked.append((experiment_id, error_message))
+
+    monkeypatch.setattr(experiment_service, "experiment_executor_lock", lost)
+    monkeypatch.setattr(experiment_service.PlatformEvaluationService, "run_experiment", finish)
+    monkeypatch.setattr(experiment_service.PlatformEvaluationService, "mark_failed", fake_mark_failed)
+    monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session_ctx)
+
+    with pytest.raises(experiment_service.ExperimentLockLostError):
+        await run_worker.process_platform_evaluation_experiment({}, "pex_1")
+
+    assert marked == [("pex_1", "lock lost")]
