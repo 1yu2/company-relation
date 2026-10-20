@@ -37,6 +37,10 @@ RUNNABLE_EXPERIMENT_STATUSES = {"DRAFT", "QUEUED", "RUNNING", "AGGREGATING"}
 EXPERIMENT_JOB_NAME = "process_platform_evaluation_experiment"
 # 执行锁 TTL：心跳每 1/3 TTL 续期；恢复作业延迟同样时长，等待崩溃进程遗留的锁过期。
 EXPERIMENT_LOCK_TTL_SECONDS = 30
+# 计为任务失败的 runner 原因：属于被测 Agent 自身的问题。取消、提交被拒、runner 异常属于评测侧，不评分。
+AGENT_FAILURE_REASONS = {"timeout", "agent_run_failed", "agent_run_interrupted"}
+# 锁在最后一次心跳续期后 TTL 秒过期；恢复作业多等一段余量，确保不会在旧锁过期前启动而被跳过。
+RECOVERY_DEFER_MARGIN_SECONDS = 10
 # fixture/agent_run 实验按任务协议选择结果 evaluator；企业尽调 runner 固定使用自己的 evaluator（本轮冻结）。
 # 值为 (evaluator, metric_version)；metric_version 写入实验快照，对比实验时据此判断评分口径是否一致。
 PROTOCOL_EVALUATORS = {
@@ -312,13 +316,15 @@ class PlatformEvaluationService:
         experiment = await repo.get_experiment(experiment_id)
         if experiment is None:
             raise LookupError("实验不存在")
-        if experiment.status in TERMINAL_EXPERIMENT_STATUSES:
+        # FAILED 可以重新运行：已完成的题按幂等键跳过，只补跑未完成的题。
+        if experiment.status in TERMINAL_EXPERIMENT_STATUSES - {"FAILED"}:
             return await self.experiment_summary(db=db, experiment_id=experiment_id)
-        if experiment.status not in RUNNABLE_EXPERIMENT_STATUSES:
+        if experiment.status not in RUNNABLE_EXPERIMENT_STATUSES | {"FAILED"}:
             raise ValueError(f"实验状态不可运行: {experiment.status}")
-        if experiment.status == "DRAFT":
-            await repo.update_experiment(experiment_id, {"status": "QUEUED"})
+        if experiment.status in {"DRAFT", "FAILED"}:
+            await repo.update_experiment(experiment_id, {"status": "QUEUED", "error_message": None})
             await db.commit()
+        # 运行中的实验也允许再次投递：卡住时可以从页面继续，执行锁保证不会出现第二个执行者。
         await enqueue_experiment(experiment_id)
         return await self.experiment_summary(db=db, experiment_id=experiment_id)
 
@@ -396,11 +402,17 @@ class PlatformEvaluationService:
             await cancel_agent_runs_for_rollouts(db, in_flight)
         return await self._finish_cancelled(db=db, experiment_id=experiment_id)
 
+    async def mark_failed(self, *, db, experiment_id: str, error_message: str) -> None:
+        """后台作业异常退出时把实验标记为 FAILED，避免停在 RUNNING；之后可以重新运行。"""
+        await self._repo(db).update_experiment(
+            experiment_id, {"status": "FAILED", "error_message": error_message[:2000], "completed_at": utc_now_naive()}
+        )
+
     async def resume_incomplete_experiments(self, *, db) -> list[str]:
         """worker 启动时重新投递未终态实验；已完成的 rollout 由幂等键跳过。
 
-        中断的 ARQ 作业会留下 in-progress 键（存活到作业超时），沿用稳定 Job ID 会被静默去重，
-        因此恢复投递使用新的 Job ID。当前部署只有一个 worker，启动时不存在仍在执行的同一实验。
+        恢复作业延迟到崩溃进程遗留的执行锁过期之后；若原作业仍在执行或排队，后到的作业拿不到锁或
+        看到实验已终态时会直接结束。
         """
         experiments = await self._repo(db).list_experiments_by_status({"QUEUED", "RUNNING", "AGGREGATING"})
         for experiment in experiments:
@@ -480,35 +492,14 @@ class PlatformEvaluationService:
             if await _rollout_cancelled(repo, rollout_id):
                 await db.commit()
                 return
-            await repo.update_rollout(
-                rollout_id,
-                {
-                    "status": "TIMEOUT",
-                    "failure_type": "timeout",
-                    "reason_code": "timeout",
-                    "finished_at": utc_now_naive(),
-                },
-            )
-            await repo.save_failures(
-                [_failure_row({"reason_code": "timeout", "metric_name": "task_pass"}, rollout_id, None)]
-            )
+            await _record_runner_failure(repo, experiment, task, rollout_id, "TIMEOUT", "timeout", "timeout", None)
         except Exception as exc:
             if await _rollout_cancelled(repo, rollout_id):
                 await db.commit()
                 return
             reason_code = exc.reason_code if isinstance(exc, AgentRunnerError) else "runner_error"
-            await repo.update_rollout(
-                rollout_id,
-                {
-                    "status": "FAILED",
-                    "failure_type": "runner_error",
-                    "reason_code": reason_code,
-                    "error_message": str(exc),
-                    "finished_at": utc_now_naive(),
-                },
-            )
-            await repo.save_failures(
-                [_failure_row({"reason_code": reason_code, "metric_name": "task_pass"}, rollout_id, None)]
+            await _record_runner_failure(
+                repo, experiment, task, rollout_id, "FAILED", "runner_error", reason_code, str(exc)
             )
         await db.commit()
 
@@ -553,7 +544,9 @@ class PlatformEvaluationService:
         candidate = await self.experiment_summary(db=db, experiment_id=candidate_experiment_id)
         if base["dataset_version_id"] != candidate["dataset_version_id"]:
             raise ValueError("两次实验的数据集版本不同，不能逐题对比")
-        base_versions, candidate_versions = _task_pass_versions(base), _task_pass_versions(candidate)
+        base_versions, candidate_versions = _scoring_versions(base), _scoring_versions(candidate)
+        if not base_versions or not candidate_versions:
+            raise ValueError("实验还没有评分结果，不能逐题对比")
         if base_versions != candidate_versions:
             raise ValueError(f"两次实验的评分口径不同: {sorted(base_versions)} vs {sorted(candidate_versions)}")
         tasks = await self._repo(db).list_tasks(base["dataset_version_id"])
@@ -574,14 +567,12 @@ class PlatformEvaluationService:
 async def enqueue_experiment(experiment_id: str, *, recovery: bool = False) -> None:
     """投递实验作业；同一实验是否真正执行由 experiment_executor_lock 保证唯一。
 
-    手动触发用稳定 Job ID 去重重复点击。启动恢复用新 Job ID 绕开中断作业的残留键，并延迟超过锁 TTL，
-    让崩溃进程遗留的执行锁先过期；若原作业仍在排队，两者中后执行的那个会因拿不到锁或实验已终态而直接结束。
+    每次投递都用新的 Job ID：稳定 ID 会被中断作业残留的 ARQ 键静默去重，导致卡住的实验无法再次投递。
+    重复投递是安全的，拿不到执行锁或实验已终态的作业会直接结束。
+    启动恢复额外延迟锁 TTL 加余量，让崩溃进程遗留的执行锁先过期。
     """
-    job_id = f"platform-eval:{experiment_id}"
-    defer_by = None
-    if recovery:
-        job_id = f"{job_id}:recovery:{uuid.uuid4().hex}"
-        defer_by = timedelta(seconds=EXPERIMENT_LOCK_TTL_SECONDS)
+    job_id = f"platform-eval:{experiment_id}:{uuid.uuid4().hex}"
+    defer_by = timedelta(seconds=EXPERIMENT_LOCK_TTL_SECONDS + RECOVERY_DEFER_MARGIN_SECONDS) if recovery else None
     queue = await get_arq_pool()
     await queue.enqueue_job(EXPERIMENT_JOB_NAME, experiment_id, _job_id=job_id, _defer_by=defer_by)
 
@@ -622,13 +613,64 @@ async def _cancel_requested(repo: PlatformEvaluationRepository, experiment_id: s
     return experiment.status in {"CANCELLING", "CANCELLED"}
 
 
+async def _record_runner_failure(
+    repo: PlatformEvaluationRepository,
+    experiment,
+    task: PlatformEvaluationTask,
+    rollout_id: str,
+    status: str,
+    failure_type: str,
+    reason_code: str,
+    error_message: str | None,
+) -> None:
+    """记录没有拿到可评分结果的 rollout。
+
+    Agent 自身的失败（超时、Run 失败或中断）是被测对象的问题，计为 task_pass=failed，进入通过率与对比；
+    评测基础设施错误（提交被拒、runner 自身异常）不评分，单独记为失败原因，避免把评测故障算到 Agent 头上。
+    """
+    await repo.update_rollout(
+        rollout_id,
+        {
+            "status": status,
+            "failure_type": failure_type,
+            "reason_code": reason_code,
+            "error_message": error_message,
+            "finished_at": utc_now_naive(),
+        },
+    )
+    metric_id = None
+    if reason_code in AGENT_FAILURE_REASONS:
+        metric = {
+            "metric_name": "task_pass",
+            "metric_version": _evaluator_version(experiment, task),
+            "value": 0.0,
+            "status": "failed",
+            "reason_code": reason_code,
+        }
+        saved = await repo.save_metrics([_metric_row(metric, rollout_id, task, {})])
+        metric_id = saved[0].metric_id
+    await repo.save_failures(
+        [_failure_row({"reason_code": reason_code, "metric_name": "task_pass"}, rollout_id, metric_id)]
+    )
+
+
+def _evaluator_version(experiment, task: PlatformEvaluationTask) -> str:
+    if experiment.runner == "company_due_diligence":
+        return CDD_METRIC_VERSION
+    return PROTOCOL_EVALUATORS[task.protocol][1]
+
+
 async def _rollout_cancelled(repo: PlatformEvaluationRepository, rollout_id: str) -> bool:
     """实验在本题执行期间被取消时，取消优先：丢弃晚到的结果，避免覆盖已写入的取消状态。"""
     rollout = await repo.get_rollout(rollout_id)
     return rollout is not None and rollout.status == "CANCELLED"
 
 
-def _task_pass_versions(summary: dict[str, Any]) -> set[str]:
+def _scoring_versions(summary: dict[str, Any]) -> set[str]:
+    """评分口径以创建实验时快照记录的评分器版本为准；快照之前的旧实验退回到已落库的 task_pass 指标版本。"""
+    captured = (summary["config_snapshot"].get("captured") or {}).get("evaluators")
+    if captured:
+        return set(captured.values())
     return {item["metric_version"] for item in summary["metrics"] if item["metric_name"] == "task_pass"}
 
 

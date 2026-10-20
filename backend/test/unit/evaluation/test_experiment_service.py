@@ -315,6 +315,9 @@ async def test_agent_run_failure_keeps_runner_reason_code(evaluation_session, mo
     assert result["rollouts"][0]["status"] == "FAILED"
     assert result["rollouts"][0]["reason_code"] == "agent_run_failed"
     assert result["failures"][0]["reason_code"] == "agent_run_failed"
+    # Agent 自身失败计为任务失败，进入通过率，而不是作为“未评分”被排除。
+    assert result["aggregate"]["pass@1"] == 0.0
+    assert result["metric_breakdown"]["task_pass"]["status_counts"] == {"failed": 1}
 
 
 @pytest.mark.unit
@@ -675,8 +678,11 @@ async def test_compare_experiments_refuses_different_metric_versions(evaluation_
         db=evaluation_session, data={"dataset_version_id": base["dataset_version_id"]}, created_by="admin"
     )
     await service.run_experiment(db=evaluation_session, experiment_id=candidate["experiment_id"])
-    for metric in await PlatformEvaluationRepository(evaluation_session).list_metrics(candidate["experiment_id"]):
-        metric.metric_version = "deterministic-v2"
+    repo = PlatformEvaluationRepository(evaluation_session)
+    record = await repo.get_experiment(candidate["experiment_id"])
+    snapshot = dict(record.config_snapshot)
+    snapshot["captured"] = {**snapshot["captured"], "evaluators": {"agent_tool_final_v1": "deterministic-v2"}}
+    record.config_snapshot = snapshot
     await evaluation_session.commit()
 
     with pytest.raises(ValueError, match="评分口径不同"):
@@ -806,7 +812,7 @@ async def test_cancel_agent_experiment_cancels_in_flight_agent_runs(
 
 @pytest.mark.unit
 async def test_recovery_enqueue_is_deferred_past_executor_lock_ttl(monkeypatch):
-    """恢复作业延迟到执行锁 TTL 之后再跑，让崩溃进程遗留的锁先过期；手动触发不延迟。"""
+    """恢复作业延迟到执行锁 TTL 加余量之后再跑，让崩溃进程遗留的锁先过期；手动触发不延迟且每次是新 Job ID。"""
     from datetime import timedelta
 
     from yuxi.evaluation import experiment_service
@@ -822,9 +828,122 @@ async def test_recovery_enqueue_is_deferred_past_executor_lock_ttl(monkeypatch):
 
     monkeypatch.setattr(experiment_service, "get_arq_pool", fake_pool)
     await experiment_service.enqueue_experiment("pex_1")
+    await experiment_service.enqueue_experiment("pex_1")
     await experiment_service.enqueue_experiment("pex_1", recovery=True)
 
-    manual, recovery = calls
-    assert manual[2] == {"_job_id": "platform-eval:pex_1", "_defer_by": None}
-    assert recovery[2]["_job_id"].startswith("platform-eval:pex_1:recovery:")
-    assert recovery[2]["_defer_by"] == timedelta(seconds=experiment_service.EXPERIMENT_LOCK_TTL_SECONDS)
+    manual, again, recovery = calls[0], calls[1], calls[2]
+    # 每次投递都是新的 Job ID，卡住的实验可以再次投递，不会被残留的 ARQ 键去重。
+    assert manual[2]["_job_id"].startswith("platform-eval:pex_1:")
+    assert manual[2]["_job_id"] != again[2]["_job_id"]
+    assert manual[2]["_defer_by"] is None
+    expected_defer = experiment_service.EXPERIMENT_LOCK_TTL_SECONDS + experiment_service.RECOVERY_DEFER_MARGIN_SECONDS
+    assert recovery[2]["_defer_by"] == timedelta(seconds=expected_defer)
+
+
+@pytest.mark.unit
+async def test_agent_failures_count_as_failed_but_infra_errors_are_not_scored(evaluation_session, monkeypatch):
+    """超时与 Agent Run 失败是被测对象的问题，计入通过率；评测侧 runner 异常不评分，单独记原因。"""
+    from yuxi.evaluation import experiment_service
+
+    service = PlatformEvaluationService()
+    experiment = await _fixture_experiment(service, evaluation_session)
+
+    async def fail_by_task(task, rollout_id):
+        if task.task_key == "t1":
+            raise TimeoutError
+        raise RuntimeError("evaluation infrastructure broke")
+
+    monkeypatch.setattr(experiment_service, "_run_fixture", fail_by_task)
+    result = await service.run_experiment(db=evaluation_session, experiment_id=experiment["experiment_id"])
+
+    assert sorted(item["reason_code"] for item in result["rollouts"]) == ["runner_error", "timeout"]
+    assert result["aggregate"]["measured_task_count"] == 1
+    assert result["aggregate"]["not_measured_tasks"] == 1
+    assert result["aggregate"]["pass@1"] == 0.0
+    task_pass = [item for item in result["metrics"] if item["metric_name"] == "task_pass"]
+    assert [(item["status"], item["reason_code"], item["metric_version"]) for item in task_pass] == [
+        ("failed", "timeout", "deterministic-v1")
+    ]
+
+
+@pytest.mark.unit
+async def test_compare_reports_candidate_timeout_as_broken(evaluation_session, monkeypatch):
+    """基线通过、候选超时的题必须出现在 broken 中，退化不能因为“未评分”而被隐藏。"""
+    from yuxi.evaluation import experiment_service
+
+    service = PlatformEvaluationService()
+    base = await _fixture_experiment(service, evaluation_session)
+    await service.run_experiment(db=evaluation_session, experiment_id=base["experiment_id"])
+    candidate = await service.create_experiment(
+        db=evaluation_session, data={"dataset_version_id": base["dataset_version_id"]}, created_by="admin"
+    )
+    original = experiment_service._run_fixture
+
+    async def timeout_on_t1(task, rollout_id):
+        if task.task_key == "t1":
+            raise TimeoutError
+        return await original(task, rollout_id)
+
+    monkeypatch.setattr(experiment_service, "_run_fixture", timeout_on_t1)
+    await service.run_experiment(db=evaluation_session, experiment_id=candidate["experiment_id"])
+
+    comparison = await service.compare_experiments(
+        db=evaluation_session,
+        base_experiment_id=base["experiment_id"],
+        candidate_experiment_id=candidate["experiment_id"],
+    )
+
+    assert comparison["outcomes"]["broken"] == ["t1"]
+    assert comparison["outcomes"]["pass_rate_delta"] == -0.5
+
+
+@pytest.mark.unit
+async def test_compare_uses_snapshot_versions_when_candidate_has_no_scores(evaluation_session, monkeypatch):
+    """候选全部因评测侧错误没有评分时，不应报“评分口径不同”这种误导性错误；未评分的题列为未配对。"""
+    from yuxi.evaluation import experiment_service
+
+    service = PlatformEvaluationService()
+    base = await _fixture_experiment(service, evaluation_session)
+    await service.run_experiment(db=evaluation_session, experiment_id=base["experiment_id"])
+    candidate = await service.create_experiment(
+        db=evaluation_session, data={"dataset_version_id": base["dataset_version_id"]}, created_by="admin"
+    )
+
+    async def infra_failure(task, rollout_id):
+        raise RuntimeError("evaluation infrastructure broke")
+
+    monkeypatch.setattr(experiment_service, "_run_fixture", infra_failure)
+    await service.run_experiment(db=evaluation_session, experiment_id=candidate["experiment_id"])
+
+    comparison = await service.compare_experiments(
+        db=evaluation_session,
+        base_experiment_id=base["experiment_id"],
+        candidate_experiment_id=candidate["experiment_id"],
+    )
+
+    assert comparison["outcomes"]["paired_count"] == 0
+    assert comparison["outcomes"]["unpaired_task_keys"] == ["t1", "t2"]
+
+
+@pytest.mark.unit
+async def test_failed_experiment_can_be_started_again(evaluation_session, monkeypatch):
+    """作业异常后实验标为 FAILED 并保留原因；再次运行会回到 QUEUED 并重新投递。"""
+    from yuxi.evaluation import experiment_service
+
+    enqueued = []
+
+    async def fake_enqueue(experiment_id, *, recovery=False):
+        enqueued.append(experiment_id)
+
+    monkeypatch.setattr(experiment_service, "enqueue_experiment", fake_enqueue)
+    service = PlatformEvaluationService()
+    experiment = await _fixture_experiment(service, evaluation_session)
+    await service.mark_failed(db=evaluation_session, experiment_id=experiment["experiment_id"], error_message="boom")
+    failed = await service.get_experiment(db=evaluation_session, experiment_id=experiment["experiment_id"])
+
+    restarted = await service.start_experiment(db=evaluation_session, experiment_id=experiment["experiment_id"])
+
+    assert (failed["status"], failed["error_message"]) == ("FAILED", "boom")
+    assert restarted["status"] == "QUEUED"
+    assert restarted["error_message"] is None
+    assert enqueued == [experiment["experiment_id"]]

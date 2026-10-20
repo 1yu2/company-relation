@@ -605,3 +605,35 @@ async def test_platform_experiment_job_skips_when_another_executor_holds_lock(mo
     await run_worker.process_platform_evaluation_experiment({}, "pex_1")
 
     assert calls == ["lock:pex_1"]
+
+
+@pytest.mark.asyncio
+async def test_platform_experiment_job_marks_failed_when_run_crashes(monkeypatch: pytest.MonkeyPatch):
+    """作业异常退出时实验标为 FAILED 并保留错误原因，同时把异常继续抛给 ARQ 记录。"""
+    from yuxi.evaluation import experiment_service
+
+    marked: list[tuple[str, str]] = []
+
+    @asynccontextmanager
+    async def acquired(experiment_id):
+        yield True
+
+    @asynccontextmanager
+    async def fake_session_ctx():
+        yield object()
+
+    async def crash(self, *, db, experiment_id):
+        raise RuntimeError("database went away")
+
+    async def fake_mark_failed(self, *, db, experiment_id, error_message):
+        marked.append((experiment_id, error_message))
+
+    monkeypatch.setattr(experiment_service, "experiment_executor_lock", acquired)
+    monkeypatch.setattr(experiment_service.PlatformEvaluationService, "run_experiment", crash)
+    monkeypatch.setattr(experiment_service.PlatformEvaluationService, "mark_failed", fake_mark_failed)
+    monkeypatch.setattr(run_worker.pg_manager, "get_async_session_context", fake_session_ctx)
+
+    with pytest.raises(RuntimeError, match="database went away"):
+        await run_worker.process_platform_evaluation_experiment({}, "pex_1")
+
+    assert marked == [("pex_1", "database went away")]
