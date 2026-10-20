@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import threading
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -1496,15 +1497,29 @@ async def test_personal_skill_cache_miss_scans_once_under_concurrency(
     root = tmp_path / "workspace-skills"
     _write_personal_skill(root, "demo", "first")
     scan_calls = 0
+    lock_calls = 0
     original_scan = svc._scan_personal_skills
+    original_lock = redis.lock
+    second_caller_at_lock = threading.Event()
 
     async def fake_get_redis():
         return redis
 
+    def tracked_lock(name: str, **kwargs):
+        nonlocal lock_calls
+        lock_calls += 1
+        if lock_calls == 2:
+            second_caller_at_lock.set()
+        return original_lock(name, **kwargs)
+
+    # 扫描线程过快时 to_thread 可能不让出事件循环，需等第二个调用方未命中缓存并排队拿锁后再完成扫描
     def counted_scan(uid: str):
         nonlocal scan_calls
         scan_calls += 1
+        assert second_caller_at_lock.wait(timeout=5)
         return original_scan(uid)
+
+    redis.lock = tracked_lock
 
     monkeypatch.setattr(svc, "get_async_redis_client", fake_get_redis)
     monkeypatch.setattr(svc, "get_personal_skills_root_dir", lambda _uid: root)
