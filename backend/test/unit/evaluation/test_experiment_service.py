@@ -341,7 +341,7 @@ def test_agent_usage_summary_survives_rollout_redaction():
     assert redact_value(usage) == {"llm_calls": 2, "input": 150, "output": 25, "total": 175, "models": ["model-a"]}
 
 
-async def _fixture_experiment(service, session):
+async def _fixture_experiment(service, session, keys=("t1", "t2"), concurrency=1):
     dataset = await service.create_dataset(
         db=session, name="fixture", description="", source_kind="fixture", created_by="admin"
     )
@@ -351,13 +351,76 @@ async def _fixture_experiment(service, session):
         source={"type": "inline"},
         tasks=[
             {"task_key": key, "input": {"query": key}, "expected": {"final_answer": {"value": f"fixture-ok: {key}"}}}
-            for key in ("t1", "t2")
+            for key in keys
         ],
     )
     await service.publish_version(db=session, version_id=version["version_id"])
     return await service.create_experiment(
-        db=session, data={"dataset_version_id": version["version_id"]}, created_by="admin"
+        db=session,
+        data={"dataset_version_id": version["version_id"], "concurrency": concurrency},
+        created_by="admin",
     )
+
+
+@pytest.mark.unit
+async def test_concurrency_caps_in_flight_rollouts(evaluation_session, monkeypatch):
+    """concurrency=3 时同时执行的 rollout 恰好达到 3 条且不超过 3 条，全部题都完成评分。"""
+    import asyncio
+
+    from yuxi.evaluation import experiment_service
+
+    original = experiment_service._run_fixture
+    in_flight = 0
+    peak = 0
+
+    async def slow_fixture(task, rollout_id):
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0.05)
+        in_flight -= 1
+        return await original(task, rollout_id)
+
+    monkeypatch.setattr(experiment_service, "_run_fixture", slow_fixture)
+    service = PlatformEvaluationService()
+    keys = tuple(f"t{index}" for index in range(1, 8))
+    experiment = await _fixture_experiment(service, evaluation_session, keys=keys, concurrency=3)
+
+    result = await service.run_experiment(db=evaluation_session, experiment_id=experiment["experiment_id"])
+
+    assert peak == 3
+    assert result["status"] == "FINISHED"
+    assert [item["status"] for item in result["rollouts"]] == ["COMPLETED"] * len(keys)
+    assert result["aggregate"]["pass@1"] == 1.0
+
+
+@pytest.mark.unit
+async def test_cancel_with_concurrency_discards_in_flight_and_skips_unstarted(evaluation_session, monkeypatch):
+    """并发执行中取消：在途 rollout 的晚到结果不写入，尚未开始的题不再启动。"""
+    import asyncio
+
+    from yuxi.evaluation import experiment_service
+
+    service = PlatformEvaluationService()
+    experiment = await _fixture_experiment(service, evaluation_session, keys=("t1", "t2", "t3", "t4"), concurrency=2)
+    original = experiment_service._run_fixture
+    executed = []
+
+    async def cancel_while_running(task, rollout_id):
+        executed.append(task.task_key)
+        await asyncio.sleep(0.02)
+        if task.task_key == "t1":
+            await service.cancel_experiment(db=evaluation_session, experiment_id=experiment["experiment_id"])
+        await asyncio.sleep(0.02)
+        return await original(task, rollout_id)
+
+    monkeypatch.setattr(experiment_service, "_run_fixture", cancel_while_running)
+    result = await service.run_experiment(db=evaluation_session, experiment_id=experiment["experiment_id"])
+
+    assert sorted(executed) == ["t1", "t2"]
+    assert result["status"] == "CANCELLED"
+    assert [item["status"] for item in result["rollouts"]] == ["CANCELLED", "CANCELLED"]
+    assert result["metrics"] == []
 
 
 @pytest.mark.unit
