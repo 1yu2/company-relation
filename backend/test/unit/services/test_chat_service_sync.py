@@ -762,3 +762,29 @@ async def test_save_tool_message_preserves_status(status):
     repo.update_tool_call_output.assert_awaited_once_with(
         langgraph_tool_call_id="call-1", tool_output="command output", status=status
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("message", "expected_status"),
+    [
+        ({"role": "tool", "tool_call_id": "call-1", "content": "command output"}, "success"),
+        (
+            {"role": "tool", "tool_call_id": "call-1", "content": "command output", "status": "error"},
+            "error",
+        ),
+    ],
+)
+async def test_save_dict_tool_message_uses_langchain_default_status(message, expected_status):
+    """普通字典工具消息缺少状态时应沿用 ToolMessage 的默认成功状态。"""
+    from unittest.mock import AsyncMock
+
+    repo = SimpleNamespace(update_tool_call_output=AsyncMock())
+
+    await svc._save_tool_message(repo, message)
+
+    repo.update_tool_call_output.assert_awaited_once_with(
+        langgraph_tool_call_id="call-1",
+        tool_output="command output",
+        status=expected_status,
+    )
