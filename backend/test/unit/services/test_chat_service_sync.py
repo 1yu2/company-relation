@@ -746,3 +746,19 @@ async def test_build_agent_input_context_keeps_prompt_when_workspace_agent_conte
     )
 
     assert context["system_prompt"] == "原始系统提示词"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["error", "success"])
+async def test_save_tool_message_preserves_status(status):
+    """工具消息的真实状态与输出应一起写入数据库。"""
+    from unittest.mock import AsyncMock
+
+    from langchain_core.messages import ToolMessage
+
+    repo = SimpleNamespace(update_tool_call_output=AsyncMock())
+    message = ToolMessage(content="command output", tool_call_id="call-1", status=status)
+    await svc._save_tool_message(repo, message.model_dump())
+    repo.update_tool_call_output.assert_awaited_once_with(
+        langgraph_tool_call_id="call-1", tool_output="command output", status=status
+    )

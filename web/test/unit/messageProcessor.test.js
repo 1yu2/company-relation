@@ -38,3 +38,14 @@ test('交付物只归属于调用 present_artifacts 的对话', () => {
   ])
   assert.deepEqual(MessageProcessor.extractArtifactsFromConversation(laterConversation), [])
 })
+
+for (const status of ['error', 'success']) {
+  test(`流式工具结果将 ${status} 状态同步到工具卡片`, () => {
+    const response = { type: 'tool', tool_call_id: 'call-1', status, content: 'output' }
+    const messages = MessageProcessor.convertToolResultToMessages([
+      { type: 'ai', tool_calls: [{ id: 'call-1', name: 'execute' }] }, response
+    ])
+    assert.equal(messages[0].tool_calls[0].status, status)
+    assert.equal(messages[0].tool_calls[0].tool_call_result, response)
+  })
+}

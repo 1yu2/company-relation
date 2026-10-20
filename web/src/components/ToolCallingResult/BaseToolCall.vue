@@ -10,7 +10,7 @@
         <component v-if="toolIcon" :is="toolIcon" size="15" class="tool-loader tool-success" />
         <CheckCircle v-else size="15" class="tool-loader tool-success" />
       </span>
-      <span v-else-if="effectiveStatus === 'error'">
+      <span v-else-if="effectiveStatus === 'error' || effectiveStatus === 'failed'">
         <XCircle size="15" class="tool-loader tool-error" />
       </span>
       <span v-else>
@@ -28,7 +28,7 @@
         <template v-else>
           <slot
             name="header-success"
-            v-if="toolCall.status === 'success' || toolCall.tool_call_result"
+            v-if="toolCall.status !== 'error' && (toolCall.status === 'success' || toolCall.tool_call_result)"
             :tool-name="toolName"
             :result-content="resultContent"
           >
@@ -138,8 +138,8 @@ const toggleExpand = () => {
 // 图标状态：优先用外部传入的 status，否则按 tool_call_result/status 推断
 const effectiveStatus = computed(() => {
   if (props.status) return props.status
+  if (props.toolCall.status === 'error') return 'error'
   if (props.toolCall.status === 'success' || props.toolCall.tool_call_result) return 'completed'
-  if (props.toolCall.status === 'error') return 'failed'
   return 'running'
 })
 

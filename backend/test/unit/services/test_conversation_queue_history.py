@@ -142,3 +142,19 @@ async def test_internal_conversation_history_is_not_user_visible(session):
         )
 
     assert exc_info.value.status_code == 404
+
+
+@pytest.mark.parametrize("status", ["error", "success", "pending"])
+async def test_tool_history_preserves_terminal_output(session, status):
+    """历史接口对成功和失败工具均返回输出，待执行工具不伪造结果。"""
+    from yuxi.storage.postgres.models_business import ToolCall
+
+    session.add(Conversation(id=1, thread_id="tool-thread", uid="user-1", agent_id="main", status="active"))
+    session.add(Message(id=1, conversation_id=1, role="assistant", content="", delivery_status="complete"))
+    session.add(ToolCall(message_id=1, tool_name="execute", tool_output="ZeroDivisionError", status=status))
+    await session.commit()
+
+    result = await get_thread_history_view(thread_id="tool-thread", current_uid="user-1", db=session)
+    call = result["history"][0]["tool_calls"][0]
+    assert call["status"] == status
+    assert call["tool_call_result"] == (None if status == "pending" else {"content": "ZeroDivisionError"})
