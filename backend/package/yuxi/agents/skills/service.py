@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import hashlib
 import json
 import re
@@ -449,6 +450,14 @@ def _compute_dir_hash(source_dir: Path) -> str:
                 hasher.update(chunk)
         hasher.update(b"\0")
     return hasher.hexdigest()
+
+
+def _install_builtin_skill_dir(target_dir: Path, source_dir: Path) -> None:
+    """api 与 worker 共享 saves 目录且启动时都会安装内置 Skill，用跨进程文件锁串行化目录替换。"""
+    lock_path = Path(sys_config.save_dir) / ".builtin-skills.lock"
+    with lock_path.open("a") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        _replace_skill_target(target_dir, source_dir)
 
 
 def _replace_skill_target(
@@ -1779,8 +1788,7 @@ async def init_builtin_skills(db: AsyncSession, *, created_by: str = "system") -
         if existing and not is_builtin_skill(existing):
             raise ValueError(f"内置 skill '{slug}' 与已存在的非内置 skill 冲突")
 
-        target_dir = get_skills_root_dir() / slug
-        _replace_skill_target(target_dir, Path(spec["source_dir"]))
+        _install_builtin_skill_dir(get_skills_root_dir() / slug, Path(spec["source_dir"]))
 
         if existing:
             if existing.name != spec["name"] or existing.description != spec["description"]:
