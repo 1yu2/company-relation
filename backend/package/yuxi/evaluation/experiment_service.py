@@ -180,10 +180,10 @@ class PlatformEvaluationService:
         tasks = await repo.list_tasks(version_id)
         if not tasks:
             raise ValueError("数据集版本至少需要一条任务")
+        # 候选题（企业尽调候选集、线上抽样回流题）即使已填写部分期望，只要仍是 pending_review 就不能发布。
+        if any((task.expected or {}).get("review_status") == "pending_review" for task in tasks):
+            raise ValueError("存在尚未复核的任务，不能发布")
         domain_tasks = [task for task in tasks if task.protocol == "cdd_q02_review_v1"]
-        # 候选题即使已填写参考状态，只要仍是 pending_review 就不能作为正式业务评测发布。
-        if any((task.expected or {}).get("review_status") == "pending_review" for task in domain_tasks):
-            raise ValueError("企业尽调任务尚未复核，不能发布")
         if any(not (task.expected or {}).get("status") for task in domain_tasks):
             raise ValueError("企业尽调任务缺少可比较的参考状态")
         published = await repo.update_version(

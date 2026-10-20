@@ -7,7 +7,7 @@ import json
 import time
 from dataclasses import dataclass, field
 
-from arq import func
+from arq import cron, func
 from sqlalchemy import select, update
 from sqlalchemy.exc import OperationalError
 from yuxi.agents.mcp.service import ensure_builtin_mcp_servers_in_db
@@ -720,6 +720,17 @@ async def process_platform_evaluation_experiment(ctx, experiment_id: str) -> Non
         raise
 
 
+async def sample_online_evaluation_runs(ctx) -> None:
+    """定时线上抽样：抽样率由 PLATFORM_EVAL_ONLINE_SAMPLE_RATE 配置，默认 0 即不抽样。"""
+    del ctx
+    from yuxi.evaluation.online_sampling import sample_online_runs
+
+    async with pg_manager.get_async_session_context() as session:
+        stats = await sample_online_runs(session)
+    if stats["sampled"]:
+        logger.info(f"Platform evaluation online sampling: {stats}")
+
+
 async def _worker_startup(ctx):
     """初始化 worker 依赖。"""
 
@@ -765,6 +776,7 @@ class WorkerSettings:
         func(process_due_diligence_evidence_index, timeout=6 * 60 * 60, max_tries=1),
         func(process_platform_evaluation_experiment, timeout=6 * 60 * 60, max_tries=1),
     ]
+    cron_jobs = [cron(sample_online_evaluation_runs, minute=5, run_at_startup=False)]
     max_tries = 2
     retry_jobs = True
     job_timeout = 3600

@@ -120,24 +120,7 @@ async def _wait_and_collect(
 
     async with pg_manager.get_async_session_context() as db:
         run = await db.get(AgentRun, run_id)
-        rows = (
-            await db.execute(
-                select(ToolCall)
-                .join(Message, ToolCall.message_id == Message.id)
-                .where(Message.run_id == run_id)
-                .order_by(ToolCall.id)
-            )
-        ).scalars()
-        tool_calls = [
-            {
-                "name": row.tool_name,
-                "args": row.tool_input or {},
-                "status": row.status,
-                "error": row.error_message,
-                "output": row.tool_output,
-            }
-            for row in rows
-        ]
+        tool_calls = await load_run_tool_calls(db, run_id)
         assistant_metadata = (
             await db.execute(
                 select(Message.extra_metadata)
@@ -173,6 +156,28 @@ async def cancel_agent_runs_for_rollouts(db, rollout_ids: list[str]) -> None:
     ).scalars()
     for run in list(runs):
         await request_cancel_agent_run(run_id=run.id, current_uid=run.uid, db=db, cascade_children=True)
+
+
+async def load_run_tool_calls(db, run_id: str) -> list[dict[str, Any]]:
+    """按调用顺序读取一次 Run 的全部工具调用，评测 runner 与线上抽样共用。"""
+    rows = (
+        await db.execute(
+            select(ToolCall)
+            .join(Message, ToolCall.message_id == Message.id)
+            .where(Message.run_id == run_id)
+            .order_by(ToolCall.id)
+        )
+    ).scalars()
+    return [
+        {
+            "name": row.tool_name,
+            "args": row.tool_input or {},
+            "status": row.status,
+            "error": row.error_message,
+            "output": row.tool_output,
+        }
+        for row in rows
+    ]
 
 
 def _usage_summary(message_metadata: list[dict[str, Any]]) -> dict[str, Any]:

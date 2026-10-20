@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.utils.auth_middleware import get_admin_user, get_db
 from yuxi.evaluation.experiment_service import PlatformEvaluationService
+from yuxi.evaluation.online_sampling import list_findings, promote_findings
 from yuxi.storage.postgres.models_business import User
 
 evaluation_platform_router = APIRouter(prefix="/platform-evaluations", tags=["platform-evaluations"])
@@ -42,6 +43,13 @@ class ExperimentCreateRequest(BaseModel):
     concurrency: int = Field(default=1, ge=1, le=32)
     timeout_seconds: int = Field(default=30, ge=1, le=3600)
     max_attempts: int = Field(default=1, ge=1, le=20)
+
+
+class OnlineFindingPromoteRequest(BaseModel):
+    """把失败池样本生成为数据集草稿版本。"""
+
+    dataset_id: str = Field(..., min_length=1, max_length=64)
+    finding_ids: list[str] = Field(..., min_length=1, max_length=200)
 
 
 class PlatformEvaluationConflictError(ValueError):
@@ -333,5 +341,33 @@ async def cancel_experiment(
     """管理员内部取消入口；页面首轮不暴露此操作。"""
     try:
         return _response(await PlatformEvaluationService().cancel_experiment(db=db, experiment_id=experiment_id))
+    except Exception as exc:
+        _raise_for_domain_error(exc)
+
+
+@evaluation_platform_router.get("/online-findings")
+async def list_online_findings(
+    status: str | None = Query(default=None, max_length=32),
+    limit: int = Query(default=100, ge=1, le=500),
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """列出线上抽样命中通用规则的样本（失败池）。"""
+    return _response(await list_findings(db, status=status, limit=limit))
+
+
+@evaluation_platform_router.post("/online-findings/promote")
+async def promote_online_findings(
+    payload: OnlineFindingPromoteRequest,
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """把失败池样本生成为草稿版本；题目标记 pending_review，人工补写期望并复核后才能发布。"""
+    try:
+        return _response(
+            await promote_findings(
+                db, service=PlatformEvaluationService(), dataset_id=payload.dataset_id, finding_ids=payload.finding_ids
+            )
+        )
     except Exception as exc:
         _raise_for_domain_error(exc)

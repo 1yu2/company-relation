@@ -41,7 +41,7 @@ def evaluate_agent_final_answer(
     forbidden = [name for name in policy.get("forbidden", []) if name in called]
     missing = [name for name in policy.get("required", []) if name not in called]
     max_calls = policy.get("max_calls")
-    repeats = Counter((call.get("name"), _canonical_args(call.get("args"))) for call in tool_calls)
+    repeats = Counter((call.get("name"), canonical_tool_args(call.get("args"))) for call in tool_calls)
     duplicates = sum(count - 1 for count in repeats.values())
     errors = sum(1 for call in tool_calls if call.get("status") == "error" or call.get("error"))
 
@@ -88,7 +88,7 @@ def _has_answer_line(answer: str, expected_value: Any) -> bool:
     return False
 
 
-def _canonical_args(args: Any) -> str:
+def canonical_tool_args(args: Any) -> str:
     """把工具参数转为稳定字符串，用于识别同名同参的重复调用。"""
     return json.dumps(args, ensure_ascii=False, sort_keys=True, default=str)
 
