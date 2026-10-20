@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import select
 
 from yuxi.agents.backends.sandbox.provider import get_sandbox_provider
+from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES
 from yuxi.services.agent_run_service import (
     AgentRunWaitTimeout,
     await_agent_run_result,
@@ -150,6 +151,23 @@ async def _wait_and_collect(
         "latency": _latency(run.created_at, run.started_at, run.finished_at),
     }
     return actual, _trace_events(rollout_id, query, tool_calls, actual["final_answer"])
+
+
+async def cancel_agent_runs_for_rollouts(db, rollout_ids: list[str]) -> None:
+    """取消在途评测题对应的 AgentRun；评测 Run 的 external_id 就是 rollout_id。"""
+    if not rollout_ids:
+        return
+    runs = (
+        await db.execute(
+            select(AgentRun).where(
+                AgentRun.source == EVALUATION_RUN_SOURCE,
+                AgentRun.external_id.in_(rollout_ids),
+                AgentRun.status.notin_(TERMINAL_RUN_STATUSES),
+            )
+        )
+    ).scalars()
+    for run in list(runs):
+        await request_cancel_agent_run(run_id=run.id, current_uid=run.uid, db=db)
 
 
 def _usage_summary(message_metadata: list[dict[str, Any]]) -> dict[str, Any]:

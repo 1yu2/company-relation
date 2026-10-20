@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import datetime
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 from functools import partial
 from typing import Any
 
 from yuxi.evaluation.agent_final_answer import METRIC_VERSION as AGENT_FINAL_ANSWER_METRIC_VERSION
 from yuxi.evaluation.agent_final_answer import evaluate_agent_final_answer
-from yuxi.evaluation.agent_runner import AgentRunnerError, run_agent_task
+from yuxi.evaluation.agent_runner import AgentRunnerError, cancel_agent_runs_for_rollouts, run_agent_task
 from yuxi.evaluation.company_due_diligence import METRIC_VERSION as CDD_METRIC_VERSION
 from yuxi.evaluation.company_due_diligence import evaluate_company_due_diligence
 from yuxi.evaluation.metrics import (
@@ -25,7 +27,7 @@ from yuxi.evaluation.metrics import (
 from yuxi.evaluation.provenance import TraceEvent, checksum_for, redact_value
 from yuxi.evaluation.snapshot import capture_agent_snapshot, capture_common_snapshot, validate_pricing
 from yuxi.repositories.platform_evaluation_repository import PlatformEvaluationRepository
-from yuxi.services.run_queue_service import get_arq_pool
+from yuxi.services.run_queue_service import get_arq_pool, get_redis_client
 from yuxi.storage.postgres.models_evaluation import PlatformEvaluationTask
 from yuxi.utils.datetime_utils import utc_now_naive
 from yuxi.utils.hash_utils import hash_id
@@ -33,6 +35,8 @@ from yuxi.utils.hash_utils import hash_id
 TERMINAL_EXPERIMENT_STATUSES = {"FINISHED", "FAILED", "CANCELLED"}
 RUNNABLE_EXPERIMENT_STATUSES = {"DRAFT", "QUEUED", "RUNNING", "AGGREGATING"}
 EXPERIMENT_JOB_NAME = "process_platform_evaluation_experiment"
+# 执行锁 TTL：心跳每 1/3 TTL 续期；恢复作业延迟同样时长，等待崩溃进程遗留的锁过期。
+EXPERIMENT_LOCK_TTL_SECONDS = 30
 # fixture/agent_run 实验按任务协议选择结果 evaluator；企业尽调 runner 固定使用自己的 evaluator（本轮冻结）。
 # 值为 (evaluator, metric_version)；metric_version 写入实验快照，对比实验时据此判断评分口径是否一致。
 PROTOCOL_EVALUATORS = {
@@ -333,12 +337,9 @@ class PlatformEvaluationService:
         await db.commit()
         tasks = await repo.list_tasks(experiment.dataset_version_id)
         for task in tasks:
-            current = await repo.get_experiment(experiment_id)
-            if current is None:
-                raise LookupError("实验不存在")
-            if current.status in {"CANCELLING", "CANCELLED"}:
-                return await self._finish_cancelled(db=db, experiment_id=experiment_id)
             for attempt in range(1, experiment.max_attempts + 1):
+                if await _cancel_requested(repo, experiment_id):
+                    return await self._finish_cancelled(db=db, experiment_id=experiment_id)
                 key = checksum_for(
                     {
                         "experiment_id": experiment_id,
@@ -352,6 +353,9 @@ class PlatformEvaluationService:
                 if existing is not None and existing.status != "RUNNING":
                     continue
                 await self._run_one_rollout(db=db, experiment=experiment, task=task, attempt=attempt, key=key)
+        # 取消可能落在最后一题执行期间：此时不能再汇总为 FINISHED 覆盖取消状态。
+        if await _cancel_requested(repo, experiment_id):
+            return await self._finish_cancelled(db=db, experiment_id=experiment_id)
         await repo.update_experiment(experiment_id, {"status": "AGGREGATING"})
         summary = await self.experiment_summary(db=db, experiment_id=experiment_id)
         await repo.update_experiment(experiment_id, {"status": "FINISHED", "completed_at": utc_now_naive()})
@@ -370,8 +374,10 @@ class PlatformEvaluationService:
         if experiment.status not in {"DRAFT", "QUEUED", "RUNNING", "AGGREGATING", "CANCELLING"}:
             raise ValueError(f"实验状态不可取消: {experiment.status}")
         await repo.update_experiment(experiment_id, {"status": "CANCELLING"})
+        in_flight = []
         for rollout in await repo.list_rollouts(experiment_id):
             if rollout.status not in {"COMPLETED", "FAILED", "TIMEOUT", "CANCELLED"}:
+                in_flight.append(rollout.rollout_id)
                 await repo.update_rollout(
                     rollout.rollout_id,
                     {
@@ -384,6 +390,9 @@ class PlatformEvaluationService:
                 await repo.save_failures(
                     [_failure_row({"reason_code": "cancelled", "metric_name": "task_pass"}, rollout.rollout_id, None)]
                 )
+        if experiment.runner == "agent_run":
+            # 在途题的 AgentRun 也要取消：否则 Agent 会继续执行到结束，后台执行者也要一直等待它。
+            await cancel_agent_runs_for_rollouts(db, in_flight)
         return await self._finish_cancelled(db=db, experiment_id=experiment_id)
 
     async def resume_incomplete_experiments(self, *, db) -> list[str]:
@@ -562,12 +571,54 @@ class PlatformEvaluationService:
 
 
 async def enqueue_experiment(experiment_id: str, *, recovery: bool = False) -> None:
-    """投递实验作业：手动触发用稳定 Job ID 去重重复点击，启动恢复用新 Job ID 绕开中断作业的残留键。"""
+    """投递实验作业；同一实验是否真正执行由 experiment_executor_lock 保证唯一。
+
+    手动触发用稳定 Job ID 去重重复点击。启动恢复用新 Job ID 绕开中断作业的残留键，并延迟超过锁 TTL，
+    让崩溃进程遗留的执行锁先过期；若原作业仍在排队，两者中后执行的那个会因拿不到锁或实验已终态而直接结束。
+    """
     job_id = f"platform-eval:{experiment_id}"
+    defer_by = None
     if recovery:
         job_id = f"{job_id}:recovery:{uuid.uuid4().hex}"
+        defer_by = timedelta(seconds=EXPERIMENT_LOCK_TTL_SECONDS)
     queue = await get_arq_pool()
-    await queue.enqueue_job(EXPERIMENT_JOB_NAME, experiment_id, _job_id=job_id)
+    await queue.enqueue_job(EXPERIMENT_JOB_NAME, experiment_id, _job_id=job_id, _defer_by=defer_by)
+
+
+@asynccontextmanager
+async def experiment_executor_lock(
+    experiment_id: str, *, ttl_seconds: int = EXPERIMENT_LOCK_TTL_SECONDS
+) -> AsyncIterator[bool]:
+    """同一实验同一时刻只允许一个执行者；返回是否拿到锁。
+
+    锁带 TTL，由心跳每 1/3 TTL 续期；执行者进程崩溃后心跳停止，锁在 TTL 内自动过期，恢复作业即可接手。
+    锁在执行中途丢失（释放时已不属于本执行者）会抛出 LockNotOwnedError，暴露可能的并发执行，而不是静默忽略。
+    """
+    redis = await get_redis_client()
+    lock = redis.lock(f"platform-eval:executor:{experiment_id}", timeout=ttl_seconds)
+    if not await lock.acquire(blocking=False):
+        yield False
+        return
+    heartbeat = asyncio.create_task(_keep_lock_alive(lock, ttl_seconds))
+    try:
+        yield True
+    finally:
+        heartbeat.cancel()
+        await asyncio.gather(heartbeat, return_exceptions=True)
+        await lock.release()
+
+
+async def _keep_lock_alive(lock, ttl_seconds: int) -> None:
+    while True:
+        await asyncio.sleep(ttl_seconds / 3)
+        await lock.reacquire()
+
+
+async def _cancel_requested(repo: PlatformEvaluationRepository, experiment_id: str) -> bool:
+    experiment = await repo.get_experiment(experiment_id)
+    if experiment is None:
+        raise LookupError("实验不存在")
+    return experiment.status in {"CANCELLING", "CANCELLED"}
 
 
 async def _rollout_cancelled(repo: PlatformEvaluationRepository, rollout_id: str) -> bool:

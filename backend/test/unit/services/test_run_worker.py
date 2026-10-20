@@ -582,3 +582,26 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         "recover_evidence",
         "resume_platform_experiments",
     ]
+
+
+@pytest.mark.asyncio
+async def test_platform_experiment_job_skips_when_another_executor_holds_lock(monkeypatch: pytest.MonkeyPatch):
+    """重复投递的实验作业拿不到执行锁时直接结束，不调用 run_experiment。"""
+    from yuxi.evaluation import experiment_service
+
+    calls: list[str] = []
+
+    @asynccontextmanager
+    async def held_elsewhere(experiment_id):
+        calls.append(f"lock:{experiment_id}")
+        yield False
+
+    async def fail_run(self, *, db, experiment_id):
+        raise AssertionError("不应在拿不到锁时执行实验")
+
+    monkeypatch.setattr(experiment_service, "experiment_executor_lock", held_elsewhere)
+    monkeypatch.setattr(experiment_service.PlatformEvaluationService, "run_experiment", fail_run)
+
+    await run_worker.process_platform_evaluation_experiment({}, "pex_1")
+
+    assert calls == ["lock:pex_1"]

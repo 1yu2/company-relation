@@ -689,3 +689,121 @@ async def test_cancel_during_rollout_wins_over_late_result(evaluation_session, m
     assert [item["status"] for item in result["rollouts"]] == ["CANCELLED"]
     assert result["metrics"] == []
     assert [item["reason_code"] for item in result["failures"]] == ["cancelled"]
+
+
+@pytest.mark.unit
+async def test_cancel_during_last_task_is_not_overwritten_as_finished(evaluation_session, monkeypatch):
+    """取消落在最后一题执行期间：实验最终是 CANCELLED，而不是汇总成 FINISHED。"""
+    from yuxi.evaluation import experiment_service
+
+    service = PlatformEvaluationService()
+    experiment = await _fixture_experiment(service, evaluation_session)
+    original = experiment_service._run_fixture
+
+    async def cancel_on_last_task(task, rollout_id):
+        if task.task_key == "t2":
+            await service.cancel_experiment(db=evaluation_session, experiment_id=experiment["experiment_id"])
+        return await original(task, rollout_id)
+
+    monkeypatch.setattr(experiment_service, "_run_fixture", cancel_on_last_task)
+    result = await service.run_experiment(db=evaluation_session, experiment_id=experiment["experiment_id"])
+    stored = await service.get_experiment(db=evaluation_session, experiment_id=experiment["experiment_id"])
+
+    assert result["status"] == "CANCELLED"
+    assert stored["status"] == "CANCELLED"
+    assert sorted(item["status"] for item in result["rollouts"]) == ["CANCELLED", "COMPLETED"]
+
+
+@pytest.mark.unit
+async def test_cancel_stops_remaining_attempts_of_the_same_task(evaluation_session, monkeypatch):
+    """k>1 时取消发生在第 1 次尝试中，同一题的后续尝试不再执行。"""
+    from yuxi.evaluation import experiment_service
+
+    service = PlatformEvaluationService()
+    base = await _fixture_experiment(service, evaluation_session)
+    experiment = await service.create_experiment(
+        db=evaluation_session,
+        data={"dataset_version_id": base["dataset_version_id"], "max_attempts": 3},
+        created_by="admin",
+    )
+    original = experiment_service._run_fixture
+    executed = []
+
+    async def cancel_on_first_attempt(task, rollout_id):
+        executed.append(task.task_key)
+        await service.cancel_experiment(db=evaluation_session, experiment_id=experiment["experiment_id"])
+        return await original(task, rollout_id)
+
+    monkeypatch.setattr(experiment_service, "_run_fixture", cancel_on_first_attempt)
+    result = await service.run_experiment(db=evaluation_session, experiment_id=experiment["experiment_id"])
+
+    assert executed == ["t1"]
+    assert result["status"] == "CANCELLED"
+
+
+@pytest.mark.unit
+async def test_cancel_agent_experiment_cancels_in_flight_agent_runs(
+    evaluation_session, monkeypatch, fake_agent_snapshot
+):
+    """取消 Agent 实验时，同时取消在途题对应的 AgentRun；已结束的题不受影响。"""
+    from yuxi.evaluation import experiment_service
+    from yuxi.repositories.platform_evaluation_repository import PlatformEvaluationRepository
+
+    cancelled = []
+
+    async def fake_cancel_runs(db, rollout_ids):
+        cancelled.append(list(rollout_ids))
+
+    monkeypatch.setattr(experiment_service, "cancel_agent_runs_for_rollouts", fake_cancel_runs)
+    service = PlatformEvaluationService()
+    version = await _published_agent_version(service, evaluation_session, {})
+    experiment = await service.create_experiment(
+        db=evaluation_session,
+        data={"dataset_version_id": version["version_id"], "runner": "agent_run", "agent_slug": "default-chatbot"},
+        created_by="admin",
+    )
+    repo = PlatformEvaluationRepository(evaluation_session)
+    task = (await repo.list_tasks(version["version_id"]))[0]
+    for rollout_id, attempt, status in (("pro_done", 1, "COMPLETED"), ("pro_running", 2, "RUNNING")):
+        await repo.create_rollout(
+            {
+                "rollout_id": rollout_id,
+                "experiment_id": experiment["experiment_id"],
+                "task_id": task.task_id,
+                "attempt": attempt,
+                "idempotency_key": rollout_id,
+                "status": status,
+            }
+        )
+    await evaluation_session.commit()
+
+    result = await service.cancel_experiment(db=evaluation_session, experiment_id=experiment["experiment_id"])
+
+    assert result["status"] == "CANCELLED"
+    assert cancelled == [["pro_running"]]
+
+
+@pytest.mark.unit
+async def test_recovery_enqueue_is_deferred_past_executor_lock_ttl(monkeypatch):
+    """恢复作业延迟到执行锁 TTL 之后再跑，让崩溃进程遗留的锁先过期；手动触发不延迟。"""
+    from datetime import timedelta
+
+    from yuxi.evaluation import experiment_service
+
+    calls = []
+
+    class FakeQueue:
+        async def enqueue_job(self, name, experiment_id, **kwargs):
+            calls.append((name, experiment_id, kwargs))
+
+    async def fake_pool():
+        return FakeQueue()
+
+    monkeypatch.setattr(experiment_service, "get_arq_pool", fake_pool)
+    await experiment_service.enqueue_experiment("pex_1")
+    await experiment_service.enqueue_experiment("pex_1", recovery=True)
+
+    manual, recovery = calls
+    assert manual[2] == {"_job_id": "platform-eval:pex_1", "_defer_by": None}
+    assert recovery[2]["_job_id"].startswith("platform-eval:pex_1:recovery:")
+    assert recovery[2]["_defer_by"] == timedelta(seconds=experiment_service.EXPERIMENT_LOCK_TTL_SECONDS)

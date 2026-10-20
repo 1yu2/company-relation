@@ -701,10 +701,15 @@ async def process_due_diligence_evidence_index(ctx, task_id: str) -> None:
 async def process_platform_evaluation_experiment(ctx, experiment_id: str) -> None:
     """由 ARQ 后台执行平台评测实验，避免在 HTTP 请求内同步跑完整轮实验。"""
     del ctx
-    from yuxi.evaluation.experiment_service import PlatformEvaluationService
+    from yuxi.evaluation.experiment_service import PlatformEvaluationService, experiment_executor_lock
 
-    async with pg_manager.get_async_session_context() as session:
-        await PlatformEvaluationService().run_experiment(db=session, experiment_id=experiment_id)
+    async with experiment_executor_lock(experiment_id) as acquired:
+        if not acquired:
+            # 另一个执行者正在运行该实验（重复投递或恢复作业），本作业直接结束，避免并发执行同一实验。
+            logger.info(f"Platform evaluation experiment {experiment_id} is already running elsewhere; skip")
+            return
+        async with pg_manager.get_async_session_context() as session:
+            await PlatformEvaluationService().run_experiment(db=session, experiment_id=experiment_id)
 
 
 async def _worker_startup(ctx):
