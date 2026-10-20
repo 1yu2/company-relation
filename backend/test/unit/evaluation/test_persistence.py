@@ -1,6 +1,7 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from yuxi.evaluation.experiment_service import PlatformEvaluationService
 from yuxi.repositories.platform_evaluation_repository import PlatformEvaluationRepository
 from yuxi.storage.postgres.models_business import Base
 from yuxi.storage.postgres.models_evaluation import (
@@ -41,6 +42,28 @@ async def persistence_session():
     async with factory() as session:
         yield session
     await engine.dispose()
+
+
+@pytest.mark.unit
+async def test_dataset_page_includes_latest_version_task_count(persistence_session):
+    repo = PlatformEvaluationRepository(persistence_session)
+    await repo.create_dataset(
+        {"dataset_id": "dataset-summary", "name": "summary", "description": "", "source_kind": "fixture", "created_by": "admin"}
+    )
+    service = PlatformEvaluationService(repository=repo)
+    await service.create_version(
+        db=persistence_session,
+        dataset_id="dataset-summary",
+        source={"marker": "test"},
+        tasks=[{"task_key": "one", "input": {"query": "q"}, "expected": {}}],
+    )
+
+    page = await service.list_datasets_page(db=persistence_session)
+
+    summary = next(item for item in page["items"] if item["dataset_id"] == "dataset-summary")
+    assert summary["item_count"] == 1
+    assert summary["latest_version"]
+    assert summary["latest_version_status"] == "draft"
 
 
 @pytest.mark.unit

@@ -698,6 +698,28 @@ async def process_due_diligence_evidence_index(ctx, task_id: str) -> None:
     await evidence_index_service.execute_task(task_id)
 
 
+async def process_platform_evaluation_experiment(ctx, experiment_id: str) -> None:
+    """由 ARQ 后台执行平台评测实验，避免在 HTTP 请求内同步跑完整轮实验。"""
+    del ctx
+    from yuxi.evaluation.experiment_service import PlatformEvaluationService, experiment_executor_lock
+
+    async with experiment_executor_lock(experiment_id) as acquired:
+        if not acquired:
+            # 另一个执行者正在运行该实验（重复投递或恢复作业），本作业直接结束，避免并发执行同一实验。
+            logger.info(f"Platform evaluation experiment {experiment_id} is already running elsewhere; skip")
+            return
+        try:
+            async with pg_manager.get_async_session_context() as session:
+                await PlatformEvaluationService().run_experiment(db=session, experiment_id=experiment_id)
+        except Exception as exc:
+            # 作业异常退出时实验会停在 RUNNING；标记为 FAILED 并保留错误，页面可以看到原因并重新运行。
+            async with pg_manager.get_async_session_context() as session:
+                await PlatformEvaluationService().mark_failed(
+                    db=session, experiment_id=experiment_id, error_message=str(exc)
+                )
+            raise
+
+
 async def _worker_startup(ctx):
     """初始化 worker 依赖。"""
 
@@ -721,6 +743,10 @@ async def _worker_startup(ctx):
     await due_diligence_report_service.recover_pending_tasks()
     await graph_projection_service.recover_pending_tasks()
     await evidence_index_service.recover_pending_tasks()
+    from yuxi.evaluation.experiment_service import PlatformEvaluationService
+
+    async with pg_manager.get_async_session_context() as session:
+        await PlatformEvaluationService().resume_incomplete_experiments(db=session)
 
 
 async def _worker_shutdown(ctx):
@@ -737,6 +763,7 @@ class WorkerSettings:
         func(process_due_diligence_report, timeout=6 * 60 * 60, max_tries=1),
         func(process_due_diligence_graph_projection, timeout=6 * 60 * 60, max_tries=1),
         func(process_due_diligence_evidence_index, timeout=6 * 60 * 60, max_tries=1),
+        func(process_platform_evaluation_experiment, timeout=6 * 60 * 60, max_tries=1),
     ]
     max_tries = 2
     retry_jobs = True

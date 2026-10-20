@@ -241,6 +241,14 @@ class ProvisionerSandboxProvider:
                 record=record,
             )
 
+    def release(self, thread_id: str, *, uid: str) -> None:
+        """删除主线程（文件与 Skills 共用同一线程）的沙盒，并清理本进程缓存；沙盒已不存在时视为已释放。"""
+        cache_key = _sandbox_key(uid, thread_id, thread_id)
+        with self._thread_lock(cache_key):
+            self._connections.pop(cache_key, None)
+            self._last_touch_at.pop(cache_key, None)
+            self._client.delete(sandbox_id_for_thread(thread_id, thread_id, uid=uid))
+
     def shutdown(self) -> None:
         with self._lock:
             connections = list(self._connections.values())
