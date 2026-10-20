@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -19,6 +20,8 @@ from yuxi.evaluation.company_due_diligence import METRIC_VERSION as CDD_METRIC_V
 from yuxi.evaluation.company_due_diligence import evaluate_company_due_diligence
 from yuxi.evaluation.fault_recovery import METRIC_VERSION as FAULT_RECOVERY_METRIC_VERSION
 from yuxi.evaluation.fault_recovery import evaluate_fault_recovery
+from yuxi.evaluation.llm_judge import METRIC_VERSION as LLM_JUDGE_METRIC_VERSION
+from yuxi.evaluation.llm_judge import evaluate_open_answer
 from yuxi.evaluation.metrics import (
     METRIC_VERSION,
     aggregate_fault_recovery,
@@ -55,6 +58,7 @@ PROTOCOL_EVALUATORS = {
     "agent_final_answer_v1": (evaluate_agent_final_answer, AGENT_FINAL_ANSWER_METRIC_VERSION),
     "agent_fault_recovery_v1": (evaluate_fault_recovery, FAULT_RECOVERY_METRIC_VERSION),
     "agent_rag_answer_v1": (evaluate_rag_answer, RAG_ANSWER_METRIC_VERSION),
+    "agent_open_answer_v1": (evaluate_open_answer, LLM_JUDGE_METRIC_VERSION),
 }
 ALLOWED_SOURCE_KINDS = {"agent", "tool_mcp", "rag", "graph", "fixture", "company_due_diligence"}
 
@@ -495,6 +499,9 @@ class PlatformEvaluationService:
                 if experiment.runner == "company_due_diligence"
                 else PROTOCOL_EVALUATORS[task.protocol][0](_task_dict(task), actual, events)
             )
+            # LLM Judge 类 evaluator 需要调用模型，是协程；确定性 evaluator 直接返回结果。
+            if inspect.isawaitable(metric_values):
+                metric_values = await metric_values
             task_pass = bool(metric_values[-1]["value"])
             duration_ms = (utc_now_naive() - started).total_seconds() * 1000
             await repo.update_rollout(
