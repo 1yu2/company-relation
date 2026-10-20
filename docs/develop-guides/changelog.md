@@ -12,7 +12,7 @@
 
 - 区分 API 存活与发布就绪：保留轻量公开 `/api/system/health`，新增 `/api/system/ready` 检查 PostgreSQL、Redis 和带 TTL 的 worker heartbeat；知识库、图谱和企业 MySQL 等可选能力不阻塞 LITE 就绪。
 
-- 建立只读 Docker 质量门禁 `make verify`：按改动范围运行后端 unit、Ruff、前端 unit、只读 ESLint、build 和 diff 检查；门禁不会自动格式化文件，已有基线失败会明确阻断并报告。
+- 建立只读质量门禁 `make verify` 与 GitHub Actions CI：两者运行同一份清单（后端 unit、Ruff、前端 unit、ESLint、build、diff 检查），CI 以 native 模式直接执行；门禁不自动格式化，基线失败会明确阻断。
 
 - 明确企业尽调权限边界：当前报告、任务、图投影和文本证据索引由管理员全局共享，普通用户不开放管理 API；暂不新增用户/部门归属或租户隔离。
 
