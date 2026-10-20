@@ -746,3 +746,45 @@ async def test_build_agent_input_context_keeps_prompt_when_workspace_agent_conte
     )
 
     assert context["system_prompt"] == "原始系统提示词"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["error", "success"])
+async def test_save_tool_message_preserves_status(status):
+    """工具消息的真实状态与输出应一起写入数据库。"""
+    from unittest.mock import AsyncMock
+
+    from langchain_core.messages import ToolMessage
+
+    repo = SimpleNamespace(update_tool_call_output=AsyncMock())
+    message = ToolMessage(content="command output", tool_call_id="call-1", status=status)
+    await svc._save_tool_message(repo, message.model_dump())
+    repo.update_tool_call_output.assert_awaited_once_with(
+        langgraph_tool_call_id="call-1", tool_output="command output", status=status
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("message", "expected_status"),
+    [
+        ({"role": "tool", "tool_call_id": "call-1", "content": "command output"}, "success"),
+        (
+            {"role": "tool", "tool_call_id": "call-1", "content": "command output", "status": "error"},
+            "error",
+        ),
+    ],
+)
+async def test_save_dict_tool_message_uses_langchain_default_status(message, expected_status):
+    """普通字典工具消息缺少状态时应沿用 ToolMessage 的默认成功状态。"""
+    from unittest.mock import AsyncMock
+
+    repo = SimpleNamespace(update_tool_call_output=AsyncMock())
+
+    await svc._save_tool_message(repo, message)
+
+    repo.update_tool_call_output.assert_awaited_once_with(
+        langgraph_tool_call_id="call-1",
+        tool_output="command output",
+        status=expected_status,
+    )

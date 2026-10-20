@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from deepagents.backends.composite import (
@@ -10,6 +11,7 @@ from deepagents.backends.composite import (
 )
 from deepagents.backends.protocol import FileInfo, GlobResult
 from deepagents.middleware.filesystem import FilesystemMiddleware
+from langchain_core.messages import ToolMessage
 
 from yuxi.agents.skills.service import (
     get_thread_skills_root_dir,
@@ -97,6 +99,7 @@ class YuxiFilesystemMiddleware(FilesystemMiddleware):
 
     def wrap_tool_call(self, request, handler):
         tool_result = handler(request)
+        _mark_execute_error(request.tool_call["name"], tool_result)
 
         if self._tool_token_limit_before_evict is None:
             return tool_result
@@ -107,6 +110,7 @@ class YuxiFilesystemMiddleware(FilesystemMiddleware):
 
     async def awrap_tool_call(self, request, handler):
         tool_result = await handler(request)
+        _mark_execute_error(request.tool_call["name"], tool_result)
 
         if self._tool_token_limit_before_evict is None:
             return tool_result
@@ -114,6 +118,20 @@ class YuxiFilesystemMiddleware(FilesystemMiddleware):
             return tool_result
 
         return await self._aintercept_large_tool_result(tool_result, request.runtime)
+
+
+def _mark_execute_error(tool_name: str, result) -> None:
+    """根据 DeepAgents 的末尾退出码标记修正 execute 状态。"""
+    if tool_name != "execute" or not isinstance(result, ToolMessage) or not isinstance(result.content, str):
+        return
+    # 必须在大结果卸载前检查；只认三方工具追加的结尾标记，不解释命令正文。
+    marker = re.search(
+        r"\n\[Command failed with exit code (-?\d+)\]"
+        r"(?:\n\[Output was truncated due to size limits\])?\Z",
+        result.content,
+    )
+    if marker and int(marker[1]) != 0:
+        result.status = "error"
 
 
 @dataclass(frozen=True)

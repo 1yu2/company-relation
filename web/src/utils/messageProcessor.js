@@ -30,6 +30,7 @@ export class MessageProcessor {
             const toolResponse = toolResponseMap.get(toolCall.id)
             return {
               ...toolCall,
+              status: toolResponse ? toolResponse.status : toolCall.status,
               tool_call_result: toolResponse || null
             }
           })

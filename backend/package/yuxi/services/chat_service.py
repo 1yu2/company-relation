@@ -455,7 +455,7 @@ async def _save_tool_message(conv_repo: ConversationRepository, msg_dict: dict) 
     await conv_repo.update_tool_call_output(
         langgraph_tool_call_id=tool_call_id,
         tool_output=tool_output,
-        status="success",
+        status=msg_dict.get("status", "success"),
     )
 
 

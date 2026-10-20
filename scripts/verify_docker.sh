@@ -31,12 +31,19 @@ api uv run --group test pytest --import-mode=importlib \
   test/unit/routers/test_system_router.py \
   test/unit/services/test_run_worker.py \
   test/unit/services/test_chat_service_sync.py \
+  test/unit/services/test_conversation_queue_history.py \
+  test/unit/backends/test_execute_status.py \
   test/unit/services/test_run_submission_service.py \
   test/unit/services/test_agent_run_service.py \
   test/unit/backends/test_sandbox_backends.py \
   -m "not slow"
 api uv run --group dev ruff check server package
 api uv run --group dev ruff format --check \
+  package/yuxi/agents/backends/composite.py \
+  package/yuxi/services/conversation_service.py \
+  test/unit/backends/test_execute_status.py \
+  test/unit/services/test_chat_service_sync.py \
+  test/unit/services/test_conversation_queue_history.py \
   package/yuxi/agents/backends/sandbox/provider.py \
   package/yuxi/company_due_diligence/evidence/service.py \
   package/yuxi/company_due_diligence/graph/service.py \

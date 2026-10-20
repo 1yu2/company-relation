@@ -1018,7 +1018,9 @@ async def get_thread_history_view(
                     "name": tc.tool_name,
                     "function": {"name": tc.tool_name},
                     "args": tc.tool_input or {},
-                    "tool_call_result": {"content": (tc.tool_output or "")} if tc.status == "success" else None,
+                    "tool_call_result": {"content": (tc.tool_output or "")}
+                    if tc.status in {"success", "error"}
+                    else None,
                     "status": tc.status,
                     "error_message": tc.error_message,
                 }
