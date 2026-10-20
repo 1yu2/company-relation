@@ -1,338 +1,258 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
-import {
-  CheckCircle2,
-  ChevronRight,
-  CircleAlert,
-  ClipboardCheck,
-  Clock3,
-  Database,
-  FlaskConical,
-  ListChecks,
-  RefreshCw,
-  Route,
-  ShieldCheck
-} from 'lucide-vue-next'
-
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { CircleAlert, GitCompareArrows, Play, RefreshCw, Square } from 'lucide-vue-next'
 import PageHeader from '@/components/shared/PageHeader.vue'
 import { evaluationApi } from '@/apis/evaluation_api'
+import {
+  buildLatencyRows,
+  buildMetricRows,
+  buildRolloutRows,
+  experimentIdentity,
+  formatCount,
+  formatMs,
+  formatPValue,
+  formatPercent,
+  formatSigned,
+  isActiveExperiment,
+  metricLabel,
+  reasonLabel,
+  statusMeta
+} from '@/utils/evaluationView'
 
-const pipelineSteps = [
-  { title: '输入', description: 'Query + 参考答案', icon: ClipboardCheck },
-  { title: '执行', description: 'Agent Harness', icon: FlaskConical },
-  { title: '轨迹', description: '状态与工具事件', icon: Route },
-  { title: '评估', description: '确定性指标', icon: ShieldCheck },
-  { title: '聚合', description: '全局结果与失败', icon: ListChecks }
-]
+const POLL_INTERVAL_MS = 5000
 
-const fallbackDatasets = [
-  {
-    name: 'Agent 基础问答 Fixture',
-    version: 'v0.1',
-    tasks: 10,
-    source: '前端可重复样例',
-    status: '已发布'
-  },
-  {
-    name: 'Tool / MCP 契约样例',
-    version: 'v0.1',
-    tasks: 0,
-    source: '待接入平台 API',
-    status: '草稿'
-  }
-]
-
-const fallbackExperiments = [
-  {
-    id: 'fixture-baseline',
-    name: 'Fixture Baseline · 确定性指标',
-    agent: '通用 Agent（fixture）',
-    dataset: 'Agent 基础问答 Fixture v0.1',
-    status: '已完成',
-    passRate: '80%',
-    passed: '8 / 10',
-    latency: '—',
-    createdAt: '本地示例'
-  }
-]
-
-const fallbackFixtureResults = [
-  {
-    id: 'qa-001',
-    query: '评测平台的最小输入和输出是什么？',
-    expected: '输入是 query 与参考答案，输出包含 Agent 最终答案、轨迹摘要和指标结果。',
-    actual: '输入是 query 与参考答案，输出包含最终答案、轨迹摘要和指标结果。',
-    status: '通过',
-    metrics: { answerMatch: '通过', toolPath: '不适用', trace: '通过', task: '通过' }
-  },
-  {
-    id: 'qa-002',
-    query: '为什么评测运行不能出现在普通聊天历史？',
-    expected: '评测线程使用 internal 可见性，只通过评测平台查询，不能污染普通聊天。',
-    actual: '评测线程使用 internal 可见性，并从普通聊天列表中隐藏。',
-    status: '通过',
-    metrics: { answerMatch: '通过', toolPath: '不适用', trace: '通过', task: '通过' }
-  },
-  {
-    id: 'qa-003',
-    query: 'P95 延迟在没有真实 Agent 调用时应该如何展示？',
-    expected: '没有真实调用数据时返回 null 或短横线，不能使用固定值冒充实测结果。',
-    actual: '当前页面展示短横线，标记为未执行真实调用。',
-    status: '通过',
-    metrics: { answerMatch: '通过', toolPath: '不适用', trace: '通过', task: '通过' }
-  },
-  {
-    id: 'qa-004',
-    query: 'Tool 路径指标主要检查什么？',
-    expected: '检查工具选择、调用顺序及参数契约是否符合预期。',
-    actual: '检查工具选择和调用顺序。',
-    status: '通过',
-    metrics: { answerMatch: '通过', toolPath: '通过', trace: '通过', task: '通过' }
-  },
-  {
-    id: 'qa-005',
-    query: '当前平台是否执行真实模型调用？',
-    expected: '否，当前阶段只使用 fake / fixture 验证控制面和指标语义。',
-    actual: '是，页面会自动调用当前默认模型。',
-    status: '失败',
-    failure: '答案与当前阶段约束相反，属于 fixture 中的预置失败样例。',
-    metrics: { answerMatch: '失败', toolPath: '不适用', trace: '通过', task: '失败' }
-  },
-  {
-    id: 'qa-006',
-    query: '确定性指标和 LLM Judge 是否应该混为一个分数？',
-    expected: '不应该。两者需要独立记录，LLM Judge 不能覆盖确定性指标。',
-    actual: '不应该，确定性指标和 LLM Judge 应独立记录。',
-    status: '通过',
-    metrics: { answerMatch: '通过', toolPath: '不适用', trace: '通过', task: '通过' }
-  },
-  {
-    id: 'qa-007',
-    query: '评测平台的事实结果应该保存在哪里？',
-    expected: 'PostgreSQL 保存可长期查询的评测事实，Redis 只负责队列和短期事件。',
-    actual: 'PostgreSQL 保存评测事实，Redis 保存队列和事件。',
-    status: '通过',
-    metrics: { answerMatch: '通过', toolPath: '不适用', trace: '通过', task: '通过' }
-  },
-  {
-    id: 'qa-008',
-    query: '结果页为什么要保留每条 rollout，而不是只保存总分？',
-    expected: '保留单条 rollout 才能追溯输入、输出、轨迹、失败分类和分位延迟。',
-    actual: '为了保留单题结果，便于追溯失败原因。',
-    status: '通过',
-    metrics: { answerMatch: '通过', toolPath: '不适用', trace: '通过', task: '通过' }
-  },
-  {
-    id: 'qa-009',
-    query: '当前页面的数据来源是什么？',
-    expected: '当前数据来自前端 fixture，仅用于展示和回归 UI，不代表生产评测结果。',
-    actual: '当前数据来自生产 PostgreSQL 中的真实实验记录。',
-    status: '失败',
-    failure: '数据来源描述错误，页面顶部已明确标记 Fixture 模式。',
-    metrics: { answerMatch: '失败', toolPath: '不适用', trace: '通过', task: '失败' }
-  },
-  {
-    id: 'qa-010',
-    query: '企业尽调是否应该拥有一套独立评测页面？',
-    expected: '不应该。企业尽调作为普通 agent 使用统一平台能力，不复制专属评测页面。',
-    actual: '不应该，企业尽调可以复用统一平台的数据集和 Evaluator。',
-    status: '通过',
-    metrics: { answerMatch: '通过', toolPath: '不适用', trace: '通过', task: '通过' }
-  }
-]
-
-const fallbackMetricDefinitions = [
-  {
-    name: 'answer_match',
-    label: '答案匹配',
-    description: '对最终答案做归一化后，与参考答案进行确定性匹配。'
-  },
-  {
-    name: 'task_success',
-    label: '任务完成',
-    description: '检查是否到达题目预期的终态，不只判断文本是否相似。'
-  },
-  {
-    name: 'tool_path',
-    label: '工具路径',
-    description: '检查工具选择、调用顺序和参数契约；不需要工具的题目记为不适用。'
-  },
-  {
-    name: 'trace_completeness',
-    label: '轨迹完整',
-    description: '检查输入、执行、工具事件、输出和终态等可观察事件是否齐全。'
-  }
-]
-
-const datasets = ref(fallbackDatasets)
-const experiments = ref(fallbackExperiments)
-const fixtureResults = ref(fallbackFixtureResults)
-const metricDefinitions = ref(fallbackMetricDefinitions)
-const selectedExperimentId = ref('fixture-baseline')
-const sourceFilter = ref('')
+const experiments = ref([])
+const selectedId = ref('')
+const detail = ref(null)
+const tasksById = ref(new Map())
+const tasksVersionId = ref('')
+const loading = ref(false)
+const actionPending = ref(false)
+const error = ref('')
+const onlyFailures = ref(false)
 const traceByRollout = ref(new Map())
 const traceLoading = ref(new Set())
-const experimentAggregate = ref({})
-const lastRefreshed = ref('刚刚')
-const isLoading = ref(false)
-const loadError = ref('')
-const usingApiData = ref(false)
-const selectedExperiment = computed(
-  () =>
-    experiments.value.find((experiment) => experiment.id === selectedExperimentId.value) ||
-    experiments.value[0] || {
-      id: '',
-      name: '暂无实验',
-      agent: '—',
-      dataset: '—',
-      status: '未测量',
-      passRate: '—',
-      passed: '—',
-      latency: '—',
-      createdAt: '—'
-    }
-)
+const baselineId = ref(undefined)
+const comparison = ref(null)
+const compareError = ref('')
+const compareLoading = ref(false)
+let pollTimer = null
 
-const overviewCards = computed(() => {
-  const aggregate = experimentAggregate.value || {}
-  const taskCount = selectedExperiment.value.taskCount ?? fixtureResults.value.length
-  const passedCount = fixtureResults.value.filter((item) => item.status === '通过').length
-  const passAtOne = aggregate['pass@1']
-  return [
-    { label: '数据集', value: String(datasets.value.length), helper: sourceFilter.value || '全部来源', icon: Database, tone: 'violet' },
-    { label: '评测题目', value: String(taskCount), helper: `${passedCount} 条已通过`, icon: ListChecks, tone: 'blue' },
-    { label: '实验批次', value: String(experiments.value.length), helper: '平台统一实验', icon: FlaskConical, tone: 'orange' },
-    { label: 'pass@1', value: typeof passAtOne === 'number' ? `${Math.round(passAtOne * 100)}%` : '—', helper: aggregate.metric_version || '未测量', icon: CheckCircle2, tone: 'green' },
-    { label: 'P95 延迟', value: '—', helper: 'Fixture 未测量', icon: Clock3, tone: 'gray' }
+const identity = computed(() => experimentIdentity(detail.value))
+const rows = computed(() => buildRolloutRows(detail.value, tasksById.value))
+const visibleRows = computed(() =>
+  onlyFailures.value ? rows.value.filter((row) => row.verdict !== 'passed') : rows.value
+)
+const metricRows = computed(() => buildMetricRows(detail.value?.metric_breakdown))
+const resultMetricRows = computed(() => metricRows.value.filter((row) => row.layer === 'result'))
+const trajectoryMetricRows = computed(() =>
+  metricRows.value.filter((row) => row.layer !== 'result')
+)
+const performance = computed(() => detail.value?.performance || {})
+const latencyRows = computed(() => buildLatencyRows(performance.value))
+const breakdown = computed(() => detail.value?.metric_breakdown || {})
+const taskCount = computed(() => identity.value.taskCount ?? tasksById.value.size)
+const finishedCount = computed(() =>
+  Object.entries(performance.value.rollout_status || {})
+    .filter(([status]) => status !== 'RUNNING')
+    .reduce((sum, [, count]) => sum + count, 0)
+)
+const expectedRollouts = computed(() => (taskCount.value || 0) * (detail.value?.max_attempts || 1))
+const isActive = computed(() => isActiveExperiment(detail.value?.status))
+const canRun = computed(() => detail.value?.status === 'DRAFT')
+// 快照里记录了评分器版本时，版本不同的实验无法对比，直接不列出；旧实验没有快照，交给后端校验。
+const isComparableBaseline = (item) => {
+  const current = identity.value.evaluators.join()
+  const other = experimentIdentity(item).evaluators.join()
+  return (
+    item.experiment_id !== selectedId.value &&
+    item.dataset_version_id === detail.value?.dataset_version_id &&
+    item.status === 'FINISHED' &&
+    (!current || !other || current === other)
+  )
+}
+const baselineOptions = computed(() =>
+  experiments.value.filter(isComparableBaseline).map((item) => {
+    const info = experimentIdentity(item)
+    return {
+      value: item.experiment_id,
+      label: `${info.agent} · ${info.model} · ${formatTime(item.created_at)}`
+    }
+  })
+)
+const keyStats = computed(() => {
+  const taskPass = breakdown.value.task_pass || {}
+  const answerValue = breakdown.value.answer_value
+  const counts = taskPass.status_counts || {}
+  const stats = [
+    {
+      label: '任务成功率',
+      value: formatPercent(taskPass.pass_rate),
+      hint: `${counts.passed || 0} / ${(counts.passed || 0) + (counts.failed || 0)} 题通过`
+    },
+    answerValue && {
+      label: '答案值正确率',
+      value: formatPercent(answerValue.pass_rate),
+      hint: '不考虑格式，只看值是否正确'
+    },
+    (detail.value?.max_attempts || 1) > 1 && {
+      label: `pass^${detail.value.max_attempts}`,
+      value: formatPercent(detail.value.aggregate?.['pass^k']),
+      hint: '每次尝试都通过的题占比'
+    },
+    {
+      label: '完成情况',
+      value: `${finishedCount.value} / ${expectedRollouts.value || '—'}`,
+      hint: rolloutStatusText(performance.value.rollout_status)
+    }
   ]
+  return stats.filter(Boolean)
 })
 
-const refreshTimestamp = () => {
-  lastRefreshed.value = new Intl.DateTimeFormat('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  }).format(new Date())
+function formatTime(value) {
+  return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—'
 }
 
-const unwrapItems = (response) => {
-  const payload = response?.data
-  if (Array.isArray(payload)) return { items: payload, nextCursor: null }
-  return { items: payload?.items || [], nextCursor: payload?.next_cursor || null }
+function formatShortTime(value) {
+  if (!value) return '—'
+  const date = new Date(value)
+  const pad = (number) => String(number).padStart(2, '0')
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-const refreshFixture = async () => {
-  isLoading.value = true
-  loadError.value = ''
+function rolloutStatusText(statusCounts) {
+  const parts = Object.entries(statusCounts || {}).map(
+    ([status, count]) => `${statusMeta(status).label} ${count}`
+  )
+  return parts.length ? parts.join(' · ') : '尚未开始'
+}
+
+const shortHash = (value) => (value ? String(value).slice(0, 12) : '—')
+const listText = (value) =>
+  value === null || value === undefined ? '默认' : value.length ? value.join('、') : '无'
+const formatArgs = (args) => JSON.stringify(args ?? {}, null, 2)
+
+const describeError = (err, fallback) =>
+  err?.response?.data?.detail?.message || err?.message || fallback
+
+async function loadExperiments() {
+  const response = await evaluationApi.listExperiments('', { limit: 50 })
+  experiments.value = response?.data?.items || []
+  if (!selectedId.value && experiments.value.length)
+    selectedId.value = experiments.value[0].experiment_id
+}
+
+async function loadDetail() {
+  if (!selectedId.value) {
+    detail.value = null
+    return
+  }
+  // 快速切换实验时，较慢返回的旧请求不能覆盖当前选中实验的详情。
+  const requestedId = selectedId.value
+  const response = await evaluationApi.getExperiment(requestedId)
+  if (requestedId !== selectedId.value) return
+  const versionId = response?.data?.dataset_version_id
+  if (versionId && versionId !== tasksVersionId.value) {
+    const version = await evaluationApi.getVersion(versionId)
+    if (requestedId !== selectedId.value) return
+    tasksById.value = new Map((version?.data?.tasks || []).map((task) => [task.task_id, task]))
+    tasksVersionId.value = versionId
+  }
+  detail.value = response?.data || null
+  // 运行中轮询的是详情；同步列表里的状态，避免同一实验在两处显示不同状态。
+  const listed = experiments.value.find((item) => item.experiment_id === requestedId)
+  if (listed && detail.value) listed.status = detail.value.status
+  schedulePoll()
+}
+
+function schedulePoll() {
+  clearTimeout(pollTimer)
+  pollTimer = null
+  if (!isActive.value) return
+  pollTimer = setTimeout(async () => {
+    try {
+      await loadDetail()
+      if (!isActive.value) await loadExperiments()
+    } catch (err) {
+      error.value = describeError(err, '刷新实验进度失败')
+    }
+  }, POLL_INTERVAL_MS)
+}
+
+async function refresh() {
+  loading.value = true
+  error.value = ''
   try {
-    const [datasetResponse, experimentResponse] = await Promise.all([
-      evaluationApi.listDatasets(sourceFilter.value),
-      evaluationApi.listExperiments(sourceFilter.value)
-    ])
-    const datasetItems = unwrapItems(datasetResponse).items
-    const experimentItems = unwrapItems(experimentResponse).items
-    if (!Array.isArray(datasetItems) || !Array.isArray(experimentItems)) {
-      throw new Error('评测 API 返回格式不正确')
-    }
-    datasets.value = datasetItems.map((dataset) => ({
-      name: dataset.name,
-      version: dataset.latest_version || dataset.source_kind || '未指定来源',
-      tasks: dataset.item_count || dataset.task_count || 0,
-      source: dataset.source_kind || '平台评测来源',
-      status: dataset.status || '可用',
-      checksum: dataset.checksum
-    }))
-    experiments.value = experimentItems.map((experiment) => ({
-      id: experiment.experiment_id,
-      name: experiment.experiment_id,
-      agent: experiment.agent_slug || experiment.source_kind || '平台评测来源',
-      dataset: experiment.dataset_version_id,
-      status: experiment.status || '未测量',
-      passRate: '—',
-      passed: '待加载',
-      latency: '—',
-      createdAt: experiment.created_at,
-      sourceKind: experiment.source_kind,
-      taskCount: 0
-    }))
-    usingApiData.value = true
-    if (experiments.value.length > 0) {
-      selectedExperimentId.value = experiments.value[0].id
-      await loadExperimentDetails(experiments.value[0].id)
-    } else {
-      selectedExperimentId.value = ''
-      fixtureResults.value = []
-    }
-    refreshTimestamp()
-  } catch (error) {
-    loadError.value = error?.message || '评测数据加载失败'
-    usingApiData.value = false
+    await loadExperiments()
+    await loadDetail()
+  } catch (err) {
+    error.value = describeError(err, '加载评测数据失败')
   } finally {
-    isLoading.value = false
+    loading.value = false
   }
 }
 
-const loadExperimentDetails = async (experimentId) => {
-  if (!usingApiData.value || !experimentId) return
-  const response = await evaluationApi.getExperiment(experimentId)
-  const detail = response?.data
-  if (!detail) return
-  const aggregate = detail.aggregate || {}
-  experimentAggregate.value = aggregate
-  let taskById = new Map()
+async function selectExperiment(id) {
+  if (id === selectedId.value) return
+  selectedId.value = id
+  traceByRollout.value = new Map()
+  baselineId.value = undefined
+  comparison.value = null
+  compareError.value = ''
+  await refreshDetail()
+}
+
+async function refreshDetail() {
+  error.value = ''
   try {
-    const versionResponse = await evaluationApi.getVersion(detail.dataset_version_id)
-    taskById = new Map((versionResponse?.data?.tasks || []).map((task) => [task.task_id, task]))
-  } catch {
-    taskById = new Map()
+    await loadDetail()
+  } catch (err) {
+    error.value = describeError(err, '加载实验详情失败')
   }
-  const metricByRollout = new Map()
-  for (const metric of detail.metrics || []) {
-    const current = metricByRollout.get(metric.rollout_id) || {}
-    current[metric.metric_name] = metric.status
-    metricByRollout.set(metric.rollout_id, current)
-  }
-  const target = experiments.value.find((experiment) => experiment.id === experimentId)
-  if (target) {
-    const passRate = aggregate['pass@1']
-    target.passRate = typeof passRate === 'number' ? `${Math.round(passRate * 100)}%` : '—'
-    target.passed = `${detail.rollouts?.filter((rollout) => metricByRollout.get(rollout.rollout_id)?.task_pass === 'passed').length || 0} / ${detail.rollouts?.length || 0}`
-    target.taskCount = detail.rollouts?.length || 0
-  }
-  const failuresByRollout = new Map()
-  for (const failure of detail.failures || []) failuresByRollout.set(failure.rollout_id, failure.message || failure.reason_code)
-  metricDefinitions.value = [...new Set((detail.metrics || []).map((item) => item.metric_name))].map((name) => ({
-    name,
-    label: name,
-    description: `后端返回的 ${name} 确定性结果。`
-  }))
-  fixtureResults.value = (detail.rollouts || []).map((rollout, index) => ({
-    id: rollout.rollout_id,
-    query: taskById.get(rollout.task_id)?.input?.query || rollout.task_id,
-    expected: taskById.has(rollout.task_id) ? JSON.stringify(taskById.get(rollout.task_id).expected || {}) : '由数据集版本提供',
-    actual: rollout.actual_output ? JSON.stringify(rollout.actual_output) : '未产生输出',
-    status: metricByRollout.get(rollout.rollout_id)?.task_pass === 'passed' ? '通过' : rollout.status === 'RUNNING' ? '运行中' : rollout.status === 'CANCELLED' ? '已取消' : '失败',
-    failure: failuresByRollout.get(rollout.rollout_id),
-    metrics: metricByRollout.get(rollout.rollout_id) || { task_pass: '未测量' },
-    index,
-    rolloutStatus: rollout.status,
-    attempt: rollout.attempt,
-    duration: rollout.duration_ms
-  }))
 }
 
-const loadTrace = async (rolloutId) => {
-  if (!usingApiData.value || !rolloutId || traceByRollout.value.has(rolloutId)) return
+async function runAction(action) {
+  actionPending.value = true
+  error.value = ''
+  try {
+    await (action === 'run'
+      ? evaluationApi.runExperiment(selectedId.value)
+      : evaluationApi.cancelExperiment(selectedId.value))
+    await loadDetail()
+    await loadExperiments()
+  } catch (err) {
+    error.value = describeError(err, action === 'run' ? '启动实验失败' : '取消实验失败')
+  } finally {
+    actionPending.value = false
+  }
+}
+
+async function compareWithBaseline() {
+  if (!baselineId.value) return
+  compareLoading.value = true
+  compareError.value = ''
+  comparison.value = null
+  try {
+    const response = await evaluationApi.compareExperiments(baselineId.value, selectedId.value)
+    comparison.value = response?.data || null
+  } catch (err) {
+    compareError.value = describeError(err, '对比失败')
+  } finally {
+    compareLoading.value = false
+  }
+}
+
+async function loadTrace(rolloutId) {
+  if (traceByRollout.value.has(rolloutId) || traceLoading.value.has(rolloutId)) return
   traceLoading.value = new Set(traceLoading.value).add(rolloutId)
   try {
     const response = await evaluationApi.getTrace(rolloutId)
-    const next = new Map(traceByRollout.value)
-    next.set(rolloutId, response?.data || { events: [] })
-    traceByRollout.value = next
-  } catch (error) {
-    const next = new Map(traceByRollout.value)
-    next.set(rolloutId, { events: [], error: error?.message || 'Trace 加载失败' })
-    traceByRollout.value = next
+    traceByRollout.value = new Map(traceByRollout.value).set(
+      rolloutId,
+      response?.data?.events || []
+    )
+  } catch {
+    traceByRollout.value = new Map(traceByRollout.value).set(rolloutId, null)
   } finally {
     const next = new Set(traceLoading.value)
     next.delete(rolloutId)
@@ -340,1066 +260,1071 @@ const loadTrace = async (rolloutId) => {
   }
 }
 
-const onResultToggle = (result, event) => {
-  if (event.target.open) loadTrace(result.id)
-}
+const deltaRows = computed(() => {
+  const delta = comparison.value?.performance_delta || {}
+  return [
+    { label: '端到端耗时 P50', item: delta.agent_total_p50_ms, format: formatMs },
+    { label: '端到端耗时均值', item: delta.agent_total_mean_ms, format: formatMs },
+    { label: '端到端耗时最大值', item: delta.agent_total_max_ms, format: formatMs },
+    { label: '每题 token 均值', item: delta.tokens_per_rollout_mean, format: formatCount },
+    {
+      label: '每题 LLM 调用均值',
+      item: delta.llm_calls_per_rollout_mean,
+      format: (value) => value.toFixed(2)
+    },
+    {
+      label: '每题工具调用均值',
+      item: delta.tool_calls_per_rollout_mean,
+      format: (value) => value.toFixed(2)
+    }
+  ].filter((row) => row.item)
+})
 
-const formatAggregate = (name) => {
-  const value = experimentAggregate.value?.[name]
-  return typeof value === 'number' ? `${Math.round(value * 100)}%` : '—'
-}
-
-const selectExperiment = async (experimentId) => {
-  selectedExperimentId.value = experimentId
-  await loadExperimentDetails(experimentId)
-}
-
-onMounted(refreshFixture)
-
-const statusClass = (status) => {
-  if (['通过', '已发布', 'FINISHED', 'COMPLETED', 'passed'].includes(status)) return 'success'
-  if (['运行中', 'RUNNING', 'QUEUED', 'DRAFT'].includes(status)) return 'info'
-  return 'warning'
-}
+onMounted(refresh)
+onBeforeUnmount(() => clearTimeout(pollTimer))
 </script>
 
 <template>
-  <div class="evaluation-platform-view">
-    <PageHeader title="平台评测" :show-border="true">
-      <template #info>
-        <div class="header-meta">
-          <span class="mode-pill"><FlaskConical :size="14" /> {{ usingApiData ? '平台数据' : 'Fixture 回退' }}</span>
-          <span class="refresh-time">更新于 {{ lastRefreshed }}</span>
-        </div>
-      </template>
+  <div class="evaluation-page">
+    <PageHeader title="Agent 评测" :show-border="true">
       <template #actions>
-        <button type="button" class="secondary-button" :disabled="isLoading" @click="refreshFixture">
-          <RefreshCw :size="15" />
-          {{ isLoading ? '加载中' : '刷新数据' }}
-        </button>
+        <a-button class="lucide-icon-btn" :loading="loading" @click="refresh">
+          <RefreshCw v-if="!loading" :size="16" /> 刷新
+        </a-button>
       </template>
     </PageHeader>
 
-    <main class="evaluation-content">
-      <section class="mode-banner" aria-label="评测运行模式">
-        <div class="mode-banner-icon"><FlaskConical :size="22" /></div>
-        <div class="mode-banner-copy">
-            <strong>{{ usingApiData ? '当前展示平台评测数据' : '当前为 Fixture 回退模式' }}</strong>
-            <p>
-            {{ usingApiData ? '数据来自平台评测 API，按来源、实验、rollout、Trace 和指标逐级查看。' : '平台 API 暂不可用，页面保留本地可重复样例；不会调用真实模型或创建用户可见聊天。' }}
-            </p>
-          </div>
-        <span class="mode-banner-tag">{{ loadError ? '接口异常' : usingApiData ? '可追溯' : '可安全回归 UI' }}</span>
-      </section>
+    <div class="evaluation-content">
+      <p v-if="error" class="error-banner" role="alert"><CircleAlert :size="16" /> {{ error }}</p>
 
-      <section class="source-filter" aria-label="评测来源筛选">
-        <span class="filter-label">来源</span>
-        <div class="filter-segmented" role="group" aria-label="来源类型">
-          <button type="button" :class="{ active: sourceFilter === '' }" @click="sourceFilter = ''; refreshFixture()">全部</button>
-          <button type="button" :class="{ active: sourceFilter === 'agent' }" @click="sourceFilter = 'agent'; refreshFixture()">Agent / Tool / MCP</button>
-          <button type="button" :class="{ active: sourceFilter === 'rag' }" @click="sourceFilter = 'rag'; refreshFixture()">RAG</button>
-          <button type="button" :class="{ active: sourceFilter === 'graph' }" @click="sourceFilter = 'graph'; refreshFixture()">Graph</button>
-        </div>
-      </section>
-
-      <p v-if="loadError" class="load-error" role="alert">{{ loadError }}</p>
-
-      <section class="section-card pipeline-card">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">统一评测链路</p>
-            <h2>从输入到全局结果</h2>
+      <div class="evaluation-layout">
+        <aside class="experiment-panel" aria-label="实验列表">
+          <div class="panel-title">
+            <h2>实验</h2>
+            <span class="muted">{{ experiments.length }} 个</span>
           </div>
-          <span class="section-note">来源：{{ sourceFilter || '全部' }}</span>
-        </div>
-        <div class="pipeline-steps">
-          <template v-for="(step, index) in pipelineSteps" :key="step.title">
-            <div class="pipeline-step">
-              <span class="pipeline-icon"><component :is="step.icon" :size="18" /></span>
-              <div>
-                <strong>{{ step.title }}</strong>
-                <span>{{ step.description }}</span>
-              </div>
-            </div>
-            <ChevronRight v-if="index < pipelineSteps.length - 1" class="pipeline-arrow" :size="16" />
-          </template>
-        </div>
-      </section>
-
-      <section class="overview-grid" aria-label="评测概览">
-        <article v-for="card in overviewCards" :key="card.label" class="overview-card">
-          <div class="overview-card-top">
-            <span class="overview-icon" :class="`overview-icon--${card.tone}`">
-              <component :is="card.icon" :size="18" />
-            </span>
-            <span class="overview-label">{{ card.label }}</span>
-          </div>
-          <strong class="overview-value">{{ card.value }}</strong>
-          <span class="overview-helper">{{ card.helper }}</span>
-        </article>
-      </section>
-
-      <div class="content-grid">
-        <section class="section-card">
-          <div class="section-heading section-heading--compact">
-            <div>
-              <p class="eyebrow">Datasets</p>
-              <h2>数据集版本</h2>
-            </div>
-            <span class="count-label">{{ datasets.length }} 个</span>
-          </div>
-          <div class="dataset-list">
-            <p v-if="!datasets.length" class="empty-state">暂无符合条件的数据集</p>
-            <div v-for="dataset in datasets" :key="`${dataset.name}-${dataset.version}`" class="dataset-row">
-              <div class="row-leading-icon"><Database :size="17" /></div>
-              <div class="row-main">
-                <strong>{{ dataset.name }}</strong>
-                <span>{{ dataset.version }} · {{ dataset.source }}</span>
-                <code v-if="dataset.checksum" class="checksum">{{ dataset.checksum }}</code>
-              </div>
-              <div class="row-trailing">
-                <span>{{ dataset.tasks }} 题</span>
-                <span class="status-tag" :class="statusClass(dataset.status)">{{ dataset.status }}</span>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section class="section-card">
-          <div class="section-heading section-heading--compact">
-            <div>
-              <p class="eyebrow">Experiments</p>
-              <h2>实验批次</h2>
-            </div>
-            <span class="count-label">{{ experiments.length }} 个</span>
-          </div>
-          <div class="experiment-list">
-            <p v-if="!experiments.length" class="empty-state">暂无符合条件的实验</p>
+          <div v-if="experiments.length" class="experiment-list">
             <button
-              v-for="experiment in experiments"
-              :key="experiment.id"
+              v-for="item in experiments"
+              :key="item.experiment_id"
               type="button"
               class="experiment-row"
-              :class="{ selected: selectedExperimentId === experiment.id }"
-              @click="selectExperiment(experiment.id)"
+              :class="{ selected: item.experiment_id === selectedId }"
+              @click="selectExperiment(item.experiment_id)"
             >
-              <div class="row-main">
-                <strong>{{ experiment.name }}</strong>
-                <span>{{ experiment.agent }} · {{ experiment.dataset }}</span>
-              </div>
-              <div class="experiment-result">
-                <strong>{{ experiment.passRate }}</strong>
-                <span>{{ experiment.passed }}</span>
-              </div>
-              <ChevronRight :size="17" />
+              <span class="experiment-main">
+                <strong>{{ experimentIdentity(item).agent }}</strong>
+                <span class="muted ellipsis" :title="experimentIdentity(item).note"
+                  >{{ formatShortTime(item.created_at) }} ·
+                  {{ experimentIdentity(item).model }}</span
+                >
+              </span>
+              <span class="status-tag" :class="statusMeta(item.status).tone">{{
+                statusMeta(item.status).label
+              }}</span>
             </button>
           </div>
-        </section>
-      </div>
+          <p v-else-if="!loading" class="empty-state">
+            还没有评测实验。基于已发布的数据集创建实验后，会显示在这里。
+          </p>
+        </aside>
 
-      <section class="section-card results-card">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Rollouts</p>
-            <h2>{{ selectedExperiment.name }}</h2>
-            <span class="section-subtitle">{{ selectedExperiment.agent }} · {{ selectedExperiment.dataset }}</span>
-          </div>
-          <div class="result-summary">
-            <span class="status-tag" :class="statusClass(selectedExperiment.status)">{{ selectedExperiment.status }}</span>
-            <strong>{{ selectedExperiment.passRate }}</strong>
-            <span>{{ selectedExperiment.passed }} 通过</span>
-            <span class="aggregate-chip">pass@k {{ formatAggregate('pass@k') }}</span>
-            <span class="aggregate-chip">pass^k {{ formatAggregate('pass^k') }}</span>
-            <span class="aggregate-chip">best@k {{ formatAggregate('best@k') }}</span>
-          </div>
-        </div>
-
-        <div class="result-hint">
-          <CircleAlert :size="16" />
-          单题输入、标准答案、模拟输出和指标默认折叠，点击题目展开查看。
-        </div>
-
-        <div class="results-list">
-          <p v-if="!fixtureResults.length" class="empty-state">当前实验暂无 rollout 结果</p>
-          <details v-for="(result, index) in fixtureResults" :key="result.id" class="result-item" :open="index === 0" @toggle="onResultToggle(result, $event)">
-            <summary>
-              <span class="result-number">{{ String(index + 1).padStart(2, '0') }}</span>
-              <span class="result-query">{{ result.query }}</span>
-              <span class="status-tag" :class="statusClass(result.status)">{{ result.status }}</span>
-            </summary>
-            <div class="result-detail">
-              <div class="answer-grid">
-                <div>
-                  <span class="detail-label">Query</span>
-                  <p>{{ result.query }}</p>
-                </div>
-                <div>
-                  <span class="detail-label">标准答案</span>
-                  <p>{{ result.expected }}</p>
-                </div>
-                <div>
-                  <span class="detail-label">模拟输出</span>
-                  <p>{{ result.actual }}</p>
-                </div>
-              </div>
-              <div class="metric-row">
-                <span v-for="(metricStatus, metricName) in result.metrics" :key="metricName" class="metric-chip">
-                  <strong>{{ metricName }}</strong>
-                  <span :class="statusClass(metricStatus)">{{ metricStatus }}</span>
-                </span>
-              </div>
-              <div v-if="result.failure" class="failure-note">
-                <CircleAlert :size="15" />
-                <span>{{ result.failure }}</span>
-              </div>
-              <div v-if="usingApiData" class="trace-panel">
-                <div class="detail-label">Trace</div>
-                <span v-if="traceLoading.has(result.id)" class="trace-muted">加载中...</span>
-                <span v-else-if="traceByRollout.get(result.id)?.error" class="trace-error">{{ traceByRollout.get(result.id).error }}</span>
-                <span v-else-if="!traceByRollout.get(result.id)" class="trace-muted">展开题目后加载脱敏事件</span>
-                <span v-else-if="!traceByRollout.get(result.id).events?.length" class="trace-muted">无可用 Trace 事件</span>
-                <ol v-else class="trace-events">
-                  <li v-for="event in traceByRollout.get(result.id).events" :key="event.event_id">
-                    <code>#{{ event.sequence }}</code>
-                    <span>{{ event.component }}.{{ event.operation }}</span>
-                    <small v-if="event.reason_code">{{ event.reason_code }}</small>
-                  </li>
-                </ol>
-              </div>
+        <main v-if="detail" class="experiment-detail">
+          <section class="detail-head">
+            <div class="detail-title">
+              <h2>
+                {{ identity.agent }} <span class="muted">· {{ identity.model }}</span>
+              </h2>
+              <p class="muted">
+                {{ formatTime(detail.created_at) }} · {{ taskCount || 0 }} 题<template
+                  v-if="detail.max_attempts > 1"
+                >
+                  × {{ detail.max_attempts }} 次</template
+                >
+                <template v-if="identity.evaluators.length">
+                  · 评分 {{ identity.evaluators.join('、') }}</template
+                >
+              </p>
+              <p v-if="identity.note" class="note">{{ identity.note }}</p>
             </div>
-          </details>
-        </div>
-      </section>
+            <div class="detail-actions">
+              <span class="status-tag" :class="statusMeta(detail.status).tone">{{
+                statusMeta(detail.status).label
+              }}</span>
+              <a-button
+                v-if="canRun"
+                type="primary"
+                class="lucide-icon-btn"
+                :loading="actionPending"
+                @click="runAction('run')"
+              >
+                <Play v-if="!actionPending" :size="16" /> 运行实验
+              </a-button>
+              <a-button
+                v-if="isActive"
+                danger
+                class="lucide-icon-btn"
+                :loading="actionPending"
+                @click="runAction('cancel')"
+              >
+                <Square v-if="!actionPending" :size="16" /> 取消实验
+              </a-button>
+            </div>
+          </section>
 
-      <section class="section-card metric-card">
-        <div class="section-heading section-heading--compact">
-          <div>
-            <p class="eyebrow">Evaluator Registry</p>
-            <h2>指标定义</h2>
-          </div>
-          <span class="section-note">首版只展示确定性指标</span>
-        </div>
-        <div class="metric-definition-grid">
-          <article v-for="metric in metricDefinitions" :key="metric.name" class="metric-definition">
-            <code>{{ metric.name }}</code>
-            <strong>{{ metric.label }}</strong>
-            <p>{{ metric.description }}</p>
-          </article>
-        </div>
-      </section>
-    </main>
+          <p v-if="isActive" class="progress-note">
+            实验正在后台运行，已完成 {{ finishedCount }} / {{ expectedRollouts }}，页面每 5
+            秒自动刷新。
+          </p>
+
+          <section class="stat-grid" aria-label="关键结果">
+            <div v-for="stat in keyStats" :key="stat.label" class="stat-tile">
+              <span class="muted">{{ stat.label }}</span>
+              <strong>{{ stat.value }}</strong>
+              <small class="muted">{{ stat.hint }}</small>
+            </div>
+          </section>
+
+          <section v-if="metricRows.length" class="detail-card">
+            <h3>指标明细</h3>
+            <div
+              v-for="group in [
+                { title: '结果层', hint: '全部通过才算任务成功', rows: resultMetricRows },
+                {
+                  title: '轨迹层',
+                  hint: '只反映过程质量，不影响任务成功',
+                  rows: trajectoryMetricRows
+                }
+              ]"
+              :key="group.title"
+              class="metric-group"
+            >
+              <template v-if="group.rows.length">
+                <p class="group-title">
+                  {{ group.title }} <span class="muted">{{ group.hint }}</span>
+                </p>
+                <div class="table-scroll">
+                  <table class="data-table">
+                    <thead>
+                      <tr>
+                        <th>指标</th>
+                        <th>通过率 / 均值</th>
+                        <th>通过 · 未通过 · 未评分</th>
+                        <th>主要原因</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="row in group.rows" :key="row.name">
+                        <td>{{ row.label }}</td>
+                        <td class="numeric">
+                          {{
+                            row.passRate !== null && row.passRate !== undefined
+                              ? formatPercent(row.passRate)
+                              : formatPercent(row.measuredMean)
+                          }}
+                        </td>
+                        <td class="numeric">
+                          <template v-if="row.counts.measured"
+                            >{{ row.counts.measured }} 题已测量</template
+                          >
+                          <template v-else
+                            >{{ row.counts.passed || 0 }} · {{ row.counts.failed || 0 }} ·
+                            {{ row.counts.not_measured || 0 }}</template
+                          >
+                        </td>
+                        <td>
+                          <span
+                            v-for="reason in row.reasons"
+                            :key="reason.label"
+                            class="reason-chip"
+                            >{{ reason.label }} × {{ reason.count }}</span
+                          >
+                          <span v-if="!row.reasons.length" class="muted">—</span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </template>
+            </div>
+          </section>
+
+          <section v-if="latencyRows.length || performance.usage?.sample_count" class="detail-card">
+            <h3>性能与成本</h3>
+            <div v-if="latencyRows.length" class="table-scroll">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>耗时</th>
+                    <th>P50</th>
+                    <th>P95</th>
+                    <th>最大</th>
+                    <th>样本</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in latencyRows" :key="row.label">
+                    <td>{{ row.label }}</td>
+                    <td class="numeric">{{ formatMs(row.item.p50) }}</td>
+                    <td class="numeric">
+                      {{ row.item.p95 === null ? '样本不足' : formatMs(row.item.p95) }}
+                    </td>
+                    <td class="numeric">{{ formatMs(row.item.max) }}</td>
+                    <td class="numeric">{{ row.item.sample_count }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <dl v-if="performance.usage?.sample_count" class="fact-list">
+              <div>
+                <dt>Token 总量</dt>
+                <dd>
+                  {{ formatCount(performance.usage.total_sum) }}
+                  <span class="muted"
+                    >（输入 {{ formatCount(performance.usage.input_sum) }} / 输出
+                    {{ formatCount(performance.usage.output_sum) }}）</span
+                  >
+                </dd>
+              </div>
+              <div>
+                <dt>每题 Token</dt>
+                <dd>
+                  中位 {{ formatCount(performance.usage.total_per_rollout?.p50) }} · 最大
+                  {{ formatCount(performance.usage.total_per_rollout?.max) }}
+                </dd>
+              </div>
+              <div>
+                <dt>每题 LLM 调用</dt>
+                <dd>
+                  平均 {{ performance.usage.llm_calls_per_rollout?.mean?.toFixed(2) ?? '—' }} 次
+                </dd>
+              </div>
+              <div>
+                <dt>工具调用</dt>
+                <dd>
+                  <template v-if="Object.keys(performance.tool_calls?.by_name || {}).length"
+                    ><span
+                      v-for="(count, name) in performance.tool_calls.by_name"
+                      :key="name"
+                      class="reason-chip mono"
+                      >{{ name }} × {{ count }}</span
+                    ></template
+                  ><span v-else class="muted">无</span>
+                </dd>
+              </div>
+              <div>
+                <dt>估算成本</dt>
+                <dd>
+                  <template v-if="performance.estimated_cost"
+                    >{{ performance.estimated_cost.total.toFixed(4) }}
+                    {{ performance.estimated_cost.currency }}
+                    <span class="muted"
+                      >（每题 {{ performance.estimated_cost.per_rollout_mean?.toFixed(4) }}）</span
+                    ></template
+                  ><span v-else class="muted">创建实验时未提供模型单价，不估算</span>
+                </dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="detail-card">
+            <div class="card-title-row">
+              <h3>逐题结果</h3>
+              <a-checkbox v-model:checked="onlyFailures">只看未通过</a-checkbox>
+            </div>
+            <div v-if="visibleRows.length" class="rollout-list">
+              <details
+                v-for="row in visibleRows"
+                :key="row.rolloutId"
+                class="rollout-item"
+                @toggle="$event.target.open && loadTrace(row.rolloutId)"
+              >
+                <summary>
+                  <span class="mono task-key"
+                    >{{ row.taskKey
+                    }}<template v-if="detail.max_attempts > 1"> #{{ row.attempt }}</template></span
+                  >
+                  <span class="status-tag" :class="statusMeta(row.verdict).tone">{{
+                    statusMeta(row.verdict).label
+                  }}</span>
+                  <span class="reason ellipsis">{{ reasonLabel(row.reason) }}</span>
+                  <span class="muted numeric">{{ formatMs(row.latencyMs) }}</span>
+                  <span class="muted numeric">{{
+                    row.tokens !== null ? `${formatCount(row.tokens)} tok` : ''
+                  }}</span>
+                </summary>
+                <div class="rollout-detail">
+                  <dl class="fact-list">
+                    <div v-if="row.query">
+                      <dt>题目</dt>
+                      <dd>{{ row.query }}</dd>
+                    </div>
+                    <div v-if="row.expected !== null">
+                      <dt>期望答案</dt>
+                      <dd class="mono">{{ row.expected }}</dd>
+                    </div>
+                  </dl>
+                  <p v-if="row.errorMessage" class="failure-note">
+                    <CircleAlert :size="16" /> {{ row.errorMessage }}
+                  </p>
+                  <template v-if="row.finalAnswer">
+                    <p class="group-title">最终回答</p>
+                    <pre class="text-block">{{ row.finalAnswer }}</pre>
+                  </template>
+                  <p class="group-title">
+                    工具调用 <span class="muted">{{ row.toolCalls.length }} 次</span>
+                  </p>
+                  <ol v-if="row.toolCalls.length" class="tool-list">
+                    <li v-for="(call, index) in row.toolCalls" :key="index">
+                      <div class="tool-head">
+                        <span class="mono">{{ call.name }}</span
+                        ><span
+                          class="status-tag"
+                          :class="call.status === 'success' ? 'success' : 'error'"
+                          >{{ call.status }}</span
+                        >
+                      </div>
+                      <pre class="text-block small">{{ formatArgs(call.args) }}</pre>
+                      <pre v-if="call.output" class="text-block small">{{ call.output }}</pre>
+                    </li>
+                  </ol>
+                  <p v-else class="muted">没有调用工具</p>
+                  <p class="group-title">逐项评分</p>
+                  <div class="metric-chips">
+                    <span
+                      v-for="(metric, name) in row.metrics"
+                      :key="name"
+                      class="metric-chip"
+                      :class="statusMeta(metric.status).tone"
+                    >
+                      {{ metricLabel(name)
+                      }}<template v-if="metric.status === 'measured'">
+                        {{ formatPercent(metric.value) }}</template
+                      >
+                    </span>
+                  </div>
+                  <p class="group-title">Trace</p>
+                  <p v-if="traceLoading.has(row.rolloutId)" class="muted">加载中…</p>
+                  <p v-else-if="traceByRollout.get(row.rolloutId) === null" class="muted">
+                    Trace 加载失败，展开重试
+                  </p>
+                  <ol v-else-if="traceByRollout.get(row.rolloutId)?.length" class="trace-list">
+                    <li
+                      v-for="event in traceByRollout.get(row.rolloutId)"
+                      :key="event.event_id"
+                      class="mono"
+                    >
+                      {{ event.component }} · {{ event.operation }}
+                    </li>
+                  </ol>
+                </div>
+              </details>
+            </div>
+            <p v-else class="empty-state">
+              {{
+                rows.length
+                  ? '没有未通过的题。'
+                  : isActive
+                    ? '题目正在执行，结果会陆续出现。'
+                    : '这个实验还没有结果，运行后会在这里逐题展示。'
+              }}
+            </p>
+          </section>
+
+          <section class="detail-card">
+            <h3>与基线对比</h3>
+            <p class="muted">
+              选择同一数据集版本下已完成的实验作为基线，逐题比较哪些题修复、哪些题退化。
+            </p>
+            <div class="compare-controls">
+              <a-select
+                v-model:value="baselineId"
+                class="baseline-select"
+                placeholder="选择基线实验"
+                :options="baselineOptions"
+                :disabled="!baselineOptions.length"
+                :not-found-content="null"
+              />
+              <a-button
+                class="lucide-icon-btn"
+                :disabled="!baselineId"
+                :loading="compareLoading"
+                @click="compareWithBaseline"
+              >
+                <GitCompareArrows v-if="!compareLoading" :size="16" /> 对比
+              </a-button>
+            </div>
+            <p v-if="!baselineOptions.length" class="muted">
+              没有可用的基线：需要同一数据集版本下另一个已完成的实验。
+            </p>
+            <p v-if="compareError" class="failure-note">
+              <CircleAlert :size="16" /> {{ compareError }}
+            </p>
+            <div v-if="comparison" class="compare-result">
+              <div class="stat-grid">
+                <div class="stat-tile">
+                  <span class="muted">任务成功率</span
+                  ><strong
+                    >{{ formatPercent(comparison.outcomes.base_pass_rate) }} →
+                    {{ formatPercent(comparison.outcomes.candidate_pass_rate) }}</strong
+                  ><small class="muted"
+                    >变化 {{ formatSigned(comparison.outcomes.pass_rate_delta, formatPercent) }} ·
+                    配对 {{ comparison.outcomes.paired_count }} 题</small
+                  >
+                </div>
+                <div class="stat-tile">
+                  <span class="muted">修复 / 退化</span
+                  ><strong
+                    >{{ comparison.outcomes.fixed.length }} /
+                    {{ comparison.outcomes.broken.length }}</strong
+                  ><small class="muted"
+                    >同为通过 {{ comparison.outcomes.both_pass }} · 同为未通过
+                    {{ comparison.outcomes.both_fail }}</small
+                  >
+                </div>
+                <div class="stat-tile">
+                  <span class="muted">McNemar p 值</span
+                  ><strong>{{ formatPValue(comparison.outcomes.mcnemar_p_value) }}</strong
+                  ><small class="muted">{{
+                    comparison.outcomes.mcnemar_p_value < 0.05
+                      ? '差异显著（p < 0.05）'
+                      : '差异不显著，可能是运行波动'
+                  }}</small>
+                </div>
+              </div>
+              <dl class="fact-list">
+                <div>
+                  <dt>修复的题</dt>
+                  <dd>
+                    <span
+                      v-for="key in comparison.outcomes.fixed"
+                      :key="key"
+                      class="reason-chip mono success"
+                      >{{ key }}</span
+                    ><span v-if="!comparison.outcomes.fixed.length" class="muted">无</span>
+                  </dd>
+                </div>
+                <div>
+                  <dt>退化的题</dt>
+                  <dd>
+                    <span
+                      v-for="key in comparison.outcomes.broken"
+                      :key="key"
+                      class="reason-chip mono error"
+                      >{{ key }}</span
+                    ><span v-if="!comparison.outcomes.broken.length" class="muted">无</span>
+                  </dd>
+                </div>
+                <div v-if="comparison.outcomes.unpaired_task_keys.length">
+                  <dt>未配对</dt>
+                  <dd class="muted">
+                    {{ comparison.outcomes.unpaired_task_keys.join('、') }}（任一侧未评分）
+                  </dd>
+                </div>
+              </dl>
+              <div v-if="deltaRows.length" class="table-scroll">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>性能</th>
+                      <th>基线</th>
+                      <th>当前</th>
+                      <th>变化</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="row in deltaRows" :key="row.label">
+                      <td>{{ row.label }}</td>
+                      <td class="numeric">
+                        {{ typeof row.item.base === 'number' ? row.format(row.item.base) : '—' }}
+                      </td>
+                      <td class="numeric">
+                        {{
+                          typeof row.item.candidate === 'number'
+                            ? row.format(row.item.candidate)
+                            : '—'
+                        }}
+                      </td>
+                      <td class="numeric">{{ formatSigned(row.item.delta, row.format) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p class="group-title">配置差异</p>
+              <div v-if="comparison.config_diff.length" class="table-scroll">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>配置项</th>
+                      <th>基线</th>
+                      <th>当前</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="item in comparison.config_diff" :key="item.key">
+                      <td class="mono">{{ item.key }}</td>
+                      <td class="mono">{{ item.base ?? '—' }}</td>
+                      <td class="mono">{{ item.candidate ?? '—' }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p v-else class="muted">两次实验的配置快照一致，差异只来自运行波动。</p>
+            </div>
+          </section>
+
+          <details class="detail-card snapshot">
+            <summary>
+              <h3>配置快照</h3>
+              <span class="muted">复现这次实验所需的模型、配置与版本</span>
+            </summary>
+            <dl class="fact-list">
+              <div>
+                <dt>模型</dt>
+                <dd class="mono">{{ identity.model }}</dd>
+              </div>
+              <div>
+                <dt>工具审批</dt>
+                <dd>
+                  {{
+                    detail.config_snapshot?.tool_approval_mode === 'always_trust'
+                      ? '完全信任（评测无人审批）'
+                      : detail.config_snapshot?.tool_approval_mode || '—'
+                  }}
+                </dd>
+              </div>
+              <template v-if="detail.config_snapshot?.captured?.agent">
+                <div>
+                  <dt>配置的工具</dt>
+                  <dd>{{ listText(detail.config_snapshot.captured.agent.configured_tools) }}</dd>
+                </div>
+                <div>
+                  <dt>配置的知识库</dt>
+                  <dd>
+                    {{ listText(detail.config_snapshot.captured.agent.configured_knowledges) }}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Prompt 校验和</dt>
+                  <dd class="mono">
+                    {{ shortHash(detail.config_snapshot.captured.agent.system_prompt_checksum) }}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Agent 配置校验和</dt>
+                  <dd class="mono">
+                    {{ shortHash(detail.config_snapshot.captured.agent.agent_context_checksum) }}
+                  </dd>
+                </div>
+              </template>
+              <div>
+                <dt>数据集版本</dt>
+                <dd class="mono">
+                  {{ detail.dataset_version_id
+                  }}<span class="muted">
+                    · {{ shortHash(detail.config_snapshot?.captured?.dataset?.checksum) }}</span
+                  >
+                </dd>
+              </div>
+              <div>
+                <dt>代码校验和</dt>
+                <dd class="mono">
+                  {{ shortHash(detail.config_snapshot?.captured?.code_checksum) }}
+                </dd>
+              </div>
+              <div>
+                <dt>Git 提交</dt>
+                <dd class="mono">
+                  {{ shortHash(detail.config_snapshot?.git_commit)
+                  }}<span v-if="detail.config_snapshot?.git_dirty" class="muted">
+                    · 含未提交改动</span
+                  >
+                </dd>
+              </div>
+              <div>
+                <dt>实验 ID</dt>
+                <dd class="mono">{{ detail.experiment_id }}</dd>
+              </div>
+            </dl>
+          </details>
+        </main>
+
+        <main v-else class="experiment-detail">
+          <p class="empty-state">{{ loading ? '加载中…' : '选择左侧的实验查看结果。' }}</p>
+        </main>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped lang="less">
-.evaluation-platform-view {
+.evaluation-page {
   min-height: 100%;
-  background: var(--gray-25);
-  color: var(--gray-1000);
+  background: var(--gray-0);
+  color: var(--color-text);
 }
-
 .evaluation-content {
   display: flex;
   flex-direction: column;
   gap: 16px;
   padding: var(--page-padding);
 }
-
-.header-meta,
-.mode-pill,
-.secondary-button,
-.result-summary,
-.metric-chip,
-.mode-banner-tag,
-.aggregate-chip {
-  display: inline-flex;
-  align-items: center;
+.evaluation-layout {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
 }
-
-.aggregate-chip {
-  gap: 4px;
-  padding: 4px 7px;
-  border: 1px solid var(--gray-150);
-  border-radius: 6px;
-  color: var(--gray-600);
-  font-size: 11px;
-  white-space: nowrap;
+.muted {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 400;
 }
-
-.header-meta {
-  gap: 10px;
-  color: var(--gray-600);
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
 }
-
-.mode-pill {
-  gap: 5px;
-  padding: 5px 9px;
-  border: 1px solid var(--main-200);
-  border-radius: 999px;
-  background: var(--main-50);
-  color: var(--main-800);
+.numeric {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+h3 {
+  margin: 0;
+  font-size: 16px;
   font-weight: 600;
 }
 
-.refresh-time {
-  white-space: nowrap;
-}
-
-.secondary-button {
-  gap: 6px;
-  height: 32px;
-  padding: 0 11px;
-  border: 1px solid var(--gray-200);
-  border-radius: 7px;
-  background: var(--gray-0);
-  color: var(--gray-800);
-  font-size: 13px;
-  cursor: pointer;
-  transition:
-    border-color 0.2s ease,
-    color 0.2s ease,
-    background-color 0.2s ease;
-
-  &:hover {
-    border-color: var(--main-300);
-    background: var(--main-10);
-    color: var(--main-800);
-  }
-
-  &:disabled {
-    cursor: wait;
-    opacity: 0.6;
-  }
-}
-
-.load-error {
+.error-banner,
+.failure-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0;
+  color: var(--color-error-700);
+  font-size: 13px;
+}
+.error-banner {
   padding: 10px 12px;
-  border: 1px solid var(--color-warning-200);
-  border-radius: 7px;
-  background: var(--color-warning-10);
-  color: var(--color-warning-800);
-  font-size: 13px;
-}
-
-.source-filter {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  border: 1px solid var(--gray-150);
+  border: 1px solid var(--color-error-100);
   border-radius: 8px;
-  background: var(--gray-0);
+  background: var(--color-error-50);
 }
 
-.filter-label {
-  color: var(--gray-600);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.filter-segmented {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-
-  button {
-    min-height: 28px;
-    padding: 0 9px;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    background: transparent;
-    color: var(--gray-600);
-    font-size: 12px;
-    cursor: pointer;
-
-    &:hover,
-    &.active {
-      border-color: var(--main-200);
-      background: var(--main-50);
-      color: var(--main-800);
-    }
-  }
-}
-
-.mode-banner {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 16px 18px;
-  border: 1px solid var(--color-info-100);
-  border-radius: 10px;
-  background: var(--color-info-10);
-}
-
-.mode-banner-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 38px;
-  width: 38px;
-  height: 38px;
-  border-radius: 9px;
-  background: var(--color-info-50);
-  color: var(--color-info-700);
-}
-
-.mode-banner-copy {
-  min-width: 0;
-  flex: 1;
-
-  strong {
-    display: block;
-    color: var(--gray-900);
-    font-size: 14px;
-  }
-
-  p {
-    margin: 4px 0 0;
-    color: var(--gray-600);
-    font-size: 13px;
-    line-height: 1.6;
-  }
-}
-
-.mode-banner-tag {
-  flex: 0 0 auto;
-  padding: 5px 9px;
-  border-radius: 6px;
-  background: var(--gray-0);
-  color: var(--color-info-700);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.section-card {
-  padding: 18px;
-  border: 1px solid var(--gray-150);
-  border-radius: 12px;
-  background: var(--gray-0);
-  box-shadow: 0 1px 2px var(--shadow-1);
-}
-
-.section-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
-
-  h2 {
-    margin: 3px 0 0;
-    color: var(--gray-1000);
-    font-size: 17px;
-    font-weight: 650;
-  }
-}
-
-.section-heading--compact {
-  margin-bottom: 13px;
-}
-
-.eyebrow {
-  margin: 0;
-  color: var(--main-700);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.section-note,
-.section-subtitle,
-.count-label {
-  color: var(--gray-500);
-  font-size: 12px;
-}
-
-.pipeline-card {
-  padding-bottom: 16px;
-}
-
-.pipeline-steps {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  overflow-x: auto;
-  padding-bottom: 2px;
-}
-
-.pipeline-step {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  min-width: 132px;
-  flex: 1;
-}
-
-.pipeline-icon,
-.row-leading-icon,
-.overview-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-}
-
-.pipeline-icon {
-  display: grid;
-  place-items: center;
-  box-sizing: border-box;
-  width: 34px;
-  height: 34px;
-  border-radius: 9px;
-  background: var(--main-50);
-  color: var(--main-700);
-  line-height: 0;
-
-  svg {
-    display: block;
-    width: 18px;
-    height: 18px;
-    margin: 0;
-  }
-}
-
-.pipeline-step strong,
-.pipeline-step div span {
-  display: block;
-}
-
-.pipeline-step strong {
-  color: var(--gray-800);
-  font-size: 13px;
-}
-
-.pipeline-step div span {
-  margin-top: 2px;
-  color: var(--gray-500);
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.pipeline-arrow {
-  flex: 0 0 auto;
-  color: var(--gray-300);
-}
-
-.overview-grid {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.overview-card {
-  min-width: 0;
-  padding: 15px;
-  border: 1px solid var(--gray-150);
-  border-radius: 10px;
-  background: var(--gray-0);
-}
-
-.overview-card-top {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.overview-icon {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-}
-
-.overview-icon--violet {
-  background: var(--main-50);
-  color: var(--main-700);
-}
-
-.overview-icon--blue {
-  background: var(--color-info-50);
-  color: var(--color-info-700);
-}
-
-.overview-icon--orange {
-  background: var(--color-warning-50);
-  color: var(--color-warning-700);
-}
-
-.overview-icon--green {
-  background: var(--color-success-50);
-  color: var(--color-success-700);
-}
-
-.overview-icon--gray {
-  background: var(--gray-100);
-  color: var(--gray-600);
-}
-
-.overview-label {
-  overflow: hidden;
-  color: var(--gray-600);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.overview-value {
-  display: block;
-  margin-top: 14px;
-  color: var(--gray-1000);
-  font-size: 25px;
-  font-weight: 650;
-  line-height: 1;
-}
-
-.overview-helper {
-  display: block;
-  margin-top: 7px;
-  overflow: hidden;
-  color: var(--gray-500);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.content-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 16px;
-}
-
-.dataset-list,
-.experiment-list {
+.experiment-panel {
+  position: sticky;
+  top: 16px;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-
-.empty-state {
-  margin: 8px 0;
-  color: var(--gray-500);
-  font-size: 13px;
-  text-align: center;
-}
-
-.dataset-row,
-.experiment-row {
+.panel-title {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  padding: 11px 10px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.experiment-list {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 160px);
+  overflow-y: auto;
   border: 1px solid var(--gray-150);
   border-radius: 8px;
-  background: var(--gray-10);
 }
-
 .experiment-row {
-  width: 100%;
-  text-align: left;
-  cursor: pointer;
-  transition:
-    border-color 0.2s ease,
-    background-color 0.2s ease;
-
-  &:hover,
-  &.selected {
-    border-color: var(--main-300);
-    background: var(--main-10);
-  }
-
-  & > svg {
-    flex: 0 0 auto;
-    color: var(--gray-400);
-  }
-}
-
-.row-leading-icon {
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
-  background: var(--gray-0);
-  color: var(--main-700);
-}
-
-.row-main {
-  min-width: 0;
-  flex: 1;
-
-  strong,
-  span {
-    display: block;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  strong {
-    color: var(--gray-800);
-    font-size: 13px;
-    font-weight: 600;
-  }
-
-  span {
-    margin-top: 4px;
-    color: var(--gray-500);
-    font-size: 11px;
-  }
-}
-
-.checksum {
-  display: block;
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--gray-400);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.row-trailing {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex: 0 0 auto;
-  color: var(--gray-500);
-  font-size: 11px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--gray-100);
+  background: var(--gray-0);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  &:last-child {
+    border-bottom: 0;
+  }
+  &:hover {
+    background: var(--gray-25);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--main-color);
+    outline-offset: -2px;
+  }
+  &.selected {
+    background: var(--main-10);
+  }
+}
+.experiment-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  strong {
+    font-size: 14px;
+    font-weight: 500;
+  }
 }
 
 .status-tag {
   display: inline-flex;
-  align-items: center;
-  padding: 3px 7px;
-  border-radius: 5px;
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
   background: var(--gray-100);
   color: var(--gray-600);
-  font-size: 11px;
-  line-height: 1.3;
-  white-space: nowrap;
-
+  font-size: 12px;
+  font-weight: 500;
   &.success {
     background: var(--color-success-50);
     color: var(--color-success-700);
   }
-
+  &.error {
+    background: var(--color-error-50);
+    color: var(--color-error-700);
+  }
   &.warning {
     background: var(--color-warning-50);
-    color: var(--color-warning-700);
+    color: var(--color-warning-900);
   }
-
   &.info {
     background: var(--color-info-50);
     color: var(--color-info-700);
   }
 }
 
-.experiment-result {
-  flex: 0 0 auto;
-  text-align: right;
-
-  strong,
-  span {
-    display: block;
-  }
-
-  strong {
-    color: var(--color-success-700);
-    font-size: 14px;
-  }
-
-  span {
-    margin-top: 3px;
-    color: var(--gray-500);
-    font-size: 11px;
-  }
-}
-
-.results-card {
-  min-width: 0;
-}
-
-.result-summary {
-  gap: 9px;
-  flex: 0 0 auto;
-  color: var(--gray-500);
-  font-size: 12px;
-
-  strong {
-    color: var(--color-success-700);
-    font-size: 18px;
-  }
-}
-
-.result-hint,
-.failure-note {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--gray-600);
-  font-size: 12px;
-}
-
-.trace-panel {
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--gray-150);
-}
-
-.trace-muted,
-.trace-error {
-  display: block;
-  margin-top: 5px;
-  color: var(--gray-500);
-  font-size: 12px;
-}
-
-.trace-error {
-  color: var(--color-warning-800);
-}
-
-.trace-events {
-  display: grid;
-  gap: 5px;
-  margin: 7px 0 0;
-  padding-left: 18px;
-  color: var(--gray-700);
-  font-size: 12px;
-
-  li {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-  }
-
-  code {
-    color: var(--main-700);
-  }
-
-  small {
-    color: var(--color-warning-800);
-  }
-}
-
-.result-hint {
-  margin-bottom: 10px;
-  padding: 9px 10px;
-  border-radius: 7px;
-  background: var(--gray-10);
-}
-
-.results-list {
+.experiment-detail {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-}
-
-.result-item {
-  overflow: hidden;
-  border: 1px solid var(--gray-150);
-  border-radius: 8px;
-  background: var(--gray-0);
-
-  &[open] {
-    border-color: var(--main-200);
-  }
-
-  summary {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-height: 42px;
-    padding: 0 11px;
-    color: var(--gray-800);
-    font-size: 13px;
-    cursor: pointer;
-    list-style: none;
-
-    &::-webkit-details-marker {
-      display: none;
-    }
-
-    &::before {
-      content: '›';
-      color: var(--gray-400);
-      font-size: 18px;
-      transition: transform 0.2s ease;
-    }
-  }
-
-  &[open] summary::before {
-    transform: rotate(90deg);
-    color: var(--main-700);
-  }
-}
-
-.result-number {
-  flex: 0 0 auto;
-  color: var(--gray-400);
-  font-family: monospace;
-  font-size: 11px;
-}
-
-.result-query {
+  gap: 16px;
   min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
-
-.result-detail {
-  padding: 0 12px 13px 42px;
-}
-
-.answer-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  padding-top: 3px;
-}
-
-.answer-grid > div {
-  min-width: 0;
-  padding: 10px;
-  border-radius: 7px;
-  background: var(--gray-10);
-}
-
-.detail-label {
-  color: var(--gray-500);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.answer-grid p {
-  margin: 6px 0 0;
-  color: var(--gray-700);
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.metric-row {
+.detail-head {
   display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  margin-top: 10px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
 }
-
-.metric-chip {
-  gap: 7px;
-  padding: 5px 8px;
-  border: 1px solid var(--gray-150);
-  border-radius: 6px;
-  background: var(--gray-0);
-  color: var(--gray-600);
-  font-size: 11px;
-
-  strong {
-    color: var(--gray-700);
-    font-family: monospace;
-    font-size: 10px;
-  }
-
-  .success {
-    color: var(--color-success-700);
-  }
-
-  .warning {
-    color: var(--color-warning-700);
+.detail-title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  p {
+    margin: 0;
   }
 }
-
-.failure-note {
-  margin-top: 10px;
-  padding: 8px 9px;
-  border-radius: 6px;
-  background: var(--color-warning-50);
-  color: var(--color-warning-700);
+.note {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+.detail-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+.progress-note {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--color-info-50);
+  color: var(--color-info-700);
+  font-size: 13px;
 }
 
-.metric-definition-grid {
+.stat-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
 }
-
-.metric-definition {
-  padding: 12px;
+.stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px;
   border: 1px solid var(--gray-150);
   border-radius: 8px;
-  background: var(--gray-10);
-
-  code,
-  strong,
-  p {
-    display: block;
-  }
-
-  code {
-    color: var(--main-700);
-    font-size: 11px;
-  }
-
+  background: var(--gray-0);
   strong {
-    margin-top: 7px;
-    color: var(--gray-800);
-    font-size: 13px;
+    font-size: 22px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
   }
+}
 
+.detail-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid var(--gray-150);
+  border-radius: 8px;
+  background: var(--gray-0);
   p {
-    margin: 6px 0 0;
-    color: var(--gray-600);
-    font-size: 12px;
-    line-height: 1.55;
+    margin: 0;
   }
 }
-
-@media (max-width: 1100px) {
-  .overview-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .metric-definition-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+.card-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
-
-@media (max-width: 820px) {
-  .content-grid,
-  .answer-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .mode-banner {
-    flex-wrap: wrap;
-  }
-
-  .mode-banner-tag {
-    margin-left: 50px;
-  }
-}
-
-@media (max-width: 560px) {
-  .overview-grid,
-  .metric-definition-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .header-meta .refresh-time,
-  .section-note {
+.metric-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  &:empty {
     display: none;
   }
-
-  .result-summary {
-    align-items: flex-end;
-    flex-direction: column;
-    gap: 3px;
+}
+.group-title {
+  margin: 4px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.table-scroll {
+  overflow-x: auto;
+}
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  th {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--gray-150);
+    color: var(--color-text-secondary);
+    font-weight: 500;
+    text-align: left;
+    white-space: nowrap;
   }
+  td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--gray-100);
+    vertical-align: top;
+  }
+  td:first-child {
+    white-space: nowrap;
+  }
+  tr:last-child td {
+    border-bottom: 0;
+  }
+}
+.reason-chip {
+  display: inline-flex;
+  margin: 0 6px 4px 0;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--gray-50);
+  color: var(--gray-700);
+  font-size: 12px;
+  &.success {
+    background: var(--color-success-50);
+    color: var(--color-success-700);
+  }
+  &.error {
+    background: var(--color-error-50);
+    color: var(--color-error-700);
+  }
+}
+.fact-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  div {
+    display: grid;
+    grid-template-columns: 120px minmax(0, 1fr);
+    gap: 12px;
+  }
+  dt {
+    color: var(--color-text-secondary);
+    font-size: 13px;
+  }
+  dd {
+    margin: 0;
+    font-size: 13px;
+    overflow-wrap: anywhere;
+  }
+}
 
-  .result-detail {
-    padding-left: 12px;
+.rollout-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--gray-150);
+  border-radius: 8px;
+}
+.rollout-item {
+  border-bottom: 1px solid var(--gray-100);
+  &:last-child {
+    border-bottom: 0;
+  }
+}
+.rollout-item summary {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) auto minmax(0, 1fr) 72px 88px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+  list-style: none;
+  &::-webkit-details-marker {
+    display: none;
+  }
+  &:hover {
+    background: var(--gray-25);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--main-color);
+    outline-offset: -2px;
+  }
+}
+.task-key {
+  font-size: 13px;
+}
+.reason {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+.rollout-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px 16px;
+  border-top: 1px solid var(--gray-100);
+  background: var(--gray-10);
+}
+.text-block {
+  max-height: 240px;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 1px solid var(--gray-150);
+  border-radius: 6px;
+  background: var(--gray-0);
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  &.small {
+    max-height: 160px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+  }
+}
+.tool-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding-left: 20px;
+}
+.tool-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.metric-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.metric-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--gray-100);
+  color: var(--gray-600);
+  font-size: 12px;
+  &.success {
+    background: var(--color-success-50);
+    color: var(--color-success-700);
+  }
+  &.error {
+    background: var(--color-error-50);
+    color: var(--color-error-700);
+  }
+}
+.trace-list {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--gray-600);
+}
+
+.compare-controls {
+  display: flex;
+  gap: 8px;
+}
+.baseline-select {
+  flex: 1;
+  min-width: 0;
+  max-width: 520px;
+}
+.compare-result {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.snapshot summary {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+  &::-webkit-details-marker {
+    display: none;
+  }
+}
+.empty-state {
+  margin: 0;
+  padding: 24px 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+@media (max-width: 1024px) {
+  .evaluation-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .experiment-panel {
+    position: static;
+  }
+  .experiment-list {
+    max-height: 280px;
+  }
+}
+@media (max-width: 640px) {
+  .detail-head {
+    flex-direction: column;
+  }
+  .rollout-item summary {
+    grid-template-columns: minmax(0, 1fr) auto;
+    .reason,
+    .numeric {
+      display: none;
+    }
+  }
+  .fact-list div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+  .compare-controls {
+    flex-direction: column;
+  }
+  .baseline-select {
+    max-width: none;
   }
 }
 </style>

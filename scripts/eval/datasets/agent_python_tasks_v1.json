@@ -1,0 +1,127 @@
+{
+  "dataset": {
+    "name": "agent-python-tasks",
+    "source_kind": "agent",
+    "description": "通用 Agent 评测 P0 黄金集：答案唯一、可程序判定的代码任务，以及工具使用约束题。"
+  },
+  "source": {
+    "origin": "scripts/eval/upload_langfuse_python_tasks_dataset.py（py-task-001~010）+ 2026-10-20 新增 011~016",
+    "answer_verification": "全部答案已用 Python 独立计算核对",
+    "rewording": "py-task-002 明确 \\n 为换行符；py-task-010 明确取数值为偶数的项",
+    "review_status": "pending_human_confirmation"
+  },
+  "tasks": [
+    {
+      "task_key": "py-task-001",
+      "protocol": "agent_final_answer_v1",
+      "tags": ["python", "single_step"],
+      "input": {"query": "请用 Python 完成任务并给出最终答案：给定 nums = [7, -2, 5, 11, -8, 4]，只保留正数，平方后求和。请只输出最终整数。"},
+      "expected": {"final_answer": {"value": "211", "match": "exact_normalized"}, "tool_policy": {"required": ["execute"], "forbidden": [], "max_calls": 6}}
+    },
+    {
+      "task_key": "py-task-002",
+      "protocol": "agent_final_answer_v1",
+      "tags": ["python", "single_step"],
+      "input": {"query": "请用 Python 完成任务并给出最终答案：给定文本 'alpha,beta;gamma delta\\nepsilon'（其中 \\n 表示换行符），按逗号、分号、空白和换行切分 token，统计 token 数。请只输出最终整数。"},
+      "expected": {"final_answer": {"value": "5", "match": "exact_normalized"}, "tool_policy": {"required": ["execute"], "forbidden": [], "max_calls": 6}}
+    },
+    {
+      "task_key": "py-task-003",
+      "protocol": "agent_final_answer_v1",
+      "tags": ["python", "single_step"],
+      "input": {"query": "请用 Python 完成任务并给出最终答案：计算 1 到 200 中所有能被 7 整除但不能被 5 整除的整数个数。请只输出最终整数。"},
+      "expected": {"final_answer": {"value": "23", "match": "exact_normalized"}, "tool_policy": {"required": ["execute"], "forbidden": [], "max_calls": 6}}
+    },
+    {
+      "task_key": "py-task-004",
+      "protocol": "agent_final_answer_v1",
+      "tags": ["python", "single_step"],
+      "input": {"query": "请用 Python 完成任务并给出最终答案：给定 records = [('a', 3), ('b', 5), ('a', 4), ('c', 2), ('b', -1)]，按 key 汇总数值，并按 key 字母序输出形如 a=7,b=4,c=2 的字符串。"},
+      "expected": {"final_answer": {"value": "a=7,b=4,c=2", "match": "exact_normalized"}, "tool_policy": {"required": ["execute"], "forbidden": [], "max_calls": 6}}
+    },
+    {
+      "task_key": "py-task-005",
+      "protocol": "agent_final_answer_v1",
+      "tags": ["python", "single_step"],
+      "input": {"query": "请用 Python 完成任务并给出最终答案：给定矩阵 [[1, 2, 3], [4, 5, 6], [7, 8, 9]]，计算主对角线之和减去副对角线之和。请只输出最终整数。"},
+      "expected": {"final_answer": {"value": "0", "match": "exact_normalized"}, "tool_policy": {"required": ["execute"], "forbidden": [], "max_calls": 6}}
+    },
+    {
+      "task_key": "py-task-006",
+      "protocol": "agent_final_answer_v1",
+      "tags": ["python", "single_step"],
+      "input": {"query": "请用 Python 完成任务并给出最终答案：给定 s = 'Yuxi Agent Evaluation'，忽略大小写统计元音字母 a/e/i/o/u 的总数。请只输出最终整数。"},
+      "expected": {"final_answer": {"value": "10", "match": "exact_normalized"}, "tool_policy": {"required": ["execute"], "forbidden": [], "max_calls": 6}}
+    },
+    {
+      "task_key": "py-task-007",
+      "protocol": "agent_final_answer_v1",
+      "tags": ["python", "single_step"],
+      "input": {"query": "请用 Python 完成任务并给出最终答案：给定区间 [10, 50]，找出所有质数并求和。请只输出最终整数。"},
+      "expected": {"final_answer": {"value": "311", "match": "exact_normalized"}, "tool_policy": {"required": ["execute"], "forbidden": [], "max_calls": 6}}
+    },
+    {
+      "task_key": "py-task-008",
+      "protocol": "agent_final_answer_v1",
+      "tags": ["python", "single_step"],
+      "input": {"query": "请用 Python 完成任务并给出最终答案：给定 JSON 字符串 '{\"items\":[{\"price\":12.5,\"qty\":2},{\"price\":3,\"qty\":5},{\"price\":8,\"qty\":1}]}'，计算所有 price * qty 的总和。请只输出最终数字，保留一位小数。"},
+      "expected": {"final_answer": {"value": "48.0", "match": "exact_normalized"}, "tool_policy": {"required": ["execute"], "forbidden": [], "max_calls": 6}}
+    },
+    {
+      "task_key": "py-task-009",
+      "protocol": "agent_final_answer_v1",
+      "tags": ["python", "single_step"],
+      "input": {"query": "请用 Python 完成任务并给出最终答案：给定 words = ['graph', 'rag', 'agent', 'tool', 'trace']，按单词长度升序、长度相同时按字母序排序，并用 '-' 连接。"},
+      "expected": {"final_answer": {"value": "rag-tool-agent-graph-trace", "match": "exact_normalized"}, "tool_policy": {"required": ["execute"], "forbidden": [], "max_calls": 6}}
+    },
+    {
+      "task_key": "py-task-010",
+      "protocol": "agent_final_answer_v1",
+      "tags": ["python", "single_step"],
+      "input": {"query": "请用 Python 完成任务并给出最终答案：生成 Fibonacci 序列前 12 项（从 0, 1 开始），取其中数值为偶数的项求和。请只输出最终整数。"},
+      "expected": {"final_answer": {"value": "44", "match": "exact_normalized"}, "tool_policy": {"required": ["execute"], "forbidden": [], "max_calls": 6}}
+    },
+    {
+      "task_key": "py-task-011",
+      "protocol": "agent_final_answer_v1",
+      "tags": ["python", "forbidden_tool"],
+      "input": {"query": "请用 Python 计算 2 的 20 次方的各位数字之和。不要创建或修改任何文件。请只输出最终整数。"},
+      "expected": {"final_answer": {"value": "31", "match": "exact_normalized"}, "tool_policy": {"required": ["execute"], "forbidden": ["write_file", "edit_file"], "max_calls": 6}}
+    },
+    {
+      "task_key": "py-task-012",
+      "protocol": "agent_final_answer_v1",
+      "tags": ["python", "forbidden_tool"],
+      "input": {"query": "请用 Python 统计 1 到 1000（含）中回文数的个数。不要创建或修改任何文件。请只输出最终整数。"},
+      "expected": {"final_answer": {"value": "108", "match": "exact_normalized"}, "tool_policy": {"required": ["execute"], "forbidden": ["write_file", "edit_file"], "max_calls": 6}}
+    },
+    {
+      "task_key": "no-tool-001",
+      "protocol": "agent_final_answer_v1",
+      "tags": ["no_tool"],
+      "input": {"query": "不要调用任何工具，直接回答：中国的首都是哪个城市？请只输出城市名。"},
+      "expected": {"final_answer": {"value": "北京", "match": "exact_normalized"}, "tool_policy": {"required": [], "forbidden": [], "max_calls": 0}}
+    },
+    {
+      "task_key": "no-tool-002",
+      "protocol": "agent_final_answer_v1",
+      "tags": ["no_tool"],
+      "input": {"query": "不要调用任何工具，直接回答：12 乘以 12 等于多少？请只输出最终整数。"},
+      "expected": {"final_answer": {"value": "144", "match": "exact_normalized"}, "tool_policy": {"required": [], "forbidden": [], "max_calls": 0}}
+    },
+    {
+      "task_key": "py-multi-001",
+      "protocol": "agent_final_answer_v1",
+      "tags": ["python", "multi_step"],
+      "input": {"query": "请先在工作目录创建文件 nums.txt，内容为 1 到 100 的整数、每行一个；然后用 Python 读取该文件并求和。请只输出最终整数。"},
+      "expected": {"final_answer": {"value": "5050", "match": "exact_normalized"}, "tool_policy": {"required": ["execute"], "forbidden": [], "max_calls": 8}}
+    },
+    {
+      "task_key": "py-error-001",
+      "protocol": "agent_final_answer_v1",
+      "tags": ["python", "tool_error_output"],
+      "input": {"query": "请用 Python 实际运行表达式 1/0，告诉我抛出的异常类名。请只输出异常类名。"},
+      "expected": {"final_answer": {"value": "ZeroDivisionError", "match": "exact_normalized"}, "tool_policy": {"required": ["execute"], "forbidden": [], "max_calls": 6}}
+    }
+  ]
+}
