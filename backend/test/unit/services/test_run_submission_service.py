@@ -247,3 +247,48 @@ async def test_submit_run_command_does_not_reuse_user_conversation_for_invocatio
         await svc.submit_run_command(command=command, current_user=current_user, db=object())
 
     assert exc_info.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_submit_run_command_hides_internal_conversation_from_web_chat(monkeypatch: pytest.MonkeyPatch):
+    """普通聊天不能写入 Agent Call/评测创建的内部线程，按线程不存在处理。"""
+    current_user = SimpleNamespace(uid="user-1", role="user")
+
+    class AgentRepo:
+        def __init__(self, db):
+            del db
+
+        async def get_visible_by_slug(self, *, slug: str, user, kind="main"):
+            del user, kind
+            return SimpleNamespace(slug=slug, backend_id="ChatbotAgent")
+
+    class ConvRepo:
+        def __init__(self, db):
+            del db
+
+        async def get_conversation_by_thread_id(self, thread_id: str):
+            del thread_id
+            return SimpleNamespace(
+                extra_metadata={"source": "agent_evaluation", "visibility": "internal"},
+                uid="user-1",
+                status="active",
+            )
+
+    monkeypatch.setattr(svc, "AgentRepository", AgentRepo)
+    monkeypatch.setattr(svc, "AgentRunRequestRepository", _EmptyRequestRepo)
+    monkeypatch.setattr(svc, "AgentRunRepository", _EmptyRunRepo)
+    monkeypatch.setattr(svc, "ConversationRepository", ConvRepo)
+    monkeypatch.setattr(svc.agent_manager, "get_agent", lambda backend_id: object())
+
+    command = svc.RunSubmissionCommand(
+        agent_slug="translator",
+        thread_id="internal-thread",
+        request_id="chat-1",
+        input_message=build_chat_input_message("hello"),
+        origin=svc.RunOrigin(source="chat", channel="web"),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await svc.submit_run_command(command=command, current_user=current_user, db=object())
+
+    assert exc_info.value.status_code == 404

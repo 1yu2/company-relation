@@ -129,6 +129,9 @@ async def submit_run_command(
         and not is_internal_conversation(conversation)
     ):
         raise HTTPException(status_code=409, detail="外部调用不能复用普通对话线程")
+    if conversation and origin.source not in INVOCATION_CONVERSATION_SOURCES and is_internal_conversation(conversation):
+        # 内部线程只由 Agent Call/评测写入；普通入口按不存在处理，不暴露内部线程。
+        raise HTTPException(status_code=404, detail="对话线程不存在")
     if not conversation:
         if not command.create_conversation:
             raise HTTPException(status_code=404, detail="对话线程不存在")

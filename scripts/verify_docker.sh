@@ -40,6 +40,8 @@ api uv run --group dev ruff format --check \
   package/yuxi/company_due_diligence/evidence/service.py \
   package/yuxi/company_due_diligence/graph/service.py \
   package/yuxi/company_relation/evaluation.py \
+  package/yuxi/services/agent_run_service.py \
+  package/yuxi/services/chat_service.py \
   package/yuxi/services/run_queue_service.py \
   package/yuxi/services/run_worker.py \
   package/yuxi/services/task_service.py \

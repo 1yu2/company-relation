@@ -31,7 +31,7 @@ from yuxi.agents.tool_approval import DEFAULT_TOOL_APPROVAL_MODE, normalize_tool
 from yuxi.models.providers.cache import model_cache
 from yuxi.repositories.agent_repository import AgentRepository
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES, AgentRunRepository
-from yuxi.repositories.conversation_repository import ConversationRepository
+from yuxi.repositories.conversation_repository import ConversationRepository, is_internal_conversation
 from yuxi.services.input_message_service import (
     AgentRunInputMessage,
     build_resume_input_message,
@@ -435,6 +435,8 @@ async def create_agent_run_view(
         agent_kind="main",
         created_by_run_id=run_created_by_id,
     )
+    if is_internal_conversation(scope.conversation):
+        raise HTTPException(status_code=404, detail="对话线程不存在")
     if scope.existing_run:
         if scope.existing_run.status == "pending":
             await _commit_and_enqueue(db, scope.existing_run.id)

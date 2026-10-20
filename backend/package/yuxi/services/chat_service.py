@@ -683,11 +683,7 @@ async def _resolve_agent_runtime(
     if thread_id:
         conversation = await conv_repo.get_conversation_by_thread_id(thread_id)
         if conversation:
-            if (
-                conversation.uid != str(user.uid)
-                or conversation.status == "deleted"
-                or is_internal_conversation(conversation)
-            ):
+            if conversation.uid != str(user.uid) or conversation.status == "deleted":
                 raise ValueError("对话线程不存在")
             # Conversation.agent_id 是历史字段名，实际保存的是 Agent.slug。
             if requested_agent_slug and requested_agent_slug != conversation.agent_id:

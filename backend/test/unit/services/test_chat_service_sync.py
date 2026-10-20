@@ -77,7 +77,8 @@ async def test_resolve_agent_runtime_includes_subagents_only_when_requested(monk
 
 
 @pytest.mark.asyncio
-async def test_resolve_agent_runtime_rejects_internal_conversation(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_resolve_agent_runtime_executes_internal_conversation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """内部线程的写入边界在提交入口；worker 执行已提交 Run 时不再拒绝内部会话。"""
     calls: list[str] = []
 
     class FakeConversationRepository:
@@ -104,7 +105,7 @@ async def test_resolve_agent_runtime_rejects_internal_conversation(monkeypatch: 
     monkeypatch.setattr(svc, "ConversationRepository", FakeConversationRepository)
     monkeypatch.setattr(svc, "AgentRepository", FakeAgentRepository)
 
-    with pytest.raises(ValueError, match="对话线程不存在"):
+    with pytest.raises(ValueError, match="智能体不存在"):
         await svc._resolve_agent_runtime(
             db=object(),
             user=SimpleNamespace(uid="user-1"),
@@ -112,7 +113,7 @@ async def test_resolve_agent_runtime_rejects_internal_conversation(monkeypatch: 
             thread_id="internal-thread",
         )
 
-    assert calls == []
+    assert calls == ["agent_lookup"]
 
 
 class _FakeConvRepo:
