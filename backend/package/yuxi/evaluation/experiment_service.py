@@ -50,6 +50,10 @@ PROTOCOL_EVALUATORS = {
 ALLOWED_SOURCE_KINDS = {"agent", "tool_mcp", "rag", "graph", "fixture", "company_due_diligence"}
 
 
+class ExperimentLockLostError(RuntimeError):
+    """执行中途失去实验执行锁；继续执行可能与接手的执行者重复跑同一批 rollout。"""
+
+
 class PlatformEvaluationService:
     """编排平台评测资源和无副作用 Fixture 执行。"""
 
@@ -585,20 +589,34 @@ async def experiment_executor_lock(
     """同一实验同一时刻只允许一个执行者；返回是否拿到锁。
 
     锁带 TTL，由心跳每 1/3 TTL 续期；执行者进程崩溃后心跳停止，锁在 TTL 内自动过期，恢复作业即可接手。
-    锁在执行中途丢失（释放时已不属于本执行者）会抛出 LockNotOwnedError，暴露可能的并发执行，而不是静默忽略。
+    心跳续期失败时锁可能已过期、其他执行者可以接手：立即取消本执行者并抛出 ExperimentLockLostError，
+    而不是继续执行到释放时才发现，期间与新执行者重复跑同一批 rollout。
     """
     redis = await get_redis_client()
     lock = redis.lock(f"platform-eval:executor:{experiment_id}", timeout=ttl_seconds)
     if not await lock.acquire(blocking=False):
         yield False
         return
+    owner = asyncio.current_task()
     heartbeat = asyncio.create_task(_keep_lock_alive(lock, ttl_seconds))
+    heartbeat.add_done_callback(partial(_stop_owner_on_lock_loss, owner))
     try:
         yield True
     finally:
+        # 心跳是无限循环，未被取消就结束只可能是续期失败。
+        if heartbeat.done() and not heartbeat.cancelled():
+            owner.uncancel()
+            raise ExperimentLockLostError(
+                f"实验 {experiment_id} 的执行锁续期失败，已停止执行"
+            ) from heartbeat.exception()
         heartbeat.cancel()
         await asyncio.gather(heartbeat, return_exceptions=True)
         await lock.release()
+
+
+def _stop_owner_on_lock_loss(owner: asyncio.Task, heartbeat: asyncio.Task) -> None:
+    if not heartbeat.cancelled():
+        owner.cancel()
 
 
 async def _keep_lock_alive(lock, ttl_seconds: int) -> None:

@@ -703,21 +703,21 @@ async def process_platform_evaluation_experiment(ctx, experiment_id: str) -> Non
     del ctx
     from yuxi.evaluation.experiment_service import PlatformEvaluationService, experiment_executor_lock
 
-    async with experiment_executor_lock(experiment_id) as acquired:
-        if not acquired:
-            # 另一个执行者正在运行该实验（重复投递或恢复作业），本作业直接结束，避免并发执行同一实验。
-            logger.info(f"Platform evaluation experiment {experiment_id} is already running elsewhere; skip")
-            return
-        try:
+    try:
+        async with experiment_executor_lock(experiment_id) as acquired:
+            if not acquired:
+                # 另一个执行者正在运行该实验（重复投递或恢复作业），本作业直接结束，避免并发执行同一实验。
+                logger.info(f"Platform evaluation experiment {experiment_id} is already running elsewhere; skip")
+                return
             async with pg_manager.get_async_session_context() as session:
                 await PlatformEvaluationService().run_experiment(db=session, experiment_id=experiment_id)
-        except Exception as exc:
-            # 作业异常退出时实验会停在 RUNNING；标记为 FAILED 并保留错误，页面可以看到原因并重新运行。
-            async with pg_manager.get_async_session_context() as session:
-                await PlatformEvaluationService().mark_failed(
-                    db=session, experiment_id=experiment_id, error_message=str(exc)
-                )
-            raise
+    except Exception as exc:
+        # 作业异常退出（包括执行锁续期失败）时实验会停在 RUNNING；标记为 FAILED 并保留错误，页面可以看到原因并重新运行。
+        async with pg_manager.get_async_session_context() as session:
+            await PlatformEvaluationService().mark_failed(
+                db=session, experiment_id=experiment_id, error_message=str(exc)
+            )
+        raise
 
 
 async def _worker_startup(ctx):

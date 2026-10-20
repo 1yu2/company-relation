@@ -7,7 +7,7 @@ import uuid
 
 import pytest
 
-from yuxi.evaluation.experiment_service import experiment_executor_lock
+from yuxi.evaluation.experiment_service import ExperimentLockLostError, experiment_executor_lock
 from yuxi.services.run_queue_service import get_redis_client
 
 # 共享的 Redis 客户端是进程级单例，绑定创建它的事件循环；本模块的用例共用同一个循环。
@@ -44,3 +44,20 @@ async def test_lock_left_by_crashed_executor_expires_after_ttl():
     await asyncio.sleep(1.5)
     async with experiment_executor_lock(experiment_id) as after_expiry:
         assert after_expiry is True
+
+
+async def test_executor_stops_within_one_heartbeat_after_losing_lock():
+    """锁被删掉（过期或被接手）后，下一次心跳续期失败即取消执行者，而不是跑到结束才发现。"""
+    experiment_id = f"pytest-{uuid.uuid4().hex}"
+    redis = await get_redis_client()
+    loop = asyncio.get_running_loop()
+    with pytest.raises(ExperimentLockLostError):
+        async with experiment_executor_lock(experiment_id, ttl_seconds=3):
+            await redis.delete(f"platform-eval:executor:{experiment_id}")
+            started = loop.time()
+            await asyncio.sleep(30)
+    # 心跳间隔为 TTL/3 = 1 秒。
+    assert loop.time() - started < 2
+    # 执行者自身没有残留的取消请求，后续标记 FAILED 等收尾操作可以正常 await。
+    assert asyncio.current_task().cancelling() == 0
+    await asyncio.sleep(0)

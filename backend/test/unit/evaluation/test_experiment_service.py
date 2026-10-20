@@ -478,8 +478,8 @@ async def test_agent_runner_timeout_cancels_run_even_if_stream_swallows_cancel(m
             pass
         raise agent_runner.AgentRunWaitTimeout({"status": "running", "agent_run_id": "run-1"})
 
-    async def fake_cancel(*, run_id, current_uid, db):
-        cancelled_runs.append((run_id, current_uid))
+    async def fake_cancel(*, run_id, current_uid, db, cascade_children):
+        cancelled_runs.append((run_id, current_uid, cascade_children))
 
     monkeypatch.setattr(agent_runner.pg_manager, "get_async_session_context", fake_session)
     monkeypatch.setattr(agent_runner, "submit_run_command", fake_submit)
@@ -502,11 +502,32 @@ async def test_agent_runner_timeout_cancels_run_even_if_stream_swallows_cancel(m
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(agent_runner.run_agent_task(experiment, task, "pro_1"), timeout=0.05)
 
-    assert cancelled_runs == [("run-1", "admin")]
+    # 与 HTTP 取消入口一致级联取消子 Run，被测 Agent 派生的子智能体不会继续执行。
+    assert cancelled_runs == [("run-1", "admin", True)]
     # 超时取消后仍释放本次执行线程的沙盒；线程 ID 与提交 Run 时使用的 execution_id 一致。
     assert len(released) == 1
     assert released[0][1] == "admin"
     assert released[0][0] == submitted_threads[0]
+
+
+@pytest.mark.unit
+async def test_cancel_agent_runs_for_rollouts_cascades_to_child_runs(monkeypatch):
+    from yuxi.evaluation import agent_runner
+
+    cancelled = []
+
+    async def fake_cancel(*, run_id, current_uid, db, cascade_children):
+        cancelled.append((run_id, current_uid, cascade_children))
+
+    class FakeDb:
+        async def execute(self, _statement):
+            return SimpleNamespace(scalars=lambda: [SimpleNamespace(id="run-1", uid="admin")])
+
+    monkeypatch.setattr(agent_runner, "request_cancel_agent_run", fake_cancel)
+
+    await agent_runner.cancel_agent_runs_for_rollouts(FakeDb(), ["pro_1"])
+
+    assert cancelled == [("run-1", "admin", True)]
 
 
 @pytest.mark.unit

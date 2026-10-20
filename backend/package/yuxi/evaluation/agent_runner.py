@@ -110,7 +110,8 @@ async def _wait_and_collect(
     except asyncio.CancelledError:
         # 实验超时会取消本协程；同步取消 AgentRun，避免评测结束后 Agent 仍在沙盒里执行。
         async with pg_manager.get_async_session_context() as db:
-            await request_cancel_agent_run(run_id=run_id, current_uid=uid, db=db)
+            # 与 HTTP 取消入口一致级联取消子 Run：被测 Agent 派生的子智能体不能在父 Run 取消后继续执行。
+            await request_cancel_agent_run(run_id=run_id, current_uid=uid, db=db, cascade_children=True)
         raise
 
     if result["status"] != "completed":
@@ -171,7 +172,7 @@ async def cancel_agent_runs_for_rollouts(db, rollout_ids: list[str]) -> None:
         )
     ).scalars()
     for run in list(runs):
-        await request_cancel_agent_run(run_id=run.id, current_uid=run.uid, db=db)
+        await request_cancel_agent_run(run_id=run.id, current_uid=run.uid, db=db, cascade_children=True)
 
 
 def _usage_summary(message_metadata: list[dict[str, Any]]) -> dict[str, Any]:
