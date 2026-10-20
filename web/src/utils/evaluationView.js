@@ -86,6 +86,23 @@ export const formatPValue = (value) => {
   return value < 0.001 ? '< 0.001' : value.toFixed(3)
 }
 
+/**
+ * 任务成功率卡片：按题计算的 pass@1（每题多次尝试先取平均，再对题平均），而不是按尝试次数统计。
+ * 超时等 Agent 失败已由后端计为未通过；只有评测侧错误没有评分，单独说明题数，不混入分母。
+ */
+export const taskSuccessStat = (aggregate, maxAttempts, taskPassCounts) => {
+  const measured = aggregate?.measured_task_count ?? 0
+  const unscored = aggregate?.not_measured_tasks ?? 0
+  const hint =
+    (maxAttempts || 1) > 1
+      ? `${measured} 题 · 每题 ${maxAttempts} 次尝试取平均`
+      : `${taskPassCounts?.passed || 0} / ${measured} 题通过`
+  return {
+    value: formatPercent(aggregate?.['pass@1']),
+    hint: unscored ? `${hint} · ${unscored} 题因评测侧错误未评分` : hint
+  }
+}
+
 /** 从实验快照中取页面需要的身份信息：Agent、实际模型、数据集版本和评分器。 */
 export const experimentIdentity = (experiment) => {
   const snapshot = experiment?.config_snapshot || {}

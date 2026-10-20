@@ -16,7 +16,8 @@ import {
   isActiveExperiment,
   metricLabel,
   reasonLabel,
-  statusMeta
+  statusMeta,
+  taskSuccessStat
 } from '@/utils/evaluationView'
 
 const POLL_INTERVAL_MS = 5000
@@ -59,7 +60,8 @@ const finishedCount = computed(() =>
 )
 const expectedRollouts = computed(() => (taskCount.value || 0) * (detail.value?.max_attempts || 1))
 const isActive = computed(() => isActiveExperiment(detail.value?.status))
-const canRun = computed(() => detail.value?.status === 'DRAFT')
+// 草稿可以运行；异常结束（FAILED）的实验可以重新运行，已完成的题会按幂等键跳过。
+const canRun = computed(() => ['DRAFT', 'FAILED'].includes(detail.value?.status))
 // 快照里记录了评分器版本时，版本不同的实验无法对比，直接不列出；旧实验没有快照，交给后端校验。
 const isComparableBaseline = (item) => {
   const current = identity.value.evaluators.join()
@@ -87,8 +89,7 @@ const keyStats = computed(() => {
   const stats = [
     {
       label: '任务成功率',
-      value: formatPercent(taskPass.pass_rate),
-      hint: `${counts.passed || 0} / ${(counts.passed || 0) + (counts.failed || 0)} 题通过`
+      ...taskSuccessStat(detail.value?.aggregate, detail.value?.max_attempts, counts)
     },
     answerValue && {
       label: '答案值正确率',
@@ -358,7 +359,17 @@ onBeforeUnmount(() => clearTimeout(pollTimer))
                 :loading="actionPending"
                 @click="runAction('run')"
               >
-                <Play v-if="!actionPending" :size="16" /> 运行实验
+                <Play v-if="!actionPending" :size="16" />
+                {{ detail.status === 'FAILED' ? '重新运行' : '运行实验' }}
+              </a-button>
+              <a-button
+                v-if="isActive"
+                class="lucide-icon-btn"
+                :loading="actionPending"
+                title="长时间没有进展时可以重新投递；同一实验同时只会有一个执行者"
+                @click="runAction('run')"
+              >
+                <Play v-if="!actionPending" :size="16" /> 继续运行
               </a-button>
               <a-button
                 v-if="isActive"
@@ -371,6 +382,12 @@ onBeforeUnmount(() => clearTimeout(pollTimer))
               </a-button>
             </div>
           </section>
+
+          <p v-if="detail.status === 'FAILED' && detail.error_message" class="failure-note">
+            <CircleAlert :size="16" /> 实验异常结束：{{
+              detail.error_message
+            }}。可以重新运行，已完成的题不会重复执行。
+          </p>
 
           <p v-if="isActive" class="progress-note">
             实验正在后台运行，已完成 {{ finishedCount }} / {{ expectedRollouts }}，页面每 5

@@ -8,7 +8,8 @@ import {
   experimentIdentity,
   formatPValue,
   formatPercent,
-  formatSigned
+  formatSigned,
+  taskSuccessStat
 } from '../../src/utils/evaluationView.js'
 
 const tasksById = new Map([
@@ -158,4 +159,28 @@ test('数值格式：百分比去掉多余小数，p 值过小时不显示虚假
   assert.equal(formatPValue(0.0004), '< 0.001')
   assert.equal(formatSigned(-0.5, formatPercent), '−50%')
   assert.equal(formatSigned(0, formatPercent), '±0%')
+})
+
+test('任务成功率按题计算 pass@1，多次尝试时不按尝试次数计数，并说明未评分题数', () => {
+  const single = taskSuccessStat(
+    { 'pass@1': 0.875, measured_task_count: 16, not_measured_tasks: 0 },
+    1,
+    { passed: 14, failed: 2 }
+  )
+  assert.deepEqual(single, { value: '87.5%', hint: '14 / 16 题通过' })
+
+  // k=3 时按尝试计数会是 41/48；卡片应展示按题平均的 pass@1，并说明口径。
+  const repeated = taskSuccessStat(
+    { 'pass@1': 0.8541666666666666, measured_task_count: 16, not_measured_tasks: 0 },
+    3,
+    { passed: 41, failed: 7 }
+  )
+  assert.deepEqual(repeated, { value: '85.4%', hint: '16 题 · 每题 3 次尝试取平均' })
+
+  const withInfraErrors = taskSuccessStat(
+    { 'pass@1': 0.5, measured_task_count: 2, not_measured_tasks: 1 },
+    1,
+    { passed: 1, failed: 1 }
+  )
+  assert.equal(withInfraErrors.hint, '1 / 2 题通过 · 1 题因评测侧错误未评分')
 })
