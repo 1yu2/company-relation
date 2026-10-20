@@ -539,6 +539,10 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     async def fake_recover_evidence():
         calls.append("recover_evidence")
 
+    async def fake_resume_experiments(self, *, db):
+        del self, db
+        calls.append("resume_platform_experiments")
+
     monkeypatch.setattr(run_worker.pg_manager, "initialize", fake_initialize)
     monkeypatch.setattr(run_worker.pg_manager, "create_business_tables", fake_create_business_tables)
     monkeypatch.setattr(run_worker.pg_manager, "run_versioned_migrations", fake_run_versioned_migrations)
@@ -557,6 +561,9 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     monkeypatch.setattr(due_diligence_report_service, "recover_pending_tasks", fake_recover_reports)
     monkeypatch.setattr(graph_projection_service, "recover_pending_tasks", fake_recover_graph)
     monkeypatch.setattr(evidence_index_service, "recover_pending_tasks", fake_recover_evidence)
+    from yuxi.evaluation.experiment_service import PlatformEvaluationService
+
+    monkeypatch.setattr(PlatformEvaluationService, "resume_incomplete_experiments", fake_resume_experiments)
 
     await run_worker._worker_startup({})
 
@@ -573,4 +580,5 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         "recover_reports",
         "recover_graph",
         "recover_evidence",
+        "resume_platform_experiments",
     ]

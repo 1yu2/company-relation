@@ -141,10 +141,22 @@ class PlatformEvaluationRepository:
 
     async def get_experiment(self, experiment_id: str) -> PlatformEvaluationExperiment | None:
         async with self._session() as session:
+            # 后台执行时取消请求由其他会话写入；populate_existing 保证读到已提交的最新状态。
             result = await session.execute(
-                select(PlatformEvaluationExperiment).where(PlatformEvaluationExperiment.experiment_id == experiment_id)
+                select(PlatformEvaluationExperiment)
+                .where(PlatformEvaluationExperiment.experiment_id == experiment_id)
+                .execution_options(populate_existing=True)
             )
             return result.scalar_one_or_none()
+
+    async def list_experiments_by_status(self, statuses: set[str]) -> list[PlatformEvaluationExperiment]:
+        async with self._session() as session:
+            result = await session.execute(
+                select(PlatformEvaluationExperiment)
+                .where(PlatformEvaluationExperiment.status.in_(statuses))
+                .order_by(PlatformEvaluationExperiment.created_at)
+            )
+            return list(result.scalars().all())
 
     async def list_experiments(
         self, source_kind: str | None = None, limit: int = 50
@@ -187,8 +199,11 @@ class PlatformEvaluationRepository:
 
     async def get_rollout(self, rollout_id: str) -> PlatformEvaluationRollout | None:
         async with self._session() as session:
+            # 取消由其他会话写入；populate_existing 保证后台执行读到已提交的最新状态。
             result = await session.execute(
-                select(PlatformEvaluationRollout).where(PlatformEvaluationRollout.rollout_id == rollout_id)
+                select(PlatformEvaluationRollout)
+                .where(PlatformEvaluationRollout.rollout_id == rollout_id)
+                .execution_options(populate_existing=True)
             )
             return result.scalar_one_or_none()
 
@@ -203,7 +218,9 @@ class PlatformEvaluationRepository:
         """幂等更新单次尝试的状态和终态结果。"""
         async with self._session() as session:
             result = await session.execute(
-                select(PlatformEvaluationRollout).where(PlatformEvaluationRollout.rollout_id == rollout_id)
+                select(PlatformEvaluationRollout)
+                .where(PlatformEvaluationRollout.rollout_id == rollout_id)
+                .execution_options(populate_existing=True)
             )
             record = result.scalar_one_or_none()
             if record is None:
@@ -217,9 +234,15 @@ class PlatformEvaluationRepository:
                 setattr(record, key, value)
             return record
 
-    async def list_rollouts(self, experiment_id: str, limit: int = 100) -> list[PlatformEvaluationRollout]:
-        records, _ = await self.list_rollouts_page(experiment_id, limit=limit)
-        return records
+    async def list_rollouts(self, experiment_id: str) -> list[PlatformEvaluationRollout]:
+        """返回实验的全部 rollout，供聚合与取消使用；分页展示走 list_rollouts_page。"""
+        async with self._session() as session:
+            result = await session.execute(
+                select(PlatformEvaluationRollout)
+                .where(PlatformEvaluationRollout.experiment_id == experiment_id)
+                .order_by(PlatformEvaluationRollout.created_at.desc(), PlatformEvaluationRollout.rollout_id.desc())
+            )
+            return list(result.scalars().all())
 
     async def list_rollouts_page(
         self, experiment_id: str, limit: int = 100, cursor: str | None = None

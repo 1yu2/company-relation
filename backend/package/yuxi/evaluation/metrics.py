@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import math
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from typing import Any
 
 from yuxi.evaluation.provenance import validate_trace_events
 
 METRIC_VERSION = "deterministic-v1"
+# 样本少于该数量时 P95/P99 没有意义，只报中位数和最大值。
+PERCENTILE_MIN_SAMPLES = 20
 
 
 def normalize_text(value: Any) -> str:
@@ -102,14 +104,35 @@ def aggregate_pass_metrics(attempts: list[dict[str, Any]], k: int | None = None)
     if effective_k < 1:
         raise ValueError("k must be greater than zero")
 
-    pass_at_one = sum(sum(_is_success(item) for item in values) / len(values) for values in groups.values()) / len(
-        groups
+    measurable_groups = {
+        task_key: [item for item in values if _is_measured(item)] for task_key, values in groups.items()
+    }
+    measured_groups = {task_key: values for task_key, values in measurable_groups.items() if values}
+    not_measured_tasks = len(groups) - len(measured_groups)
+    if not measured_groups:
+        return {
+            "metric_version": METRIC_VERSION,
+            "task_count": len(groups),
+            "measured_task_count": 0,
+            "not_measured_tasks": not_measured_tasks,
+            "attempt_count": sum(len(values) for values in groups.values()),
+            "k": effective_k,
+            "insufficient_samples": 0,
+            "pass@1": None,
+            "pass@k": None,
+            "pass^k": None,
+            "best@k": None,
+        }
+
+    pass_at_one = (
+        sum(sum(_is_success(item) for item in values) / len(values) for values in measured_groups.values())
+        / len(measured_groups)
     )
     pass_at_k_values: list[float] = []
     pass_power_values: list[float] = []
     best_values: list[float] = []
     insufficient = 0
-    for values in groups.values():
+    for values in measured_groups.values():
         successes = sum(_is_success(item) for item in values)
         if len(values) < effective_k:
             insufficient += 1
@@ -131,6 +154,8 @@ def aggregate_pass_metrics(attempts: list[dict[str, Any]], k: int | None = None)
     return {
         "metric_version": METRIC_VERSION,
         "task_count": len(groups),
+        "measured_task_count": len(measured_groups),
+        "not_measured_tasks": not_measured_tasks,
         "attempt_count": sum(len(values) for values in groups.values()),
         "k": effective_k,
         "insufficient_samples": insufficient,
@@ -138,6 +163,110 @@ def aggregate_pass_metrics(attempts: list[dict[str, Any]], k: int | None = None)
         "pass@k": average(pass_at_k_values),
         "pass^k": average(pass_power_values),
         "best@k": average(best_values),
+    }
+
+
+def aggregate_rollout_performance(rollouts: list[dict[str, Any]]) -> dict[str, Any]:
+    """汇总 rollout 状态分母、耗时分位数、token 用量和工具调用次数。
+
+    耗时、token 和工具调用只统计带 Agent 结果的 rollout（runner 失败的没有这些数据），
+    每项都给出自己的样本量；样本少于 PERCENTILE_MIN_SAMPLES 时不报 P95/P99。
+    """
+    outputs = [item.get("actual_output") or {} for item in rollouts]
+    latencies = [output.get("latency") or {} for output in outputs]
+    usages = [output["usage"] for output in outputs if output.get("usage")]
+    tool_calls = [output["tool_calls"] for output in outputs if "tool_calls" in output]
+    by_tool: dict[str, int] = defaultdict(int)
+    for calls in tool_calls:
+        for call in calls:
+            by_tool[str(call.get("name") or "")] += 1
+    return {
+        "rollout_status": dict(sorted(Counter(str(item.get("status")) for item in rollouts).items())),
+        "latency_ms": {
+            "agent_total": _distribution([item.get("total_ms") for item in latencies]),
+            "agent_queue": _distribution([item.get("queue_ms") for item in latencies]),
+            "agent_execution": _distribution([item.get("execution_ms") for item in latencies]),
+            "rollout": _distribution([item.get("duration_ms") for item in rollouts]),
+        },
+        "usage": {
+            "sample_count": len(usages),
+            "total_sum": sum(item.get("total", 0) for item in usages),
+            "total_per_rollout": _distribution([item.get("total") for item in usages]),
+            "input_sum": sum(item.get("input", 0) for item in usages),
+            "output_sum": sum(item.get("output", 0) for item in usages),
+            "llm_calls_per_rollout": _distribution([item.get("llm_calls") for item in usages]),
+        },
+        "tool_calls": {
+            "per_rollout": _distribution([len(calls) for calls in tool_calls]),
+            "by_name": dict(sorted(by_tool.items())),
+        },
+    }
+
+
+def aggregate_metric_breakdown(metrics: list[dict[str, Any]]) -> dict[str, Any]:
+    """按指标名统计各状态数量；判定类给出通过率（分母为 passed+failed），测量类给出均值。"""
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for metric in metrics:
+        groups[str(metric.get("metric_name"))].append(metric)
+    breakdown = {}
+    for name, items in sorted(groups.items()):
+        counts = Counter(str(item.get("status")) for item in items)
+        judged = counts["passed"] + counts["failed"]
+        measured = [
+            float(item["value"]) for item in items if item.get("status") == "measured" and item.get("value") is not None
+        ]
+        breakdown[name] = {
+            "status_counts": dict(sorted(counts.items())),
+            "pass_rate": counts["passed"] / judged if judged else None,
+            "measured_mean": sum(measured) / len(measured) if measured else None,
+            "reason_counts": dict(
+                sorted(Counter(str(item["reason_code"]) for item in items if item.get("reason_code")).items())
+            ),
+        }
+    return breakdown
+
+
+def compare_paired_outcomes(base: dict[str, str], candidate: dict[str, str]) -> dict[str, Any]:
+    """按 task_key 配对两次实验的 task_pass 状态，统计修复/退化并做 McNemar 精确检验。
+
+    只有两边都是 passed/failed 的题才进入配对；任一边未测或缺失的题单独计数，不参与通过率与检验。
+    """
+    judged = {"passed", "failed"}
+    paired = sorted(key for key in base.keys() & candidate.keys() if {base[key], candidate[key]} <= judged)
+    fixed = [key for key in paired if base[key] == "failed" and candidate[key] == "passed"]
+    broken = [key for key in paired if base[key] == "passed" and candidate[key] == "failed"]
+    base_passed = sum(base[key] == "passed" for key in paired)
+    candidate_passed = sum(candidate[key] == "passed" for key in paired)
+    return {
+        "paired_count": len(paired),
+        "unpaired_task_keys": sorted((base.keys() | candidate.keys()) - set(paired)),
+        "fixed": fixed,
+        "broken": broken,
+        "both_pass": sum(base[key] == candidate[key] == "passed" for key in paired),
+        "both_fail": sum(base[key] == candidate[key] == "failed" for key in paired),
+        "base_pass_rate": base_passed / len(paired) if paired else None,
+        "candidate_pass_rate": candidate_passed / len(paired) if paired else None,
+        "pass_rate_delta": (candidate_passed - base_passed) / len(paired) if paired else None,
+        "mcnemar_p_value": _mcnemar_exact_p(len(fixed), len(broken)),
+    }
+
+
+def estimate_cost(usage: dict[str, Any], pricing: dict[str, Any] | None) -> dict[str, Any] | None:
+    """按调用方提供的每百万 token 单价估算成本；未提供单价时返回 None，不做猜测。
+
+    input 中包含缓存命中的 token（如 DeepSeek 的 cache_read），按同一单价计算，结果是上限估计。
+    """
+    if not pricing:
+        return None
+    input_cost = usage.get("input_sum", 0) * pricing["input_per_million"] / 1_000_000
+    output_cost = usage.get("output_sum", 0) * pricing["output_per_million"] / 1_000_000
+    samples = usage.get("sample_count", 0)
+    return {
+        "currency": pricing["currency"],
+        "input": input_cost,
+        "output": output_cost,
+        "total": input_cost + output_cost,
+        "per_rollout_mean": (input_cost + output_cost) / samples if samples else None,
     }
 
 
@@ -167,5 +296,43 @@ def _first_failure(metrics: list[dict[str, Any]]) -> str:
     return next((str(item["reason_code"]) for item in metrics if item.get("reason_code")), "evaluation_failed")
 
 
+def _is_measured(attempt: dict[str, Any]) -> bool:
+    return attempt.get("task_pass") is not None or attempt.get("status") in {"passed", "failed"}
+
+
 def _is_success(attempt: dict[str, Any]) -> bool:
-    return bool(attempt.get("task_pass", attempt.get("status") == "passed"))
+    return bool(attempt.get("task_pass") is True or attempt.get("status") == "passed")
+
+
+def _distribution(values: list[Any]) -> dict[str, Any]:
+    """计算样本量、中位数、最大值、均值，以及样本足够时的 P95/P99（线性插值）。"""
+    numbers = sorted(
+        float(value) for value in values if isinstance(value, (int, float)) and not isinstance(value, bool)
+    )
+    if not numbers:
+        return {"sample_count": 0, "p50": None, "p95": None, "p99": None, "max": None, "mean": None}
+    enough = len(numbers) >= PERCENTILE_MIN_SAMPLES
+    return {
+        "sample_count": len(numbers),
+        "p50": _percentile(numbers, 50),
+        "p95": _percentile(numbers, 95) if enough else None,
+        "p99": _percentile(numbers, 99) if enough else None,
+        "max": numbers[-1],
+        "mean": sum(numbers) / len(numbers),
+    }
+
+
+def _percentile(sorted_values: list[float], percent: float) -> float:
+    position = (len(sorted_values) - 1) * percent / 100
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    return sorted_values[lower] + (sorted_values[upper] - sorted_values[lower]) * (position - lower)
+
+
+def _mcnemar_exact_p(fixed: int, broken: int) -> float:
+    """双侧 McNemar 精确检验：不一致对服从 Binomial(n, 0.5)，p = 2 * P(X <= min(b, c))，上限为 1。"""
+    discordant = fixed + broken
+    if discordant == 0:
+        return 1.0
+    tail = sum(math.comb(discordant, index) for index in range(min(fixed, broken) + 1)) / 2**discordant
+    return min(1.0, 2 * tail)

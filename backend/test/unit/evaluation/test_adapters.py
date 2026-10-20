@@ -4,6 +4,7 @@ from yuxi.evaluation.adapters import (
     AgentEvaluationAdapter,
     GraphEvaluationAdapter,
     RagEvaluationAdapter,
+    adapt_records,
     adapt_source_record,
 )
 
@@ -36,6 +37,30 @@ def test_adapt_graph_record_requires_task_key():
         adapt_source_record("graph", {"answer": "missing key"})
 
 
+def test_adapt_company_due_diligence_record_keeps_domain_metrics():
+    records = adapt_records(
+        "company_due_diligence",
+        [
+            {
+                "task_key": "cdd-1",
+                "query": "注册资本？",
+                "expected": {"review_status": "reviewed"},
+                "output": {"resolution_status": "resolved"},
+                "domain_metrics": {"fact_correctness": 1.0},
+                "status": "completed",
+            }
+        ],
+        run_id="run-1",
+        source_version="q02-v1",
+    )
+
+    assert records[0].source_kind == "company_due_diligence"
+    assert records[0].source_run_id == "run-1"
+    assert records[0].source_version == "q02-v1"
+    assert records[0].domain_metrics["fact_correctness"] == 1.0
+
+
+@pytest.mark.unit
 def test_source_adapters_map_legacy_records_without_running_sources():
     rag = RagEvaluationAdapter().adapt(
         [{"item_id": "rag-1", "query_text": "q", "generated_answer": "a", "metrics": {"recall@10": 1.0}}],

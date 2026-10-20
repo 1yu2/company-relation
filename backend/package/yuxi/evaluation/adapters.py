@@ -12,7 +12,7 @@ from typing import Any, Protocol
 
 from yuxi.evaluation.provenance import checksum_for, redact_value
 
-SUPPORTED_SOURCE_KINDS = ("agent", "tool_mcp", "rag", "graph", "fixture")
+SUPPORTED_SOURCE_KINDS = ("agent", "tool_mcp", "rag", "graph", "fixture", "company_due_diligence")
 
 
 @dataclass(frozen=True)
@@ -99,6 +99,25 @@ class EvaluationSourceAdapter(Protocol):
 
     def adapt(self, records: Iterable[Any], **context: Any) -> list[UnifiedEvaluationRecord]:
         """把已读取的来源记录转换为统一结果。"""
+
+
+class CompanyDueDiligenceEvaluationAdapter:
+    """适配企业尽调 domain evaluator 的已完成记录，不启动业务查询。"""
+
+    source_kind = "company_due_diligence"
+
+    def adapt(self, records: Iterable[Any], **context: Any) -> list[UnifiedEvaluationRecord]:
+        return [
+            adapt_source_record(
+                self.source_kind,
+                {
+                    **(dict(record) if isinstance(record, Mapping) else {}),
+                    "source_run_id": context.get("run_id"),
+                    "source_version": context.get("source_version"),
+                },
+            )
+            for record in records
+        ]
 
 
 class RagEvaluationAdapter:
@@ -246,6 +265,7 @@ ADAPTERS: dict[str, EvaluationSourceAdapter] = {
     "tool_mcp": AgentEvaluationAdapter(),
     "rag": RagEvaluationAdapter(),
     "graph": GraphEvaluationAdapter(),
+    "company_due_diligence": CompanyDueDiligenceEvaluationAdapter(),
 }
 
 

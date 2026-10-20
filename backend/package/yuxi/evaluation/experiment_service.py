@@ -5,17 +5,41 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime
+from functools import partial
 from typing import Any
 
-from yuxi.evaluation.metrics import aggregate_pass_metrics, evaluate_task
+from yuxi.evaluation.agent_final_answer import METRIC_VERSION as AGENT_FINAL_ANSWER_METRIC_VERSION
+from yuxi.evaluation.agent_final_answer import evaluate_agent_final_answer
+from yuxi.evaluation.agent_runner import AgentRunnerError, run_agent_task
+from yuxi.evaluation.company_due_diligence import METRIC_VERSION as CDD_METRIC_VERSION
+from yuxi.evaluation.company_due_diligence import evaluate_company_due_diligence
+from yuxi.evaluation.metrics import (
+    METRIC_VERSION,
+    aggregate_metric_breakdown,
+    aggregate_pass_metrics,
+    aggregate_rollout_performance,
+    compare_paired_outcomes,
+    estimate_cost,
+    evaluate_task,
+)
 from yuxi.evaluation.provenance import TraceEvent, checksum_for, redact_value
+from yuxi.evaluation.snapshot import capture_agent_snapshot, capture_common_snapshot, validate_pricing
 from yuxi.repositories.platform_evaluation_repository import PlatformEvaluationRepository
+from yuxi.services.run_queue_service import get_arq_pool
 from yuxi.storage.postgres.models_evaluation import PlatformEvaluationTask
 from yuxi.utils.datetime_utils import utc_now_naive
 from yuxi.utils.hash_utils import hash_id
 
 TERMINAL_EXPERIMENT_STATUSES = {"FINISHED", "FAILED", "CANCELLED"}
-ALLOWED_SOURCE_KINDS = {"agent", "tool_mcp", "rag", "graph", "fixture"}
+RUNNABLE_EXPERIMENT_STATUSES = {"DRAFT", "QUEUED", "RUNNING", "AGGREGATING"}
+EXPERIMENT_JOB_NAME = "process_platform_evaluation_experiment"
+# fixture/agent_run 实验按任务协议选择结果 evaluator；企业尽调 runner 固定使用自己的 evaluator（本轮冻结）。
+# 值为 (evaluator, metric_version)；metric_version 写入实验快照，对比实验时据此判断评分口径是否一致。
+PROTOCOL_EVALUATORS = {
+    "agent_tool_final_v1": (evaluate_task, METRIC_VERSION),
+    "agent_final_answer_v1": (evaluate_agent_final_answer, AGENT_FINAL_ANSWER_METRIC_VERSION),
+}
+ALLOWED_SOURCE_KINDS = {"agent", "tool_mcp", "rag", "graph", "fixture", "company_due_diligence"}
 
 
 class PlatformEvaluationService:
@@ -56,7 +80,24 @@ class PlatformEvaluationService:
         items, next_cursor = await self._repo(db).list_datasets_page(
             source_kind=source_kind, limit=limit, cursor=cursor
         )
-        return {"items": [_serialize(item) for item in items], "next_cursor": next_cursor}
+        repo = self._repo(db)
+        serialized: list[dict[str, Any]] = []
+        for item in items:
+            versions = await repo.list_versions(item.dataset_id)
+            latest = versions[0] if versions else None
+            payload = _serialize(item)
+            if latest is not None:
+                payload.update(
+                    {
+                        "latest_version": latest.version_id,
+                        "latest_version_status": latest.status,
+                        "item_count": len(await repo.list_tasks(latest.version_id)),
+                    }
+                )
+            else:
+                payload.update({"latest_version": None, "latest_version_status": None, "item_count": 0})
+            serialized.append(payload)
+        return {"items": serialized, "next_cursor": next_cursor}
 
     async def get_dataset(self, *, db, dataset_id: str) -> dict[str, Any] | None:
         item = await self._repo(db).get_dataset(dataset_id)
@@ -111,8 +152,14 @@ class PlatformEvaluationService:
             return _serialize(version)
         if version.status != "draft":
             raise ValueError("数据集版本状态不可发布")
-        if not await repo.list_tasks(version_id):
+        tasks = await repo.list_tasks(version_id)
+        if not tasks:
             raise ValueError("数据集版本至少需要一条任务")
+        if any(
+            task.protocol == "cdd_q02_review_v1" and not (task.expected or {}).get("status")
+            for task in tasks
+        ):
+            raise ValueError("企业尽调任务缺少可比较的参考状态")
         published = await repo.update_version(
             version_id,
             {"status": "published", "published_at": utc_now_naive()},
@@ -142,14 +189,49 @@ class PlatformEvaluationService:
             raise ValueError("只能基于已发布的数据集版本创建实验")
         dataset = await repo.get_dataset(version.dataset_id)
         source_kind = _validate_source_kind(str(data.get("source_kind") or dataset.source_kind))
+        runner = str(data.get("runner") or "fixture")
+        if source_kind != dataset.source_kind:
+            raise ValueError("实验来源必须与数据集来源一致")
+        if runner not in {"fixture", "company_due_diligence", "agent_run"}:
+            raise ValueError(f"不支持的评测 runner: {runner}")
+        if runner == "agent_run" and not data.get("agent_slug"):
+            raise ValueError("agent_run runner 需要 agent_slug")
+        tasks = await repo.list_tasks(version.version_id)
+        domain_tasks = any(task.protocol == "cdd_q02_review_v1" for task in tasks)
+        if (source_kind == "company_due_diligence" or domain_tasks) and runner != "company_due_diligence":
+            raise ValueError("企业尽调评测不能使用 fixture runner")
+        unknown_protocols = {task.protocol for task in tasks} - PROTOCOL_EVALUATORS.keys()
+        if runner != "company_due_diligence" and unknown_protocols:
+            raise ValueError(f"没有对应 evaluator 的任务协议: {', '.join(sorted(unknown_protocols))}")
+        if runner == "company_due_diligence":
+            if source_kind != "company_due_diligence":
+                raise ValueError("企业尽调 runner 需要企业尽调来源数据集")
+            if any((task.input or {}).get("topic") == "report" for task in tasks):
+                raise ValueError("当前只读企业问答 runner 不支持报告题，请选择问答题版本")
         config_snapshot = redact_value(dict(data.get("config_snapshot") or {}))
+        if "pricing" in config_snapshot:
+            config_snapshot["pricing"] = validate_pricing(config_snapshot["pricing"])
+        evaluator_versions = (
+            {task.protocol: CDD_METRIC_VERSION for task in tasks}
+            if runner == "company_due_diligence"
+            else {task.protocol: PROTOCOL_EVALUATORS[task.protocol][1] for task in tasks}
+        )
+        # 服务端采集的事实统一放在 captured 下，调用方传入的同名字段不会覆盖它。
+        captured = capture_common_snapshot(version=version, tasks=tasks, evaluator_versions=evaluator_versions)
+        if runner == "agent_run":
+            # 评测 Run 没有人在线审批，默认信任沙盒工具，并显式写入快照以便复现。
+            config_snapshot.setdefault("tool_approval_mode", "always_trust")
+            captured["agent"] = await capture_agent_snapshot(
+                db, agent_slug=str(data["agent_slug"]), requested_model_spec=config_snapshot.get("model_spec")
+            )
+        config_snapshot["captured"] = captured
         experiment = await repo.create_experiment(
             {
                 "experiment_id": hash_id("pex_", uuid.uuid4().hex, length=32),
                 "dataset_version_id": version.version_id,
                 "source_kind": source_kind,
                 "agent_slug": data.get("agent_slug"),
-                "runner": str(data.get("runner") or "fixture"),
+                "runner": runner,
                 "evaluator_version": str(data.get("evaluator_version") or "deterministic-v1"),
                 "config_snapshot": config_snapshot,
                 "concurrency": max(1, min(int(data.get("concurrency") or 1), 32)),
@@ -219,18 +301,36 @@ class PlatformEvaluationService:
             raise LookupError("实验不存在")
         return [_serialize(item) for item in await self._repo(db).list_failures(experiment_id)]
 
-    async def run_experiment(self, *, db, experiment_id: str) -> dict[str, Any]:
+    async def start_experiment(self, *, db, experiment_id: str) -> dict[str, Any]:
+        """把实验标记为排队并投递到 worker；先提交数据库状态，再投递 ARQ。"""
         repo = self._repo(db)
         experiment = await repo.get_experiment(experiment_id)
         if experiment is None:
             raise LookupError("实验不存在")
         if experiment.status in TERMINAL_EXPERIMENT_STATUSES:
             return await self.experiment_summary(db=db, experiment_id=experiment_id)
-        if experiment.status not in {"DRAFT", "QUEUED", "RUNNING", "AGGREGATING"}:
+        if experiment.status not in RUNNABLE_EXPERIMENT_STATUSES:
+            raise ValueError(f"实验状态不可运行: {experiment.status}")
+        if experiment.status == "DRAFT":
+            await repo.update_experiment(experiment_id, {"status": "QUEUED"})
+            await db.commit()
+        await enqueue_experiment(experiment_id)
+        return await self.experiment_summary(db=db, experiment_id=experiment_id)
+
+    async def run_experiment(self, *, db, experiment_id: str) -> dict[str, Any]:
+        """在 worker 中逐题执行实验；每条 rollout 单独提交，中断后可按幂等键续跑。"""
+        repo = self._repo(db)
+        experiment = await repo.get_experiment(experiment_id)
+        if experiment is None:
+            raise LookupError("实验不存在")
+        if experiment.status in TERMINAL_EXPERIMENT_STATUSES:
+            return await self.experiment_summary(db=db, experiment_id=experiment_id)
+        if experiment.status not in RUNNABLE_EXPERIMENT_STATUSES:
             raise ValueError(f"实验状态不可运行: {experiment.status}")
         await repo.update_experiment(
             experiment_id, {"status": "RUNNING", "started_at": experiment.started_at or utc_now_naive()}
         )
+        await db.commit()
         tasks = await repo.list_tasks(experiment.dataset_version_id)
         for task in tasks:
             current = await repo.get_experiment(experiment_id)
@@ -247,12 +347,15 @@ class PlatformEvaluationService:
                         "runner": experiment.runner,
                     }
                 )
-                if await repo.get_rollout_by_idempotency(key):
+                existing = await repo.get_rollout_by_idempotency(key)
+                # RUNNING 说明上次执行在该题中途中断：复用同一 rollout 重跑；其余状态已是终态结果。
+                if existing is not None and existing.status != "RUNNING":
                     continue
                 await self._run_one_rollout(db=db, experiment=experiment, task=task, attempt=attempt, key=key)
         await repo.update_experiment(experiment_id, {"status": "AGGREGATING"})
         summary = await self.experiment_summary(db=db, experiment_id=experiment_id)
         await repo.update_experiment(experiment_id, {"status": "FINISHED", "completed_at": utc_now_naive()})
+        await db.commit()
         summary["status"] = "FINISHED"
         return summary
 
@@ -283,14 +386,16 @@ class PlatformEvaluationService:
                 )
         return await self._finish_cancelled(db=db, experiment_id=experiment_id)
 
-    async def resume_incomplete_experiments(self, *, db) -> list[dict[str, Any]]:
-        """读取数据库中的未终态实验并继续执行，供 Worker/重启恢复入口调用。"""
-        experiments = await self._repo(db).list_experiments()
-        resumed = []
+    async def resume_incomplete_experiments(self, *, db) -> list[str]:
+        """worker 启动时重新投递未终态实验；已完成的 rollout 由幂等键跳过。
+
+        中断的 ARQ 作业会留下 in-progress 键（存活到作业超时），沿用稳定 Job ID 会被静默去重，
+        因此恢复投递使用新的 Job ID。当前部署只有一个 worker，启动时不存在仍在执行的同一实验。
+        """
+        experiments = await self._repo(db).list_experiments_by_status({"QUEUED", "RUNNING", "AGGREGATING"})
         for experiment in experiments:
-            if experiment.status in {"QUEUED", "RUNNING", "AGGREGATING"}:
-                resumed.append(await self.run_experiment(db=db, experiment_id=experiment.experiment_id))
-        return resumed
+            await enqueue_experiment(experiment.experiment_id, recovery=True)
+        return [experiment.experiment_id for experiment in experiments]
 
     async def _finish_cancelled(self, *, db, experiment_id: str) -> dict[str, Any]:
         await self._repo(db).update_experiment(experiment_id, {"status": "CANCELLED", "completed_at": utc_now_naive()})
@@ -300,11 +405,10 @@ class PlatformEvaluationService:
 
     async def _run_one_rollout(self, *, db, experiment, task, attempt: int, key: str) -> None:
         repo = self._repo(db)
-        rollout_id = hash_id("pro_", uuid.uuid4().hex, length=32)
         started = utc_now_naive()
-        await repo.create_rollout(
+        rollout = await repo.create_rollout(
             {
-                "rollout_id": rollout_id,
+                "rollout_id": hash_id("pro_", uuid.uuid4().hex, length=32),
                 "experiment_id": experiment.experiment_id,
                 "task_id": task.task_id,
                 "attempt": attempt,
@@ -313,9 +417,26 @@ class PlatformEvaluationService:
                 "started_at": started,
             }
         )
+        rollout_id = rollout.rollout_id
+        await db.commit()
         try:
-            actual, events = await asyncio.wait_for(_run_fixture(task, rollout_id), timeout=experiment.timeout_seconds)
-            metric_values = evaluate_task(_task_dict(task), actual, events)
+            if experiment.runner == "fixture":
+                runner = _run_fixture
+            elif experiment.runner == "company_due_diligence":
+                runner = _run_company_due_diligence
+            elif experiment.runner == "agent_run":
+                runner = partial(run_agent_task, experiment)
+            else:
+                raise ValueError(f"不支持的评测 runner: {experiment.runner}")
+            actual, events = await asyncio.wait_for(runner(task, rollout_id), timeout=experiment.timeout_seconds)
+            if await _rollout_cancelled(repo, rollout_id):
+                await db.commit()
+                return
+            metric_values = (
+                evaluate_company_due_diligence(_task_dict(task), actual)
+                if experiment.runner == "company_due_diligence"
+                else PROTOCOL_EVALUATORS[task.protocol][0](_task_dict(task), actual, events)
+            )
             task_pass = bool(metric_values[-1]["value"])
             duration_ms = (utc_now_naive() - started).total_seconds() * 1000
             await repo.update_rollout(
@@ -346,6 +467,9 @@ class PlatformEvaluationService:
             if failures:
                 await repo.save_failures(failures)
         except TimeoutError:
+            if await _rollout_cancelled(repo, rollout_id):
+                await db.commit()
+                return
             await repo.update_rollout(
                 rollout_id,
                 {
@@ -359,19 +483,24 @@ class PlatformEvaluationService:
                 [_failure_row({"reason_code": "timeout", "metric_name": "task_pass"}, rollout_id, None)]
             )
         except Exception as exc:
+            if await _rollout_cancelled(repo, rollout_id):
+                await db.commit()
+                return
+            reason_code = exc.reason_code if isinstance(exc, AgentRunnerError) else "runner_error"
             await repo.update_rollout(
                 rollout_id,
                 {
                     "status": "FAILED",
                     "failure_type": "runner_error",
-                    "reason_code": "runner_error",
+                    "reason_code": reason_code,
                     "error_message": str(exc),
                     "finished_at": utc_now_naive(),
                 },
             )
             await repo.save_failures(
-                [_failure_row({"reason_code": "runner_error", "metric_name": "task_pass"}, rollout_id, None)]
+                [_failure_row({"reason_code": reason_code, "metric_name": "task_pass"}, rollout_id, None)]
             )
+        await db.commit()
 
     async def experiment_summary(self, *, db, experiment_id: str) -> dict[str, Any]:
         repo = self._repo(db)
@@ -388,18 +517,125 @@ class PlatformEvaluationService:
             {
                 "task_key": task_keys.get(rollout.task_id, rollout.task_id),
                 "attempt": rollout.attempt,
-                "task_pass": bool(metric.value) if metric else False,
-                "score": metric.value if metric else 0,
+                "task_pass": None
+                if metric is None or metric.status in {"not_measured", "unavailable"}
+                else bool(metric.value),
+                "status": metric.status if metric else "not_measured",
+                "score": metric.value if metric and metric.value is not None else 0,
             }
             for rollout in rollouts
             for metric in [task_pass_by_rollout.get(rollout.rollout_id)]
         ]
+        performance = aggregate_rollout_performance([_serialize(item) for item in rollouts])
+        performance["estimated_cost"] = estimate_cost(performance["usage"], experiment.config_snapshot.get("pricing"))
         return _serialize(experiment) | {
             "rollouts": [_serialize(item) for item in rollouts],
             "metrics": [_serialize(item) for item in metrics],
             "failures": [_serialize(item) for item in failures],
             "aggregate": aggregate_pass_metrics(attempts, k=experiment.max_attempts),
+            "performance": performance,
+            "metric_breakdown": aggregate_metric_breakdown([_serialize(item) for item in metrics]),
         }
+
+    async def compare_experiments(self, *, db, base_experiment_id: str, candidate_experiment_id: str) -> dict[str, Any]:
+        """逐题对比两次实验：只允许同一数据集版本、同一评分口径，结果包含修复/退化、显著性和性能差异。"""
+        base = await self.experiment_summary(db=db, experiment_id=base_experiment_id)
+        candidate = await self.experiment_summary(db=db, experiment_id=candidate_experiment_id)
+        if base["dataset_version_id"] != candidate["dataset_version_id"]:
+            raise ValueError("两次实验的数据集版本不同，不能逐题对比")
+        base_versions, candidate_versions = _task_pass_versions(base), _task_pass_versions(candidate)
+        if base_versions != candidate_versions:
+            raise ValueError(f"两次实验的评分口径不同: {sorted(base_versions)} vs {sorted(candidate_versions)}")
+        tasks = await self._repo(db).list_tasks(base["dataset_version_id"])
+        task_keys = {task.task_id: task.task_key for task in tasks}
+        return {
+            "base_experiment_id": base_experiment_id,
+            "candidate_experiment_id": candidate_experiment_id,
+            "dataset_version_id": base["dataset_version_id"],
+            "metric_versions": sorted(base_versions),
+            "outcomes": compare_paired_outcomes(
+                _first_attempt_outcomes(base, task_keys), _first_attempt_outcomes(candidate, task_keys)
+            ),
+            "performance_delta": _performance_delta(base["performance"], candidate["performance"]),
+            "config_diff": _config_diff(base["config_snapshot"], candidate["config_snapshot"]),
+        }
+
+
+async def enqueue_experiment(experiment_id: str, *, recovery: bool = False) -> None:
+    """投递实验作业：手动触发用稳定 Job ID 去重重复点击，启动恢复用新 Job ID 绕开中断作业的残留键。"""
+    job_id = f"platform-eval:{experiment_id}"
+    if recovery:
+        job_id = f"{job_id}:recovery:{uuid.uuid4().hex}"
+    queue = await get_arq_pool()
+    await queue.enqueue_job(EXPERIMENT_JOB_NAME, experiment_id, _job_id=job_id)
+
+
+async def _rollout_cancelled(repo: PlatformEvaluationRepository, rollout_id: str) -> bool:
+    """实验在本题执行期间被取消时，取消优先：丢弃晚到的结果，避免覆盖已写入的取消状态。"""
+    rollout = await repo.get_rollout(rollout_id)
+    return rollout is not None and rollout.status == "CANCELLED"
+
+
+def _task_pass_versions(summary: dict[str, Any]) -> set[str]:
+    return {item["metric_version"] for item in summary["metrics"] if item["metric_name"] == "task_pass"}
+
+
+def _first_attempt_outcomes(summary: dict[str, Any], task_keys: dict[str, str]) -> dict[str, str]:
+    """取每题第 1 次尝试的 task_pass 状态；没有评分的 rollout（runner 失败）记为 not_measured。"""
+    status_by_rollout = {
+        item["rollout_id"]: item["status"] for item in summary["metrics"] if item["metric_name"] == "task_pass"
+    }
+    return {
+        task_keys[rollout["task_id"]]: status_by_rollout.get(rollout["rollout_id"], "not_measured")
+        for rollout in summary["rollouts"]
+        if rollout["attempt"] == 1
+    }
+
+
+def _performance_delta(base: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
+    """列出关键性能指标在两次实验中的取值和差值（candidate - base）。"""
+    fields = {
+        "agent_total_p50_ms": ("latency_ms", "agent_total", "p50"),
+        "agent_total_mean_ms": ("latency_ms", "agent_total", "mean"),
+        "agent_total_max_ms": ("latency_ms", "agent_total", "max"),
+        "tokens_per_rollout_mean": ("usage", "total_per_rollout", "mean"),
+        "llm_calls_per_rollout_mean": ("usage", "llm_calls_per_rollout", "mean"),
+        "tool_calls_per_rollout_mean": ("tool_calls", "per_rollout", "mean"),
+    }
+    delta = {}
+    for name, path in fields.items():
+        values = []
+        for performance in (base, candidate):
+            value = performance
+            for key in path:
+                value = value.get(key) if isinstance(value, dict) else None
+            values.append(value)
+        delta[name] = {
+            "base": values[0],
+            "candidate": values[1],
+            "delta": values[1] - values[0] if None not in values else None,
+        }
+    return delta
+
+
+def _config_diff(base: dict[str, Any], candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    """展开两份配置快照，列出取值不同的字段；采集时间和备注不算配置差异。"""
+    ignored = {"captured.captured_at", "note"}
+    flat_base, flat_candidate = _flatten(base), _flatten(candidate)
+    return [
+        {"key": key, "base": flat_base.get(key), "candidate": flat_candidate.get(key)}
+        for key in sorted(flat_base.keys() | flat_candidate.keys())
+        if key not in ignored and flat_base.get(key) != flat_candidate.get(key)
+    ]
+
+
+def _flatten(value: Any, prefix: str = "") -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {prefix: value}
+    flat: dict[str, Any] = {}
+    for key, item in value.items():
+        flat.update(_flatten(item, f"{prefix}.{key}" if prefix else str(key)))
+    return flat
 
 
 def _validate_source_kind(source_kind: str) -> str:
@@ -429,6 +665,38 @@ def _task_dict(task: PlatformEvaluationTask) -> dict[str, Any]:
         "expected": task.expected or {},
         "protocol": task.protocol,
     }
+
+
+async def _run_company_due_diligence(
+    task: PlatformEvaluationTask, rollout_id: str
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """执行只读企业尽调查询，返回业务响应和最小轨迹。"""
+    from yuxi.company_due_diligence.qa.models import CompanyQuestionRequest
+    from yuxi.company_due_diligence.qa.service import company_question_service
+
+    input_data = task.input or {}
+    response = await company_question_service.query(
+        CompanyQuestionRequest(
+            company_ref=input_data.get("company_reference") or None,
+            question=str(input_data.get("query") or ""),
+            enable_external_fallback=False,
+            **{key: input_data[key] for key in ("start_date", "as_of", "top_k", "hop_limit") if key in input_data},
+        )
+    )
+    events = [
+        {
+            "event_id": hash_id("pev_", f"{rollout_id}:{index}", length=32),
+            "sequence": index,
+            "component": "company_due_diligence",
+            "operation": step.operation,
+            "parent_id": None,
+            "input_summary": {"source": step.source},
+            "output_summary": {"status": step.status},
+            "reason_code": None,
+        }
+        for index, step in enumerate(response.steps, start=1)
+    ]
+    return response.model_dump(mode="json"), events
 
 
 async def _run_fixture(task: PlatformEvaluationTask, rollout_id: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
