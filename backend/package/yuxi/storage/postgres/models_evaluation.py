@@ -181,3 +181,22 @@ class PlatformEvaluationFailure(Base):
     message = Column(Text, nullable=False)
     retryable = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, nullable=False, default=utc_now_naive)
+
+
+class PlatformEvaluationOnlineFinding(Base):
+    """线上抽样命中通用规则的对话 Run；只保存 Run 标识、命中规则和计数，不复制对话内容。"""
+
+    __tablename__ = "platform_eval_online_findings"
+
+    finding_id = Column(String(64), primary_key=True)
+    run_id = Column(String(64), nullable=False, unique=True, index=True)
+    agent_slug = Column(String(255), nullable=False)
+    run_status = Column(String(32), nullable=False)
+    rule_hits = Column(JSON_VALUE, nullable=False, default=list)
+    summary = Column(JSON_VALUE, nullable=False, default=dict)
+    feedback = Column(JSON_VALUE, nullable=True)
+    # pending_review：待人工复核；promoted：已生成草稿题
+    status = Column(String(32), nullable=False, default="pending_review", index=True)
+    promoted_version_id = Column(String(64), ForeignKey("platform_eval_dataset_versions.version_id"), nullable=True)
+    run_finished_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=utc_now_naive)
