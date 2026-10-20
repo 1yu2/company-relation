@@ -38,6 +38,10 @@ class AgentRunnerError(RuntimeError):
 async def run_agent_task(experiment, task, rollout_id: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """提交一次评测 Run，等待终态后返回 actual 结果和按执行顺序排列的 Trace 事件。"""
     config = experiment.config_snapshot or {}
+    # 固定使用创建实验时解析出的模型：排队或续跑期间改了 Agent 默认模型，也不会让后续题换模型。
+    # 快照之前创建的旧实验没有 captured.agent，沿用当时的请求值。
+    captured_agent = (config.get("captured") or {}).get("agent")
+    model_spec = captured_agent["model_spec"] if captured_agent else config.get("model_spec")
     query = str((task.input or {}).get("query") or "")
     # 续跑会在同一 rollout 上重新执行：每次执行使用独立请求和线程，避免复用中断前的 Run 或对话上下文。
     execution_id = hash_id("peval_", f"{rollout_id}:{uuid.uuid4().hex}", length=32)
@@ -61,7 +65,7 @@ async def run_agent_task(experiment, task, rollout_id: str) -> tuple[dict[str, A
                             }
                         },
                     ),
-                    model_spec=config.get("model_spec"),
+                    model_spec=model_spec,
                     tool_approval_mode=config["tool_approval_mode"],
                     queue_policy="reject",
                     create_conversation=True,

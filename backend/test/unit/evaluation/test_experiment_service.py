@@ -252,6 +252,8 @@ async def test_agent_run_experiment_requires_agent_and_records_approval_mode(eva
     )
 
     assert experiment["config_snapshot"]["tool_approval_mode"] == "always_trust"
+    # 实验级评分版本由实际评分器推导，不再默认写成 deterministic-v1。
+    assert experiment["evaluator_version"] == "agent-final-answer-v2"
 
 
 @pytest.mark.unit
@@ -505,6 +507,50 @@ async def test_agent_runner_timeout_cancels_run_even_if_stream_swallows_cancel(m
     assert len(released) == 1
     assert released[0][1] == "admin"
     assert released[0][0] == submitted_threads[0]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("config_snapshot", "expected_model"),
+    [
+        # 快照固定的是创建时解析出的模型；Agent 默认模型之后改成什么都不影响提交值。
+        ({"model_spec": None, "captured": {"agent": {"model_spec": "provider:pinned"}}}, "provider:pinned"),
+        # 快照之前创建的旧实验没有 captured.agent，沿用当时的请求值。
+        ({"model_spec": "provider:requested"}, "provider:requested"),
+    ],
+)
+async def test_agent_runner_submits_snapshot_model(monkeypatch, config_snapshot, expected_model):
+    from contextlib import asynccontextmanager
+
+    from yuxi.evaluation import agent_runner
+
+    class FakeDb:
+        async def execute(self, _statement):
+            return SimpleNamespace(scalar_one=lambda: SimpleNamespace(uid="admin"))
+
+    @asynccontextmanager
+    async def fake_session():
+        yield FakeDb()
+
+    submitted_models = []
+
+    async def fake_submit(*, command, **_kwargs):
+        submitted_models.append(command.model_spec)
+        raise RuntimeError("stop after submit")
+
+    monkeypatch.setattr(agent_runner.pg_manager, "get_async_session_context", fake_session)
+    monkeypatch.setattr(agent_runner, "submit_run_command", fake_submit)
+    experiment = SimpleNamespace(
+        experiment_id="exp-1",
+        agent_slug="default-chatbot",
+        created_by="admin",
+        config_snapshot={"tool_approval_mode": "always_trust", **config_snapshot},
+    )
+
+    with pytest.raises(agent_runner.AgentRunnerError):
+        await agent_runner.run_agent_task(experiment, SimpleNamespace(task_key="t1", input={"query": "1+1"}), "pro_1")
+
+    assert submitted_models == [expected_model]
 
 
 @pytest.mark.unit
