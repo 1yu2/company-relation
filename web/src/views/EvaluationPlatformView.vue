@@ -786,7 +786,7 @@ onBeforeUnmount(() => clearTimeout(pollTimer))
                   </tbody>
                 </table>
               </div>
-              <p v-else class="muted">两次实验的配置快照一致，差异只来自运行波动。</p>
+              <p v-else class="muted">两次实验记录的配置项一致。</p>
             </div>
           </section>
 

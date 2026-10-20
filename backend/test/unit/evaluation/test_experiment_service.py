@@ -149,7 +149,7 @@ async def test_domain_experiment_uses_real_dto_and_persists_quality(evaluation_s
         ],
     )
     await service.publish_version(db=evaluation_session, version_id=version["version_id"])
-    with pytest.raises(ValueError, match="fixture"):
+    with pytest.raises(ValueError, match="只能使用 company_due_diligence runner"):
         await service.create_experiment(
             db=evaluation_session, data={"dataset_version_id": version["version_id"]}, created_by="test"
         )
@@ -211,7 +211,7 @@ def fake_agent_snapshot(monkeypatch):
     """单测数据库没有 agents 表；替换为固定的 Agent 快照，只验证实验服务的编排。"""
     from yuxi.evaluation import experiment_service
 
-    async def capture(db, *, agent_slug, requested_model_spec):
+    async def capture(db, *, agent_slug, requested_model_spec, creator_uid):
         return {"agent_slug": agent_slug, "model_spec": requested_model_spec or "provider:default-model"}
 
     monkeypatch.setattr(experiment_service, "capture_agent_snapshot", capture)

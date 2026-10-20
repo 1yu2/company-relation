@@ -14,7 +14,7 @@
 
 - 区分 API 存活与发布就绪：保留轻量公开 `/api/system/health`，新增 `/api/system/ready` 检查 PostgreSQL、Redis 和带 TTL 的 worker heartbeat；知识库、图谱和企业 MySQL 等可选能力不阻塞 LITE 就绪。
 
-- 建立只读质量门禁 `make verify` 与 GitHub Actions CI：两者运行同一份清单（后端 unit、Ruff、前端 unit、ESLint、build、diff 检查），CI 以 native 模式直接执行；门禁不自动格式化，基线失败会明确阻断。
+- 建立只读质量门禁 `make verify` 与 GitHub Actions CI：两者运行同一份清单（后端 unit、Ruff、前端 unit、ESLint、build、diff 检查），CI 以 native 模式直接执行，PR 上的 diff 检查覆盖相对 base 分支的全部提交；门禁不自动格式化，基线失败会明确阻断。
 
 - 明确企业尽调权限边界：当前报告、任务、图投影和文本证据索引由管理员全局共享，普通用户不开放管理 API；暂不新增用户/部门归属或租户隔离。
 
@@ -36,7 +36,7 @@
 
 - 平台评测按任务协议选择 evaluator，新增 `agent_final_answer_v1`：task_pass 要求不调禁用工具、调用必需工具、值正确且格式符合，区分“值错”与“格式不符”；超时与 Agent Run 失败计为任务失败，评测侧错误不评分；预算、循环等轨迹指标单独报告。实验摘要新增状态分母、耗时分位数、token、工具次数和逐指标通过率，聚合覆盖全部 rollout。
 
-- 平台评测实验创建时采集配置快照（实际模型、Agent 配置与 prompt 校验和、工具清单、数据集版本、评分器版本、后端代码校验和，git commit 与单价由调用方提供），执行时固定使用快照模型，实验评分版本由实际评分器推导；新增两实验逐题对比接口，输出修复/退化、McNemar 检验、性能与配置差异，数据集或评分口径不同时拒绝对比。
+- 平台评测实验创建时采集配置快照（实际模型、Agent 配置与 prompt 校验和、工具清单、数据集版本、评分器版本、后端代码校验和，git commit 与单价由调用方提供），执行时固定使用快照模型，实验评分版本由实际评分器推导，快照按创建者可见性读取 Agent；新增两实验逐题对比接口，输出修复/退化、McNemar 检验、性能与配置差异，数据集或评分口径不同时拒绝对比。
 
 - 收紧平台评测运行隔离：Agent Call/评测线程写入 `visibility=internal`，普通聊天列表、搜索、历史、状态和文件接口不暴露内部线程；写入拦截放在普通聊天提交与 resume 入口，修复 worker 拒绝内部会话导致所有 Agent Call/评测 Run 失败的问题。
 

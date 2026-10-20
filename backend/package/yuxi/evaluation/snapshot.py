@@ -6,30 +6,40 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import importlib.util
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
+
 import yuxi
 from yuxi.agents.buildin import agent_manager
 from yuxi.evaluation.provenance import checksum_for
 from yuxi.repositories.agent_repository import AgentRepository
-from yuxi.services.agent_run_service import _load_agent_context, resolve_agent_run_model_spec
+from yuxi.storage.postgres.models_business import User
+from yuxi.services.agent_run_service import load_agent_context, resolve_agent_run_model_spec
 from yuxi.utils.datetime_utils import utc_now_naive
 
 PRICING_FIELDS = ("input_per_million", "output_per_million", "currency")
 
 
-async def capture_agent_snapshot(db, *, agent_slug: str, requested_model_spec: str | None) -> dict[str, Any]:
-    """解析被测 Agent 的实际模型和配置层 prompt/工具清单。"""
-    agent_item = await AgentRepository(db).get_by_slug(agent_slug)
+async def capture_agent_snapshot(
+    db, *, agent_slug: str, requested_model_spec: str | None, creator_uid: str
+) -> dict[str, Any]:
+    """解析被测 Agent 的实际模型和配置层 prompt/工具清单。
+
+    与执行时提交 Run 相同，按实验创建者的可见性读取 Agent：创建者看不到的 Agent 在创建实验时就被拒绝。
+    """
+    creator = (await db.execute(select(User).where(User.uid == creator_uid))).scalar_one()
+    agent_item = await AgentRepository(db).get_visible_by_slug(slug=agent_slug, user=creator)
     if agent_item is None:
         raise LookupError(f"智能体不存在: {agent_slug}")
     backend = agent_manager.get_agent(agent_item.backend_id)
     if backend is None:
         raise LookupError(f"智能体后端不存在: {agent_item.backend_id}")
-    context = _load_agent_context(agent_item, backend)
+    context = load_agent_context(agent_item, backend)
     config_context = (agent_item.config_json or {}).get("context") or {}
     return {
         "agent_slug": agent_slug,
@@ -68,8 +78,11 @@ def validate_pricing(pricing: Any) -> dict[str, Any] | None:
     return dict(pricing)
 
 
+@functools.cache
 def backend_code_checksum() -> str:
     """计算 yuxi 包与 server 包全部 .py 源码的校验和，包含未提交的改动。
+
+    进程内只计算一次：代码变更后热重载会重启进程，缓存随之失效；避免每次创建实验都同步读全部源码阻塞事件循环。
 
     容器内没有 .git，git commit 由调用方传入；该校验和由服务端独立计算，用于确认两次实验是否运行同一份代码。
     """

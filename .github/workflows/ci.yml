@@ -19,6 +19,9 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+        with:
+          # diff --check 需要 base 分支的提交来比较本次 PR 的改动。
+          fetch-depth: 0
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
