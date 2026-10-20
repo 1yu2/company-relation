@@ -8,7 +8,8 @@
     "origin": "scripts/eval/upload_langfuse_python_tasks_dataset.py（py-task-001~010）+ 2026-10-20 新增 011~016",
     "answer_verification": "全部答案已用 Python 独立计算核对",
     "rewording": "py-task-002 明确 \\n 为换行符；py-task-010 明确取数值为偶数的项",
-    "review_status": "pending_human_confirmation"
+    "review_status": "human_confirmed",
+    "reviewed_at": "2026-10-20"
   },
   "tasks": [
     {

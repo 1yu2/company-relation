@@ -89,7 +89,7 @@ class AgentRunWaitTimeout(Exception):
         super().__init__(f"agent run {run_id} is still {status} after waiting")
 
 
-def _load_agent_context(agent_item, agent_backend):
+def load_agent_context(agent_item, agent_backend):
     """用 Agent 配置的 context 片段实例化并填充运行上下文，供 run 解析器读取配置字段。"""
     context = agent_backend.context_schema()
     config_json = getattr(agent_item, "config_json", None) or {}
@@ -109,7 +109,7 @@ def resolve_agent_run_model_spec(model_spec: str | None, agent_item, agent_backe
         return normalized
 
     if context is None:
-        context = _load_agent_context(agent_item, agent_backend)
+        context = load_agent_context(agent_item, agent_backend)
     return resolve_chat_model_spec(getattr(context, "model", None))
 
 
@@ -118,7 +118,7 @@ def resolve_agent_run_tool_approval_mode(requested_mode: str | None, agent_item,
     source = requested_mode
     if source is None:
         if context is None:
-            context = _load_agent_context(agent_item, agent_backend)
+            context = load_agent_context(agent_item, agent_backend)
         source = getattr(context, "tool_approval_mode", DEFAULT_TOOL_APPROVAL_MODE)
     try:
         return normalize_tool_approval_mode(source)
@@ -130,7 +130,7 @@ def resolve_agent_run_config(
     model_spec: str | None, tool_approval_mode: str | None, agent_item, agent_backend
 ) -> tuple[str, str]:
     """一次性解析 model_spec 与 tool_approval_mode，共享同一份运行上下文。"""
-    context = _load_agent_context(agent_item, agent_backend)
+    context = load_agent_context(agent_item, agent_backend)
     resolved_model_spec = resolve_agent_run_model_spec(model_spec, agent_item, agent_backend, context)
     resolved_tool_approval_mode = resolve_agent_run_tool_approval_mode(
         tool_approval_mode, agent_item, agent_backend, context

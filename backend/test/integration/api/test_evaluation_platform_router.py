@@ -74,3 +74,40 @@ async def test_admin_can_run_fixture_and_use_cursor(test_client, admin_headers):
     first_page = await test_client.get("/api/platform-evaluations/experiments?limit=1", headers=admin_headers)
     assert first_page.status_code == 200
     assert isinstance(first_page.json()["data"]["items"], list)
+
+
+@pytest.mark.skipif(os.getenv("LITE_MODE", "").lower() in {"true", "1"}, reason="评测路由在 LITE_MODE 不注册")
+async def test_agent_experiment_rejects_agent_not_runnable_by_creator(test_client, admin_headers):
+    """快照与执行使用同一可见性口径：子智能体不能作为主 Agent 运行，创建实验时就被拒绝，而不是每题都提交失败。"""
+    suffix = uuid.uuid4().hex[:10]
+    dataset = await test_client.post(
+        "/api/platform-evaluations/datasets",
+        json={"name": f"api-visibility-{suffix}", "source_kind": "agent"},
+        headers=admin_headers,
+    )
+    dataset_id = dataset.json()["data"]["dataset_id"]
+    version = await test_client.post(
+        f"/api/platform-evaluations/datasets/{dataset_id}/versions",
+        json={
+            "source": {"type": "inline"},
+            "tasks": [
+                {
+                    "task_key": f"visibility-{suffix}",
+                    "protocol": "agent_final_answer_v1",
+                    "input": {"query": "1+1"},
+                    "expected": {"answer": "2"},
+                }
+            ],
+        },
+        headers=admin_headers,
+    )
+    version_id = version.json()["data"]["version_id"]
+    await test_client.post(f"/api/platform-evaluations/versions/{version_id}/publish", headers=admin_headers)
+
+    response = await test_client.post(
+        "/api/platform-evaluations/experiments",
+        json={"dataset_version_id": version_id, "runner": "agent_run", "agent_slug": "research-explorer"},
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 404, response.text

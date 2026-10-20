@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-# 只读门禁：不执行 format --fix、不修改缓存或源码。
+# 不修改源码的门禁：不执行 format --fix；docker 模式会刷新 web 容器内的测试副本。
 # VERIFY_MODE=docker（默认）：在本地 Compose 的 api/web 容器中执行，供 `make verify` 使用。
 # VERIFY_MODE=native：直接在 backend/、web/ 目录执行，供 CI 使用；需要事先安装好依赖。
 # 两种模式运行同一份检查清单，CI 与本地门禁不会各自漂移。
@@ -67,4 +67,9 @@ web pnpm test:unit
 web pnpm exec eslint src
 web pnpm run build
 
-git -C "$root" diff --check
+# CI 的 checkout 是干净的，只检查工作区等于什么都没查；PR 上改为检查本次提交相对 base 分支的改动。
+if [ "$mode" = native ] && [ -n "${GITHUB_BASE_REF:-}" ]; then
+  git -C "$root" diff --check "origin/${GITHUB_BASE_REF}...HEAD"
+else
+  git -C "$root" diff --check
+fi

@@ -212,7 +212,7 @@ class PlatformEvaluationService:
         tasks = await repo.list_tasks(version.version_id)
         domain_tasks = any(task.protocol == "cdd_q02_review_v1" for task in tasks)
         if (source_kind == "company_due_diligence" or domain_tasks) and runner != "company_due_diligence":
-            raise ValueError("企业尽调评测不能使用 fixture runner")
+            raise ValueError("企业尽调评测只能使用 company_due_diligence runner")
         unknown_protocols = {task.protocol for task in tasks} - PROTOCOL_EVALUATORS.keys()
         if runner != "company_due_diligence" and unknown_protocols:
             raise ValueError(f"没有对应 evaluator 的任务协议: {', '.join(sorted(unknown_protocols))}")
@@ -235,7 +235,10 @@ class PlatformEvaluationService:
             # 评测 Run 没有人在线审批，默认信任沙盒工具，并显式写入快照以便复现。
             config_snapshot.setdefault("tool_approval_mode", "always_trust")
             captured["agent"] = await capture_agent_snapshot(
-                db, agent_slug=str(data["agent_slug"]), requested_model_spec=config_snapshot.get("model_spec")
+                db,
+                agent_slug=str(data["agent_slug"]),
+                requested_model_spec=config_snapshot.get("model_spec"),
+                creator_uid=str(created_by),
             )
         config_snapshot["captured"] = captured
         experiment = await repo.create_experiment(
