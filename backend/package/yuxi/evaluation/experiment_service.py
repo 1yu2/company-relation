@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 from functools import partial
 from typing import Any
 
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
 from yuxi.evaluation.agent_final_answer import METRIC_VERSION as AGENT_FINAL_ANSWER_METRIC_VERSION
 from yuxi.evaluation.agent_final_answer import evaluate_agent_final_answer
 from yuxi.evaluation.agent_runner import AgentRunnerError, cancel_agent_runs_for_rollouts, run_agent_task
@@ -337,7 +339,7 @@ class PlatformEvaluationService:
         return await self.experiment_summary(db=db, experiment_id=experiment_id)
 
     async def run_experiment(self, *, db, experiment_id: str) -> dict[str, Any]:
-        """在 worker 中逐题执行实验；每条 rollout 单独提交，中断后可按幂等键续跑。"""
+        """在 worker 中执行实验：最多 concurrency 条 rollout 同时执行，每条单独提交，中断后可按幂等键续跑。"""
         repo = self._repo(db)
         experiment = await repo.get_experiment(experiment_id)
         if experiment is None:
@@ -350,11 +352,9 @@ class PlatformEvaluationService:
             experiment_id, {"status": "RUNNING", "started_at": experiment.started_at or utc_now_naive()}
         )
         await db.commit()
-        tasks = await repo.list_tasks(experiment.dataset_version_id)
-        for task in tasks:
+        pending = []
+        for task in await repo.list_tasks(experiment.dataset_version_id):
             for attempt in range(1, experiment.max_attempts + 1):
-                if await _cancel_requested(repo, experiment_id):
-                    return await self._finish_cancelled(db=db, experiment_id=experiment_id)
                 key = checksum_for(
                     {
                         "experiment_id": experiment_id,
@@ -365,9 +365,30 @@ class PlatformEvaluationService:
                 )
                 existing = await repo.get_rollout_by_idempotency(key)
                 # RUNNING 说明上次执行在该题中途中断：复用同一 rollout 重跑；其余状态已是终态结果。
-                if existing is not None and existing.status != "RUNNING":
-                    continue
-                await self._run_one_rollout(db=db, experiment=experiment, task=task, attempt=attempt, key=key)
+                if existing is None or existing.status == "RUNNING":
+                    pending.append((task, attempt, key))
+
+        # 每条 rollout 使用同一引擎上的独立会话：并发的 rollout 各自提交，互不共享 ORM 状态。
+        # TaskGroup 中任一条 rollout 抛出未处理异常时，其余在途 rollout 一并取消，不会在后台继续执行。
+        open_session = async_sessionmaker(db.bind, expire_on_commit=False)
+        slots = asyncio.Semaphore(experiment.concurrency)
+
+        async def run_pending(task, attempt: int, key: str) -> None:
+            async with slots, open_session() as session:
+                # 取消请求到达后，尚未开始的 rollout 不再启动；在途 rollout 由取消流程中止 AgentRun。
+                if await _cancel_requested(self._repo(session), experiment_id):
+                    return
+                await self._run_one_rollout(db=session, experiment=experiment, task=task, attempt=attempt, key=key)
+
+        try:
+            async with asyncio.TaskGroup() as group:
+                for task, attempt, key in pending:
+                    group.create_task(run_pending(task, attempt, key))
+        except BaseExceptionGroup as errors:
+            # 抛出首条 rollout 的原始异常：worker 记录到实验的是真实原因，而不是 TaskGroup 的包装信息。
+            raise errors.exceptions[0] from None
+        # rollout 结果写在各自的会话里；主会话中派发时加载的对象已过期，汇总前丢弃。
+        db.expire_all()
         # 取消可能落在最后一题执行期间：此时不能再汇总为 FINISHED 覆盖取消状态。
         if await _cancel_requested(repo, experiment_id):
             return await self._finish_cancelled(db=db, experiment_id=experiment_id)

@@ -30,7 +30,7 @@
 
 - 修复 `make up-lite` 冷启动缺少 AgentRun worker、导致聊天请求无法执行：轻量模式现在连同沙盒 provisioner 启动 worker，保留知识库/图谱/评测禁用边界；移除已无前端消费方的 `VITE_USE_RUNS_API` 配置。
 
-- 新增平台级统一评测闭环：PostgreSQL 保存数据集、实验、rollout、Trace、指标与失败，支持多来源适配、确定性校验和 pass@k；`agent_run` runner 执行真实 Agent 并记录工具、token 与耗时，每题结束即释放沙盒；实验由 ARQ worker 后台执行，逐条提交，重启后续跑，执行锁保证同一实验只有一个执行者，心跳续期失败时立即停止并标记失败。
+- 新增平台级统一评测闭环：PostgreSQL 保存数据集、实验、rollout、Trace、指标与失败，支持多来源适配、确定性校验和 pass@k；`agent_run` runner 执行真实 Agent 并记录工具、token 与耗时，每题结束即释放沙盒；实验由 ARQ worker 后台执行，按 `concurrency` 并发执行 rollout（每条独立会话），逐条提交，重启后续跑，执行锁保证同一实验只有一个执行者，心跳续期失败时立即停止并标记失败。
 
 - 重做 `/evaluation` 为通用评测页面：移除企业尽调专属内容（后端保留），展示实验结论、分层指标、性能与成本、逐题回答与工具调用、配置快照，支持基线对比、运行、取消与失败后重新运行；取消或超时会同时级联取消在途 AgentRun 及其子 Run，晚到结果或最后一题都不会覆盖取消状态。
 
