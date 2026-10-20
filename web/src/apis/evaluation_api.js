@@ -29,6 +29,13 @@ export const evaluationApi = {
   getTrace: (rolloutId) => apiGet(`/api/platform-evaluations/rollouts/${encodeURIComponent(rolloutId)}/trace`),
   getMetrics: (experimentId) => apiGet(`/api/platform-evaluations/experiments/${encodeURIComponent(experimentId)}/metrics`),
   getFailures: (experimentId) => apiGet(`/api/platform-evaluations/experiments/${encodeURIComponent(experimentId)}/failures`),
+  compareExperiments: (baseExperimentId, candidateExperimentId) => {
+    const params = new URLSearchParams({
+      base_experiment_id: baseExperimentId,
+      candidate_experiment_id: candidateExperimentId
+    })
+    return apiGet(`/api/platform-evaluations/experiments/compare?${params.toString()}`)
+  },
   createDataset: (payload) => apiPost('/api/platform-evaluations/datasets', payload),
   createVersion: (datasetId, payload) => apiPost(`/api/platform-evaluations/datasets/${encodeURIComponent(datasetId)}/versions`, payload),
   createExperiment: (payload) => apiPost('/api/platform-evaluations/experiments', payload),
