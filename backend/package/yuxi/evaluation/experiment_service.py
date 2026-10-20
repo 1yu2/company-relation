@@ -17,8 +17,11 @@ from yuxi.evaluation.agent_final_answer import evaluate_agent_final_answer
 from yuxi.evaluation.agent_runner import AgentRunnerError, cancel_agent_runs_for_rollouts, run_agent_task
 from yuxi.evaluation.company_due_diligence import METRIC_VERSION as CDD_METRIC_VERSION
 from yuxi.evaluation.company_due_diligence import evaluate_company_due_diligence
+from yuxi.evaluation.fault_recovery import METRIC_VERSION as FAULT_RECOVERY_METRIC_VERSION
+from yuxi.evaluation.fault_recovery import evaluate_fault_recovery
 from yuxi.evaluation.metrics import (
     METRIC_VERSION,
+    aggregate_fault_recovery,
     aggregate_metric_breakdown,
     aggregate_pass_metrics,
     aggregate_rollout_performance,
@@ -48,6 +51,7 @@ RECOVERY_DEFER_MARGIN_SECONDS = 10
 PROTOCOL_EVALUATORS = {
     "agent_tool_final_v1": (evaluate_task, METRIC_VERSION),
     "agent_final_answer_v1": (evaluate_agent_final_answer, AGENT_FINAL_ANSWER_METRIC_VERSION),
+    "agent_fault_recovery_v1": (evaluate_fault_recovery, FAULT_RECOVERY_METRIC_VERSION),
 }
 ALLOWED_SOURCE_KINDS = {"agent", "tool_mcp", "rag", "graph", "fixture", "company_due_diligence"}
 
@@ -565,6 +569,7 @@ class PlatformEvaluationService:
             "aggregate": aggregate_pass_metrics(attempts, k=experiment.max_attempts),
             "performance": performance,
             "metric_breakdown": aggregate_metric_breakdown([_serialize(item) for item in metrics]),
+            "fault_recovery": aggregate_fault_recovery([_serialize(item) for item in metrics]),
         }
 
     async def compare_experiments(self, *, db, base_experiment_id: str, candidate_experiment_id: str) -> dict[str, Any]:

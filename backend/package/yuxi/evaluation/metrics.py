@@ -222,6 +222,23 @@ def aggregate_metric_breakdown(metrics: list[dict[str, Any]]) -> dict[str, Any]:
     return breakdown
 
 
+def aggregate_fault_recovery(metrics: list[dict[str, Any]]) -> dict[str, Any]:
+    """失败恢复率：实际发生了工具报错（fault_injected=1）的 rollout 中 task_pass 通过的比例。
+
+    没有题记录 fault_injected（非故障注入数据集）或没有任何一次真的报错时，分母为 0，比例不可测。
+    """
+    by_rollout: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
+    for metric in metrics:
+        by_rollout[str(metric.get("rollout_id"))][str(metric.get("metric_name"))] = metric
+    injected = [items for items in by_rollout.values() if (items.get("fault_injected") or {}).get("value") == 1.0]
+    recovered = sum(1 for items in injected if (items.get("task_pass") or {}).get("status") == "passed")
+    return {
+        "injected": len(injected),
+        "recovered": recovered,
+        "rate": recovered / len(injected) if injected else None,
+    }
+
+
 def compare_paired_outcomes(base: dict[str, str], candidate: dict[str, str]) -> dict[str, Any]:
     """按 task_key 配对两次实验的 task_pass 状态，统计修复/退化并做 McNemar 精确检验。
 
