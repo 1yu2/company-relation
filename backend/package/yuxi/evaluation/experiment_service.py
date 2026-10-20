@@ -29,6 +29,8 @@ from yuxi.evaluation.metrics import (
     estimate_cost,
     evaluate_task,
 )
+from yuxi.evaluation.rag_answer import METRIC_VERSION as RAG_ANSWER_METRIC_VERSION
+from yuxi.evaluation.rag_answer import evaluate_rag_answer
 from yuxi.evaluation.provenance import TraceEvent, checksum_for, redact_value
 from yuxi.evaluation.snapshot import capture_agent_snapshot, capture_common_snapshot, validate_pricing
 from yuxi.repositories.platform_evaluation_repository import PlatformEvaluationRepository
@@ -52,6 +54,7 @@ PROTOCOL_EVALUATORS = {
     "agent_tool_final_v1": (evaluate_task, METRIC_VERSION),
     "agent_final_answer_v1": (evaluate_agent_final_answer, AGENT_FINAL_ANSWER_METRIC_VERSION),
     "agent_fault_recovery_v1": (evaluate_fault_recovery, FAULT_RECOVERY_METRIC_VERSION),
+    "agent_rag_answer_v1": (evaluate_rag_answer, RAG_ANSWER_METRIC_VERSION),
 }
 ALLOWED_SOURCE_KINDS = {"agent", "tool_mcp", "rag", "graph", "fixture", "company_due_diligence"}
 

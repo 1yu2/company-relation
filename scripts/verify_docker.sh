@@ -51,6 +51,8 @@ api uv run --group dev ruff format --check \
   package/yuxi/evaluation/agent_final_answer.py \
   package/yuxi/evaluation/fault_recovery.py \
   test/unit/evaluation/test_fault_recovery.py \
+  package/yuxi/evaluation/rag_answer.py \
+  test/unit/evaluation/test_rag_answer.py \
   package/yuxi/evaluation/agent_runner.py \
   package/yuxi/evaluation/experiment_service.py \
   package/yuxi/evaluation/snapshot.py \
