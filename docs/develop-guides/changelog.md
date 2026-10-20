@@ -30,7 +30,7 @@
 
 - 新增平台级统一评测闭环：PostgreSQL 保存 Dataset/Version/Task/Experiment/Rollout/Trace/Metric/Failure 事实，支持 Agent/Tool/MCP、RAG、Graph 只读适配、确定性答案/工具/轨迹校验、pass@1/pass@k/pass^k/best@k、管理员 API 游标分页和 `/evaluation` 只读结果页；首轮仅运行无副作用 Fixture，Semantica 因外部元数据不可核验暂不引入。
 
-- 收紧平台评测运行隔离：Agent Call/评测后台线程写入 `visibility=internal`，普通聊天列表、搜索、历史、状态和文件接口不再暴露内部线程；当前评测阶段仅使用 fake/fixture 验证，不执行真实 Agent E2E。
+- 收紧平台评测运行隔离：Agent Call/评测线程写入 `visibility=internal`，普通聊天列表、搜索、历史、状态和文件接口不暴露内部线程；写入拦截放在普通聊天提交与 resume 入口，修复 worker 拒绝内部会话导致所有 Agent Call/评测 Run 失败的问题。
 
 - 新增系统整体架构与 Agent 架构交互式架构图：使用 Archify 生成自包含 HTML 架构图并提取 SVG 嵌入 README，系统架构图覆盖浏览器 → 前端 → FastAPI → ARQ Worker → 中间件 → 数据存储全链路，Agent 架构图聚焦 11 层 LangGraph 中间件编排、沙盒隔离执行与 Skills/MCP 运行时扩展；`docs/vibe/` 存放编辑源文件，`docs/public/` 存放可提交 SVG。
 - 更新 README.md 与 VitePress 配置中的 GitHub 仓库引用： badges、clone 地址、文档链接、贡献者卡片、Star History 和 VitePress `base`/`socialLinks`/`editLink` 从 `xerrors/Yuxi` 统一切换为 `1yu2/company-relation`，项目文档站点 base path 同步调整为 `/company-relation/`。

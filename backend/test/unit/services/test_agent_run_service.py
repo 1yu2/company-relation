@@ -795,6 +795,41 @@ async def test_create_agent_run_rejects_request_id_scope_mismatch(monkeypatch: p
 
 
 @pytest.mark.asyncio
+async def test_create_agent_run_hides_internal_conversation(monkeypatch: pytest.MonkeyPatch):
+    """普通聊天的 resume 与渠道入口不能写入 Agent Call/评测创建的内部线程。"""
+    db = _patch_agent_run_creation(monkeypatch)
+
+    class InternalConvRepo:
+        def __init__(self, db_session):
+            del db_session
+
+        async def lock_conversation_by_thread_id(self, thread_id: str):
+            del thread_id
+            return SimpleNamespace(
+                id=1,
+                uid="user-1",
+                status="active",
+                agent_id="default",
+                extra_metadata={"source": "agent_call", "visibility": "internal"},
+            )
+
+    monkeypatch.setattr(agent_run_service, "ConversationRepository", InternalConvRepo)
+
+    with pytest.raises(agent_run_service.HTTPException) as exc:
+        await agent_run_service.create_agent_run_view(
+            input_message=_chat_input("hello"),
+            agent_slug="default",
+            thread_id="internal-thread",
+            meta={"request_id": "req-1"},
+            current_uid="user-1",
+            db=db,
+        )
+
+    assert exc.value.status_code == 404
+    assert db.created_run_kwargs is None
+
+
+@pytest.mark.asyncio
 async def test_create_agent_run_integrity_error_reuses_same_request_scope(monkeypatch: pytest.MonkeyPatch):
     existing_run = SimpleNamespace(
         id="existing-run",
