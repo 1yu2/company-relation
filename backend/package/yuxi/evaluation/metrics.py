@@ -90,7 +90,6 @@ def aggregate_pass_metrics(attempts: list[dict[str, Any]], k: int | None = None)
 
     if not groups:
         return {
-            "metric_version": METRIC_VERSION,
             "task_count": 0,
             "pass@1": None,
             "pass@k": None,
@@ -111,7 +110,6 @@ def aggregate_pass_metrics(attempts: list[dict[str, Any]], k: int | None = None)
     not_measured_tasks = len(groups) - len(measured_groups)
     if not measured_groups:
         return {
-            "metric_version": METRIC_VERSION,
             "task_count": len(groups),
             "measured_task_count": 0,
             "not_measured_tasks": not_measured_tasks,
@@ -124,10 +122,9 @@ def aggregate_pass_metrics(attempts: list[dict[str, Any]], k: int | None = None)
             "best@k": None,
         }
 
-    pass_at_one = (
-        sum(sum(_is_success(item) for item in values) / len(values) for values in measured_groups.values())
-        / len(measured_groups)
-    )
+    pass_at_one = sum(
+        sum(_is_success(item) for item in values) / len(values) for values in measured_groups.values()
+    ) / len(measured_groups)
     pass_at_k_values: list[float] = []
     pass_power_values: list[float] = []
     best_values: list[float] = []
@@ -152,7 +149,6 @@ def aggregate_pass_metrics(attempts: list[dict[str, Any]], k: int | None = None)
         return sum(usable) / len(usable) if usable else None
 
     return {
-        "metric_version": METRIC_VERSION,
         "task_count": len(groups),
         "measured_task_count": len(measured_groups),
         "not_measured_tasks": not_measured_tasks,

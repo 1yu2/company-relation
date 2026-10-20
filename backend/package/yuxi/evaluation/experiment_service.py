@@ -241,7 +241,8 @@ class PlatformEvaluationService:
                 "source_kind": source_kind,
                 "agent_slug": data.get("agent_slug"),
                 "runner": runner,
-                "evaluator_version": str(data.get("evaluator_version") or "deterministic-v1"),
+                # 由本实验实际使用的评分器推导，调用方不能另行指定；按协议的明细见 captured.evaluators。
+                "evaluator_version": ",".join(sorted(set(evaluator_versions.values()))),
                 "config_snapshot": config_snapshot,
                 "concurrency": max(1, min(int(data.get("concurrency") or 1), 32)),
                 "timeout_seconds": max(1, min(int(data.get("timeout_seconds") or 30), 3600)),

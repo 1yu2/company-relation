@@ -38,7 +38,6 @@ class ExperimentCreateRequest(BaseModel):
     source_kind: str | None = Field(default=None, max_length=32)
     agent_slug: str | None = Field(default=None, max_length=255)
     runner: str = Field(default="fixture", max_length=64)
-    evaluator_version: str = Field(default="deterministic-v1", max_length=64)
     config_snapshot: dict[str, Any] = Field(default_factory=dict)
     concurrency: int = Field(default=1, ge=1, le=32)
     timeout_seconds: int = Field(default=30, ge=1, le=3600)
