@@ -216,6 +216,24 @@ async def list_experiments(
         _raise_for_domain_error(exc)
 
 
+@evaluation_platform_router.get("/experiments/compare")
+async def compare_experiments(
+    base_experiment_id: str = Query(..., min_length=1, max_length=64),
+    candidate_experiment_id: str = Query(..., min_length=1, max_length=64),
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """逐题对比两次实验（需同一数据集版本与评分口径），返回修复/退化、McNemar 检验、性能与配置差异。"""
+    try:
+        return _response(
+            await PlatformEvaluationService().compare_experiments(
+                db=db, base_experiment_id=base_experiment_id, candidate_experiment_id=candidate_experiment_id
+            )
+        )
+    except Exception as exc:
+        _raise_for_domain_error(exc)
+
+
 @evaluation_platform_router.get("/experiments/{experiment_id}")
 async def get_experiment(
     experiment_id: str,
@@ -236,9 +254,9 @@ async def run_experiment(
     current_user: User = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """由管理员触发无副作用 Fixture 实验。"""
+    """由管理员触发实验：写入排队状态并投递 worker 后台执行，立即返回当前摘要。"""
     try:
-        return _response(await PlatformEvaluationService().run_experiment(db=db, experiment_id=experiment_id))
+        return _response(await PlatformEvaluationService().start_experiment(db=db, experiment_id=experiment_id))
     except Exception as exc:
         _raise_for_domain_error(exc)
 

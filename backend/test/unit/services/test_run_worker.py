@@ -539,6 +539,10 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     async def fake_recover_evidence():
         calls.append("recover_evidence")
 
+    async def fake_resume_experiments(self, *, db):
+        del self, db
+        calls.append("resume_platform_experiments")
+
     monkeypatch.setattr(run_worker.pg_manager, "initialize", fake_initialize)
     monkeypatch.setattr(run_worker.pg_manager, "create_business_tables", fake_create_business_tables)
     monkeypatch.setattr(run_worker.pg_manager, "run_versioned_migrations", fake_run_versioned_migrations)
@@ -557,6 +561,9 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     monkeypatch.setattr(due_diligence_report_service, "recover_pending_tasks", fake_recover_reports)
     monkeypatch.setattr(graph_projection_service, "recover_pending_tasks", fake_recover_graph)
     monkeypatch.setattr(evidence_index_service, "recover_pending_tasks", fake_recover_evidence)
+    from yuxi.evaluation.experiment_service import PlatformEvaluationService
+
+    monkeypatch.setattr(PlatformEvaluationService, "resume_incomplete_experiments", fake_resume_experiments)
 
     await run_worker._worker_startup({})
 
@@ -573,4 +580,28 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         "recover_reports",
         "recover_graph",
         "recover_evidence",
+        "resume_platform_experiments",
     ]
+
+
+@pytest.mark.asyncio
+async def test_platform_experiment_job_skips_when_another_executor_holds_lock(monkeypatch: pytest.MonkeyPatch):
+    """重复投递的实验作业拿不到执行锁时直接结束，不调用 run_experiment。"""
+    from yuxi.evaluation import experiment_service
+
+    calls: list[str] = []
+
+    @asynccontextmanager
+    async def held_elsewhere(experiment_id):
+        calls.append(f"lock:{experiment_id}")
+        yield False
+
+    async def fail_run(self, *, db, experiment_id):
+        raise AssertionError("不应在拿不到锁时执行实验")
+
+    monkeypatch.setattr(experiment_service, "experiment_executor_lock", held_elsewhere)
+    monkeypatch.setattr(experiment_service.PlatformEvaluationService, "run_experiment", fail_run)
+
+    await run_worker.process_platform_evaluation_experiment({}, "pex_1")
+
+    assert calls == ["lock:pex_1"]

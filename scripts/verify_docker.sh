@@ -37,9 +37,15 @@ api uv run --group test pytest --import-mode=importlib \
   -m "not slow"
 api uv run --group dev ruff check server package
 api uv run --group dev ruff format --check \
+  package/yuxi/agents/backends/sandbox/provider.py \
   package/yuxi/company_due_diligence/evidence/service.py \
   package/yuxi/company_due_diligence/graph/service.py \
   package/yuxi/company_relation/evaluation.py \
+  package/yuxi/evaluation/agent_final_answer.py \
+  package/yuxi/evaluation/agent_runner.py \
+  package/yuxi/evaluation/experiment_service.py \
+  package/yuxi/evaluation/snapshot.py \
+  package/yuxi/repositories/platform_evaluation_repository.py \
   package/yuxi/services/agent_run_service.py \
   package/yuxi/services/chat_service.py \
   package/yuxi/services/run_queue_service.py \
@@ -47,6 +53,7 @@ api uv run --group dev ruff format --check \
   package/yuxi/services/task_service.py \
   package/yuxi/storage/postgres/manager.py \
   package/yuxi/storage/postgres/migrations.py \
+  server/routers/evaluation_platform_router.py \
   server/routers/system_router.py \
   server/utils/lifespan.py
 web pnpm test:unit

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 
@@ -59,7 +60,16 @@ async def test_admin_can_run_fixture_and_use_cursor(test_client, admin_headers):
     experiment_id = experiment.json()["data"]["experiment_id"]
     run = await test_client.post(f"/api/platform-evaluations/experiments/{experiment_id}/run", headers=admin_headers)
     assert run.status_code == 200, run.text
-    assert run.json()["data"]["status"] == "FINISHED"
+    assert run.json()["data"]["status"] in {"QUEUED", "RUNNING", "FINISHED"}
+
+    # 实验由 worker 后台执行，HTTP 只负责排队；轮询直到真实 worker 写入终态。
+    for _ in range(60):
+        detail = await test_client.get(f"/api/platform-evaluations/experiments/{experiment_id}", headers=admin_headers)
+        if detail.json()["data"]["status"] in {"FINISHED", "FAILED", "CANCELLED"}:
+            break
+        await asyncio.sleep(1)
+    assert detail.json()["data"]["status"] == "FINISHED", detail.text
+    assert len(detail.json()["data"]["rollouts"]) == 2
 
     first_page = await test_client.get("/api/platform-evaluations/experiments?limit=1", headers=admin_headers)
     assert first_page.status_code == 200

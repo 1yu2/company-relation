@@ -820,3 +820,37 @@ def test_provisioner_execute_returns_error_response_on_client_failure(monkeypatc
 
     assert result.exit_code == 1
     assert "Error:" in result.output
+
+
+def test_provider_release_deletes_the_sandbox_acquired_for_a_main_thread(monkeypatch) -> None:
+    """release 必须删除 acquire 为同一主线程创建的沙盒（ID 一致），并清掉本进程缓存。"""
+    from yuxi.agents.backends.sandbox.provider import ProvisionerSandboxProvider
+
+    created, deleted = [], []
+
+    class FakeClient:
+        def create(self, sandbox_id, thread_id, uid, env, *, file_thread_id=None, skills_thread_id=None):
+            created.append(sandbox_id)
+            return SimpleNamespace(sandbox_id=sandbox_id, sandbox_url="http://sandbox")
+
+        def touch(self, _sandbox_id):
+            return True
+
+        def delete(self, sandbox_id):
+            deleted.append(sandbox_id)
+
+    provider = ProvisionerSandboxProvider.__new__(ProvisionerSandboxProvider)
+    provider._client = FakeClient()
+    provider._lock = threading.Lock()
+    provider._thread_locks = {}
+    provider._connections = {}
+    provider._last_touch_at = {}
+    provider._touch_interval_seconds = 30
+    monkeypatch.setattr("yuxi.agents.backends.sandbox.provider.load_user_agent_env", lambda uid: {})
+
+    provider.acquire("eval-thread", uid="user-1")
+    provider.release("eval-thread", uid="user-1")
+
+    assert deleted == created
+    assert provider._connections == {}
+    assert provider._last_touch_at == {}

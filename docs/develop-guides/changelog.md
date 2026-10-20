@@ -28,7 +28,11 @@
 
 - 修复 `make up-lite` 冷启动缺少 AgentRun worker、导致聊天请求无法执行：轻量模式现在连同沙盒 provisioner 启动 worker，保留知识库/图谱/评测禁用边界；移除已无前端消费方的 `VITE_USE_RUNS_API` 配置。
 
-- 新增平台级统一评测闭环：PostgreSQL 保存 Dataset/Version/Task/Experiment/Rollout/Trace/Metric/Failure 事实，支持 Agent/Tool/MCP、RAG、Graph 只读适配、确定性答案/工具/轨迹校验、pass@1/pass@k/pass^k/best@k、管理员 API 游标分页和 `/evaluation` 只读结果页；首轮仅运行无副作用 Fixture，Semantica 因外部元数据不可核验暂不引入。
+- 新增平台级统一评测闭环：PostgreSQL 保存数据集、实验、rollout、Trace、指标与失败，支持多来源适配、确定性校验和 pass@k；`agent_run` runner 执行真实 Agent 并记录工具、token 与耗时，每题结束即释放沙盒；实验由 ARQ worker 后台执行，逐条提交，重启后续跑，执行锁保证同一实验只有一个执行者。
+
+- 平台评测按任务协议选择 evaluator，新增 `agent_final_answer_v1`：task_pass 要求不调禁用工具、调用必需工具、值正确且格式符合，区分“值错”与“格式不符”；预算、循环等轨迹指标单独报告。实验摘要新增状态分母、耗时分位数、token、工具次数和逐指标通过率，聚合覆盖全部 rollout。
+
+- 平台评测实验创建时采集配置快照（实际模型、Agent 配置与 prompt 校验和、工具清单、数据集版本、评分器版本、后端代码校验和，git commit 与单价由调用方提供）；新增两实验逐题对比接口，输出修复/退化、McNemar 检验、性能与配置差异，数据集或评分口径不同时拒绝对比。
 
 - 收紧平台评测运行隔离：Agent Call/评测线程写入 `visibility=internal`，普通聊天列表、搜索、历史、状态和文件接口不暴露内部线程；写入拦截放在普通聊天提交与 resume 入口，修复 worker 拒绝内部会话导致所有 Agent Call/评测 Run 失败的问题。
 
