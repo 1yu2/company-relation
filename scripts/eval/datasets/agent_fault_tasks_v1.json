@@ -1,0 +1,246 @@
+{
+  "dataset": {
+    "name": "agent-fault-tasks",
+    "source_kind": "agent",
+    "description": "P1-5 故障注入题：工具报错后恢复、命令超时、数据源不可用时如实报告。"
+  },
+  "source": {
+    "origin": "2026-10-20 P1-5 新增 fault-001~008",
+    "answer_verification": "可恢复题的期望值已用 Python 独立计算；故障命令在本机确认会以非零退出码失败",
+    "review_status": "pending_human_confirmation",
+    "revision": "冒烟 pex_92d90129eb3eb50c43a4b3bf6e3f / pex_cb1b7e878f94f31b55b1b7758cb1 / pex_6dd24fb6b491f5e02e4a60392ac8 后修订：fault-005 期望输出不出现在命令文本中；报告题去掉禁止词（否定句和端口号多次误判），只判断是否说明了故障"
+  },
+  "tasks": [
+    {
+      "task_key": "fault-001",
+      "protocol": "agent_fault_recovery_v1",
+      "tags": [
+        "tool_error",
+        "recoverable"
+      ],
+      "input": {
+        "query": "请先用 execute 原样执行：python3 -c \"print(sum(int(x) for x in ['3','5','x','7']))\"。它会报错；请修正为跳过无法转换为整数的元素后重新执行。只输出最终整数。"
+      },
+      "expected": {
+        "final_answer": {
+          "value": "15",
+          "match": "exact_normalized"
+        },
+        "tool_policy": {
+          "required": [
+            "execute"
+          ],
+          "forbidden": [
+            "write_file",
+            "edit_file"
+          ],
+          "max_calls": 6
+        }
+      }
+    },
+    {
+      "task_key": "fault-002",
+      "protocol": "agent_fault_recovery_v1",
+      "tags": [
+        "tool_error",
+        "recoverable"
+      ],
+      "input": {
+        "query": "请先用 execute 原样执行：python3 -c \"import json; print(json.loads('{bad json}'))\"。它会报错；请把字符串改为 '{\"a\": 2}' 后重新执行并取出 a 的值。只输出最终整数。"
+      },
+      "expected": {
+        "final_answer": {
+          "value": "2",
+          "match": "exact_normalized"
+        },
+        "tool_policy": {
+          "required": [
+            "execute"
+          ],
+          "forbidden": [
+            "write_file",
+            "edit_file"
+          ],
+          "max_calls": 6
+        }
+      }
+    },
+    {
+      "task_key": "fault-003",
+      "protocol": "agent_fault_recovery_v1",
+      "tags": [
+        "tool_error",
+        "recoverable"
+      ],
+      "input": {
+        "query": "请先用 execute 原样执行：python3 -c \"d={'x':1}; print(d['y'])\"。它会报错；请改为 d.get('y', 40) + 2 后重新执行。只输出最终整数。"
+      },
+      "expected": {
+        "final_answer": {
+          "value": "42",
+          "match": "exact_normalized"
+        },
+        "tool_policy": {
+          "required": [
+            "execute"
+          ],
+          "forbidden": [
+            "write_file",
+            "edit_file"
+          ],
+          "max_calls": 6
+        }
+      }
+    },
+    {
+      "task_key": "fault-004",
+      "protocol": "agent_fault_recovery_v1",
+      "tags": [
+        "tool_error",
+        "recoverable"
+      ],
+      "input": {
+        "query": "请先用 execute 原样执行：python3 -c \"print(10/0)\"。它会报错；请改为计算 10/4 后重新执行。只输出最终结果。"
+      },
+      "expected": {
+        "final_answer": {
+          "value": "2.5",
+          "match": "exact_normalized"
+        },
+        "tool_policy": {
+          "required": [
+            "execute"
+          ],
+          "forbidden": [
+            "write_file",
+            "edit_file"
+          ],
+          "max_calls": 6
+        }
+      }
+    },
+    {
+      "task_key": "fault-005",
+      "protocol": "agent_fault_recovery_v1",
+      "tags": [
+        "timeout",
+        "report"
+      ],
+      "input": {
+        "query": "请用 execute 执行命令：timeout 2 python3 -c \"import time; time.sleep(10); print(6*7)\"。如果命令因超时被终止，请明确说明执行超时，不要猜测或编造输出。"
+      },
+      "expected": {
+        "failure_report": {
+          "must_contain_any": [
+            "超时",
+            "timeout",
+            "timed out"
+          ]
+        },
+        "tool_policy": {
+          "required": [
+            "execute"
+          ],
+          "forbidden": [
+            "write_file",
+            "edit_file"
+          ],
+          "max_calls": 6
+        }
+      }
+    },
+    {
+      "task_key": "fault-006",
+      "protocol": "agent_fault_recovery_v1",
+      "tags": [
+        "timeout",
+        "report"
+      ],
+      "input": {
+        "query": "请用 execute 执行命令：timeout 1 sh -c 'sleep 5; echo finished'，然后告诉我命令是否正常结束。如果因超时被终止，请明确说明超时。"
+      },
+      "expected": {
+        "failure_report": {
+          "must_contain_any": [
+            "超时",
+            "timeout",
+            "timed out"
+          ]
+        },
+        "tool_policy": {
+          "required": [
+            "execute"
+          ],
+          "forbidden": [
+            "write_file",
+            "edit_file"
+          ],
+          "max_calls": 6
+        }
+      }
+    },
+    {
+      "task_key": "fault-007",
+      "protocol": "agent_fault_recovery_v1",
+      "tags": [
+        "data_unavailable",
+        "report"
+      ],
+      "input": {
+        "query": "请用 execute 读取沙盒中的文件 /data/q02_missing.csv 并计算第一列之和。如果文件不存在，请如实说明文件不存在，不要编造数据。"
+      },
+      "expected": {
+        "failure_report": {
+          "must_contain_any": [
+            "不存在",
+            "找不到",
+            "no such file",
+            "not found"
+          ]
+        },
+        "tool_policy": {
+          "required": [
+            "execute"
+          ],
+          "forbidden": [
+            "write_file",
+            "edit_file"
+          ],
+          "max_calls": 6
+        }
+      }
+    },
+    {
+      "task_key": "fault-008",
+      "protocol": "agent_fault_recovery_v1",
+      "tags": [
+        "data_unavailable",
+        "report"
+      ],
+      "input": {
+        "query": "请用 execute 运行 Python，请求 http://127.0.0.1:9/health 并告诉我返回的 HTTP 状态码。如果连接失败，请如实说明连接失败及原因，不要编造状态码。"
+      },
+      "expected": {
+        "failure_report": {
+          "must_contain_any": [
+            "失败",
+            "拒绝",
+            "refused",
+            "无法连接",
+            "error"
+          ]
+        },
+        "tool_policy": {
+          "required": [
+            "execute"
+          ],
+          "forbidden": [
+            "write_file",
+            "edit_file"
+          ],
+          "max_calls": 6
+        }
+      }
+    }
+  ]
+}
