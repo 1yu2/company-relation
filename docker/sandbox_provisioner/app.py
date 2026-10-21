@@ -8,7 +8,7 @@ import secrets
 import threading
 import time
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
@@ -117,6 +117,31 @@ class SandboxRecord:
     status: str | None = None
 
 
+class SandboxLocks:
+    """Per-sandbox reentrant locks, dropped once no thread holds or waits on them."""
+
+    def __init__(self):
+        self._guard = threading.Lock()
+        self._locks: dict[str, list] = {}
+
+    @contextmanager
+    def hold(self, sandbox_id: str):
+        with self._guard:
+            entry = self._locks.setdefault(sandbox_id, [threading.RLock(), 0])
+            entry[1] += 1
+        try:
+            with entry[0]:
+                yield
+        finally:
+            with self._guard:
+                entry[1] -= 1
+                if entry[1] == 0:
+                    del self._locks[sandbox_id]
+
+
+sandbox_locks = SandboxLocks()
+
+
 class MemoryProvisionerBackend:
     def __init__(self):
         self._lock = threading.Lock()
@@ -190,7 +215,9 @@ class LocalContainerProvisionerBackend:
         from docker.errors import DockerException
 
         self._docker = docker
-        self._lock = threading.Lock()
+        # Sandbox creation runs in parallel under per-sandbox locks; Docker
+        # network create/connect/disconnect/remove stay serialized.
+        self._network_lock = threading.Lock()
         self._container_port = int(os.getenv("SANDBOX_CONTAINER_PORT", "8080"))
         self._sandbox_image = os.getenv(
             "SANDBOX_IMAGE",
@@ -356,43 +383,45 @@ class LocalContainerProvisionerBackend:
     def _ensure_network(self, sandbox_id: str) -> str:
         from docker.errors import NotFound
 
-        network_name = self._network_name(sandbox_id)
-        try:
-            network = self._client.networks.get(network_name)
-        except NotFound:
-            network = self._client.networks.create(
-                network_name,
-                driver="bridge",
-                labels={
-                    "managed-by": "yuxi-sandbox-provisioner",
-                    "sandbox-id": sandbox_id,
-                },
-            )
+        with self._network_lock:
+            network_name = self._network_name(sandbox_id)
+            try:
+                network = self._client.networks.get(network_name)
+            except NotFound:
+                network = self._client.networks.create(
+                    network_name,
+                    driver="bridge",
+                    labels={
+                        "managed-by": "yuxi-sandbox-provisioner",
+                        "sandbox-id": sandbox_id,
+                    },
+                )
 
-        network.reload()
-        if not self._has_expected_network_ownership(network, sandbox_id):
-            raise RuntimeError(f"sandbox network {network_name} has unexpected ownership")
+            network.reload()
+            if not self._has_expected_network_ownership(network, sandbox_id):
+                raise RuntimeError(f"sandbox network {network_name} has unexpected ownership")
 
-        containers = network.attrs.get("Containers") or {}
-        if self._provisioner_container.id not in containers:
-            network.connect(self._provisioner_container, aliases=["sandbox-provisioner"])
-        return network_name
+            containers = network.attrs.get("Containers") or {}
+            if self._provisioner_container.id not in containers:
+                network.connect(self._provisioner_container, aliases=["sandbox-provisioner"])
+            return network_name
 
     def _delete_network(self, sandbox_id: str) -> None:
         from docker.errors import NotFound
 
-        try:
-            network = self._client.networks.get(self._network_name(sandbox_id))
-        except NotFound:
-            return
-        network.reload()
-        if not self._has_expected_network_ownership(network, sandbox_id):
-            logger.warning("Skipping removal of sandbox network %s with unexpected ownership", network.name)
-            return
-        containers = network.attrs.get("Containers") or {}
-        if self._provisioner_container.id in containers:
-            network.disconnect(self._provisioner_container, force=True)
-        network.remove()
+        with self._network_lock:
+            try:
+                network = self._client.networks.get(self._network_name(sandbox_id))
+            except NotFound:
+                return
+            network.reload()
+            if not self._has_expected_network_ownership(network, sandbox_id):
+                logger.warning("Skipping removal of sandbox network %s with unexpected ownership", network.name)
+                return
+            containers = network.attrs.get("Containers") or {}
+            if self._provisioner_container.id in containers:
+                network.disconnect(self._provisioner_container, force=True)
+            network.remove()
 
     def _sandbox_url(self, container) -> str:
         return f"http://{container.name}:{self._container_port}"
@@ -441,7 +470,7 @@ class LocalContainerProvisionerBackend:
         file_thread_id: str | None = None,
         skills_thread_id: str | None = None,
     ) -> SandboxRecord:
-        with self._lock:
+        with sandbox_locks.hold(sandbox_id):
             safe_thread_id = self._validate_thread_id(thread_id)
             safe_file_thread_id = self._validate_thread_id(file_thread_id or safe_thread_id)
             safe_skills_thread_id = self._validate_thread_id(skills_thread_id or safe_thread_id)
@@ -533,50 +562,51 @@ class LocalContainerProvisionerBackend:
                 raise
 
     def discover(self, sandbox_id: str) -> SandboxRecord | None:
-        container = self._get_container(sandbox_id)
-        if container is None:
-            return None
-        container.reload()
-        labels = container.labels or {}
-        thread_id = str(labels.get("thread-id") or "").strip()
-        if not thread_id:
-            return None
-        file_thread_id = str(labels.get("file-thread-id") or thread_id).strip()
-        skills_thread_id = str(labels.get("skills-thread-id") or thread_id).strip()
-        uid = str(labels.get("uid") or "").strip()
-        if not uid:
-            return None
-        safe_file_thread_id = self._validate_thread_id(file_thread_id)
-        safe_skills_thread_id = self._validate_thread_id(skills_thread_id)
-        safe_uid = self._validate_uid(uid)
-        if not self._is_on_expected_network(container, sandbox_id):
-            logger.info("Discarding stale sandbox %s on an unexpected network", sandbox_id)
-            try:
-                self.delete(sandbox_id)
-            except Exception as exc:
-                logger.warning("Failed to delete stale sandbox %s during discover: %s", sandbox_id, exc)
-            return None
-        self._ensure_network(sandbox_id)
-        if not self._is_expected_skills_mount(container, safe_skills_thread_id):
-            logger.info("Discarding stale sandbox %s with unexpected skills mount", sandbox_id)
-            try:
-                self.delete(sandbox_id)
-            except Exception as exc:
-                logger.warning("Failed to delete stale sandbox %s during discover: %s", sandbox_id, exc)
-            return None
-        if not self._has_expected_user_data_mounts(container, safe_file_thread_id, safe_uid):
-            logger.info("Discarding stale sandbox %s with unexpected user-data mounts", sandbox_id)
-            try:
-                self.delete(sandbox_id)
-            except Exception as exc:
-                logger.warning("Failed to delete stale sandbox %s during discover: %s", sandbox_id, exc)
-            return None
-        record = self._to_record(container, sandbox_id)
-        if not record.sandbox_url:
-            return None
-        if not wait_for_sandbox_ready(record.sandbox_url, timeout_seconds=5):
-            return None
-        return record
+        with sandbox_locks.hold(sandbox_id):
+            container = self._get_container(sandbox_id)
+            if container is None:
+                return None
+            container.reload()
+            labels = container.labels or {}
+            thread_id = str(labels.get("thread-id") or "").strip()
+            if not thread_id:
+                return None
+            file_thread_id = str(labels.get("file-thread-id") or thread_id).strip()
+            skills_thread_id = str(labels.get("skills-thread-id") or thread_id).strip()
+            uid = str(labels.get("uid") or "").strip()
+            if not uid:
+                return None
+            safe_file_thread_id = self._validate_thread_id(file_thread_id)
+            safe_skills_thread_id = self._validate_thread_id(skills_thread_id)
+            safe_uid = self._validate_uid(uid)
+            if not self._is_on_expected_network(container, sandbox_id):
+                logger.info("Discarding stale sandbox %s on an unexpected network", sandbox_id)
+                try:
+                    self.delete(sandbox_id)
+                except Exception as exc:
+                    logger.warning("Failed to delete stale sandbox %s during discover: %s", sandbox_id, exc)
+                return None
+            self._ensure_network(sandbox_id)
+            if not self._is_expected_skills_mount(container, safe_skills_thread_id):
+                logger.info("Discarding stale sandbox %s with unexpected skills mount", sandbox_id)
+                try:
+                    self.delete(sandbox_id)
+                except Exception as exc:
+                    logger.warning("Failed to delete stale sandbox %s during discover: %s", sandbox_id, exc)
+                return None
+            if not self._has_expected_user_data_mounts(container, safe_file_thread_id, safe_uid):
+                logger.info("Discarding stale sandbox %s with unexpected user-data mounts", sandbox_id)
+                try:
+                    self.delete(sandbox_id)
+                except Exception as exc:
+                    logger.warning("Failed to delete stale sandbox %s during discover: %s", sandbox_id, exc)
+                return None
+            record = self._to_record(container, sandbox_id)
+            if not record.sandbox_url:
+                return None
+            if not wait_for_sandbox_ready(record.sandbox_url, timeout_seconds=5):
+                return None
+            return record
 
     def list(self) -> list[SandboxRecord]:
         containers = self._client.containers.list(
@@ -592,12 +622,13 @@ class LocalContainerProvisionerBackend:
         return records
 
     def delete(self, sandbox_id: str) -> None:
-        container = self._get_container(sandbox_id)
-        if container is not None:
-            if container.status == "running":
-                container.stop(timeout=10)
-            container.remove(v=True, force=True)
-        self._delete_network(sandbox_id)
+        with sandbox_locks.hold(sandbox_id):
+            container = self._get_container(sandbox_id)
+            if container is not None:
+                if container.status == "running":
+                    container.stop(timeout=10)
+                container.remove(v=True, force=True)
+            self._delete_network(sandbox_id)
 
 
 class KubernetesProvisionerBackend:
@@ -1012,14 +1043,24 @@ class SandboxIdleReaper:
         with self._lock:
             return [sandbox_id for sandbox_id, last_at in self._last_activity_at.items() if last_at <= cutoff]
 
+    def _is_expired(self, sandbox_id: str) -> bool:
+        cutoff = time.time() - self._idle_timeout_seconds
+        with self._lock:
+            last_at = self._last_activity_at.get(sandbox_id)
+        return last_at is not None and last_at <= cutoff
+
     def _run(self) -> None:
         while not self._stop_event.wait(self._check_interval_seconds):
             expired_ids = self._collect_expired_sandbox_ids()
             for sandbox_id in expired_ids:
                 try:
-                    self._backend.delete(sandbox_id)
+                    with sandbox_locks.hold(sandbox_id):
+                        # A create may have touched this sandbox after it was collected.
+                        if not self._is_expired(sandbox_id):
+                            continue
+                        self._backend.delete(sandbox_id)
+                        self.forget(sandbox_id)
                     logger.info(f"Deleted idle sandbox: {sandbox_id}")
-                    self.forget(sandbox_id)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(f"Failed to delete idle sandbox {sandbox_id}: {exc}")
 
@@ -1098,6 +1139,8 @@ def health():
     dependencies=[Depends(require_provisioner_auth)],
 )
 def create_sandbox(payload: CreateSandboxRequest):
+    # Touch before creating so an idle reaper waiting on this sandbox's lock skips it.
+    idle_reaper.touch(payload.sandbox_id)
     try:
         # Backend.create() already handles container reuse (discovers existing container first)
         record = backend_impl.create(

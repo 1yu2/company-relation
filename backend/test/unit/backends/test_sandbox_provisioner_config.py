@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -42,7 +43,7 @@ def _load_module():
 
 def _docker_backend(module, tmp_path, run_container):
     backend = object.__new__(module.LocalContainerProvisionerBackend)
-    backend._lock = threading.Lock()
+    backend._network_lock = threading.Lock()
     backend._container_port = 8080
     backend._network_prefix = "yuxi-know-sandbox"
     backend._sandbox_image = "sandbox-image"
@@ -533,3 +534,182 @@ def test_docker_backend_does_not_remove_unowned_network(monkeypatch, tmp_path):
 
     assert disconnected == []
     assert removed == []
+
+
+class _FakeSandboxContainers:
+    """In-memory container table keyed by sandbox id, shared by run/get/remove."""
+
+    def __init__(self):
+        self.by_sandbox_id = {}
+        self.run_calls = []
+
+    def run(self, _image, **kwargs):
+        sandbox_id = kwargs["labels"]["sandbox-id"]
+        self.run_calls.append(sandbox_id)
+        containers = self
+
+        class FakeContainer:
+            name = kwargs["name"]
+            status = "running"
+            attrs = {"State": {"Status": "running"}}
+
+            def reload(self):
+                return None
+
+            def stop(self, timeout):
+                self.status = "exited"
+
+            def remove(self, *, v, force):
+                containers.by_sandbox_id.pop(sandbox_id, None)
+
+        container = FakeContainer()
+        self.by_sandbox_id[sandbox_id] = container
+        return container
+
+
+def _concurrent_docker_backend(module, monkeypatch, tmp_path, wait_ready):
+    containers = _FakeSandboxContainers()
+    backend = _docker_backend(module, tmp_path, containers.run)
+    monkeypatch.setattr(backend, "_get_container", containers.by_sandbox_id.get)
+    monkeypatch.setattr(backend, "_ensure_network", backend._network_name)
+    monkeypatch.setattr(backend, "_delete_network", lambda _sandbox_id: None)
+    monkeypatch.setattr(backend, "_ensure_user_data_writable", lambda _container: None)
+    monkeypatch.setattr(backend, "_is_expected_skills_mount", lambda _container, _thread_id: True)
+    monkeypatch.setattr(backend, "_is_on_expected_network", lambda _container, _sandbox_id: True)
+    monkeypatch.setattr(backend, "_has_expected_user_data_mounts", lambda _container, _thread_id, _uid: True)
+    monkeypatch.setattr(module, "wait_for_sandbox_ready", lambda _url, timeout_seconds: wait_ready())
+    return backend, containers
+
+
+def _run_in_threads(*targets):
+    errors = []
+
+    def call(target):
+        try:
+            target()
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=call, args=(target,)) for target in targets]
+    for thread in threads:
+        thread.start()
+    return threads, errors
+
+
+def test_docker_backend_creates_different_sandboxes_in_parallel(monkeypatch, tmp_path):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+    # Both health checks must be in flight at the same time to pass the barrier.
+    both_waiting = threading.Barrier(2, timeout=2)
+
+    def wait_ready():
+        try:
+            both_waiting.wait()
+        except threading.BrokenBarrierError:
+            return False
+        return True
+
+    backend, containers = _concurrent_docker_backend(module, monkeypatch, tmp_path, wait_ready)
+
+    threads, errors = _run_in_threads(
+        lambda: backend.create("sandbox-a", "thread-a", "user-1"),
+        lambda: backend.create("sandbox-b", "thread-b", "user-1"),
+    )
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert errors == []
+    assert sorted(containers.run_calls) == ["sandbox-a", "sandbox-b"]
+    assert module.sandbox_locks._locks == {}
+
+
+def test_docker_backend_creates_same_sandbox_only_once(monkeypatch, tmp_path):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+
+    def wait_ready():
+        time.sleep(0.2)
+        return True
+
+    backend, containers = _concurrent_docker_backend(module, monkeypatch, tmp_path, wait_ready)
+    records = []
+
+    threads, errors = _run_in_threads(
+        lambda: records.append(backend.create("sandbox-1", "thread-1", "user-1")),
+        lambda: records.append(backend.create("sandbox-1", "thread-1", "user-1")),
+    )
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert errors == []
+    assert containers.run_calls == ["sandbox-1"]
+    assert [record.sandbox_url for record in records] == ["http://yuxi-sandbox-sandbox-1:8080"] * 2
+    assert module.sandbox_locks._locks == {}
+
+
+def test_docker_backend_delete_waits_for_inflight_create(monkeypatch, tmp_path):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    module = _load_module()
+    create_waiting = threading.Event()
+    finish_create = threading.Event()
+    events = []
+
+    def wait_ready():
+        create_waiting.set()
+        finish_create.wait(timeout=5)
+        events.append("created")
+        return True
+
+    backend, containers = _concurrent_docker_backend(module, monkeypatch, tmp_path, wait_ready)
+
+    create_threads, create_errors = _run_in_threads(lambda: backend.create("sandbox-1", "thread-1", "user-1"))
+    assert create_waiting.wait(timeout=5)
+    delete_threads, delete_errors = _run_in_threads(lambda: (backend.delete("sandbox-1"), events.append("deleted")))
+    time.sleep(0.2)
+    assert events == []
+
+    finish_create.set()
+    for thread in create_threads + delete_threads:
+        thread.join(timeout=5)
+
+    assert create_errors == delete_errors == []
+    assert events == ["created", "deleted"]
+    assert containers.by_sandbox_id == {}
+    assert module.sandbox_locks._locks == {}
+
+
+def test_idle_reaper_skips_sandbox_reused_while_waiting_for_its_lock(monkeypatch, tmp_path):
+    monkeypatch.setenv("PROVISIONER_BACKEND", "memory")
+    monkeypatch.setenv("PROVISIONER_PUBLIC_URL", "http://sandbox-provisioner:8002")
+    module = _load_module()
+    create_waiting = threading.Event()
+    finish_create = threading.Event()
+
+    def wait_ready():
+        create_waiting.set()
+        return finish_create.wait(timeout=5)
+
+    backend, containers = _concurrent_docker_backend(module, monkeypatch, tmp_path, wait_ready)
+    reaper = module.SandboxIdleReaper(backend)
+    reaper._idle_timeout_seconds = 60
+    reaper._last_activity_at["sandbox-1"] = time.time() - 120
+    # The reaper collected the id as expired just before a new request reused it.
+    monkeypatch.setattr(reaper, "_collect_expired_sandbox_ids", lambda: ["sandbox-1"])
+    stop_after_one_pass = iter([False, True])
+    monkeypatch.setattr(reaper._stop_event, "wait", lambda _timeout: next(stop_after_one_pass))
+    monkeypatch.setattr(module, "backend_impl", backend)
+    monkeypatch.setattr(module, "idle_reaper", reaper)
+    payload = module.CreateSandboxRequest(sandbox_id="sandbox-1", thread_id="thread-1", uid="user-1")
+
+    create_threads, create_errors = _run_in_threads(lambda: module.create_sandbox(payload))
+    assert create_waiting.wait(timeout=5)
+    reaper_threads, reaper_errors = _run_in_threads(reaper._run)
+    time.sleep(0.2)
+    finish_create.set()
+    for thread in create_threads + reaper_threads:
+        thread.join(timeout=5)
+
+    assert create_errors == reaper_errors == []
+    assert list(containers.by_sandbox_id) == ["sandbox-1"]
+    assert "sandbox-1" in reaper._last_activity_at
+    assert module.sandbox_locks._locks == {}
