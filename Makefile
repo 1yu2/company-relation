@@ -1,5 +1,5 @@
 
-.PHONY: up up-lite down logs lint format seed reset verify
+.PHONY: up up-lite down logs lint format seed reset verify eval-gate
 
 PYTEST_ARGS ?=
 BACKEND_PYTHON ?= $(shell cat backend/.python-version)
@@ -48,6 +48,10 @@ seed:
 
 verify:
 	./scripts/verify_docker.sh
+
+# 回归门禁：比较两个已完成的实验，任一规则失败时退出码为 1。用法：make eval-gate BASE=<基线实验 ID> CANDIDATE=<候选实验 ID>
+eval-gate:
+	docker compose exec -T api uv run python -m yuxi.evaluation.regression_gate $(BASE) $(CANDIDATE)
 
 format:
 	cd backend && UV_PYTHON=$(BACKEND_PYTHON) uv run ruff format package

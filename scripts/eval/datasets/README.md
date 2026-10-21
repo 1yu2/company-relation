@@ -32,3 +32,22 @@ curl -s -X POST "$BASE/versions/$VERSION_ID/publish" -H "Authorization: Bearer $
 ```
 
 发布后，在 `/evaluation` 页面或通过 `POST $BASE/experiments` 创建实验。真实 Agent 评测使用 `"runner": "agent_run"` 并指定 `agent_slug`。
+
+## 回归门禁
+
+改动 Agent、模型、prompt 或工具之后，先在 `agent_python_tasks_v1` 上跑候选实验，再与基线实验对比：
+
+```bash
+make eval-gate BASE=<基线实验 ID> CANDIDATE=<候选实验 ID>
+```
+
+| 规则 | 失败条件 |
+| --- | --- |
+| R0 可比性 | 数据集版本或评分口径不同，或存在未配对的题 |
+| R1 退化题数 | 退化（基线通过、候选失败）≥ 2 题 |
+| R2 通过率 | 下降超过 1 题（6.25 个百分点） |
+| R3 McNemar | 只报告，不判定（16 题时检验力不足） |
+| R4 Agent 端到端 P50 | 增幅 > 30%；两个实验 concurrency 不同时为“不可判定” |
+| R5 每题 token 均值 | 增幅 > 20% |
+
+阈值由同配置重复实验的噪声推导，只适用于 `agent_python_tasks_v1`；对其他数据集运行时门禁直接失败。对比按每题第 1 次尝试配对。CI 中没有模型 API Key，门禁只在本地对已完成的实验执行。
