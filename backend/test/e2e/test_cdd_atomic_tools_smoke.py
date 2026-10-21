@@ -1,4 +1,4 @@
-"""Q-02 v3 六家企业的只读原子工具冒烟；使用已发布参考事实逐字段核对。"""
+"""Q-02 v4 六家企业的只读原子工具冒烟；使用已发布参考事实逐字段核对。"""
 
 import pytest
 import pytest_asyncio
@@ -9,7 +9,7 @@ from yuxi.company_due_diligence.models import CompanyReference
 from yuxi.company_due_diligence.mysql import company_due_diligence_mysql
 
 pytestmark = [pytest.mark.e2e, pytest.mark.asyncio]
-VERSION_ID = "pev_e9dac73c652c07f95575b2be9cd8"
+VERSION_ID = "pev_ad05931d8a0ea8ce0747284ddd30"
 
 
 @pytest_asyncio.fixture
