@@ -124,7 +124,7 @@ async def test_profile_query_normalizes_values_and_keeps_stable_sources():
 
 
 async def test_registered_capital_uses_source_amount_unit(monkeypatch):
-    """注册资本按源文案换算为元，实收资本单位未确认时不改变。"""
+    """注册资本按源文案换算为元；实收资本是不带单位的数值，与注册资本同单位（万元），同样换算。"""
     repository = FakeRepositories()
 
     async def get_profile(_eid):
@@ -138,7 +138,8 @@ async def test_registered_capital_uses_source_amount_unit(monkeypatch):
     facts = {fact.fact_type: fact for fact in result.facts}
     assert facts["registered_capital"].normalized_value == "302995606"
     assert facts["registered_capital"].unit == "CNY"
-    assert facts["actual_capital"].normalized_value == "800"
+    assert facts["actual_capital"].normalized_value == "8000000"
+    assert facts["actual_capital"].unit == "CNY"
 
 
 async def test_shareholder_query_distinguishes_history_and_truncation():

@@ -110,7 +110,8 @@ class PlatformEvaluationRepository:
             record = result.scalar_one_or_none()
             if record is None:
                 return None
-            if record.status == "published" and any(
+            # 发布后内容不可变；唯一允许的变更是停用（published → retired），停用不改动题目和期望。
+            if record.status == "published" and values != {"status": "retired"} and any(
                 getattr(record, key) != value for key, value in values.items() if key != "published_at"
             ):
                 raise ValueError("已发布的数据集版本不可修改")

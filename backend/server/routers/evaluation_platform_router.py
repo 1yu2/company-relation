@@ -187,6 +187,19 @@ async def publish_dataset_version(
         _raise_for_domain_error(exc)
 
 
+@evaluation_platform_router.post("/versions/{version_id}/retire")
+async def retire_dataset_version(
+    version_id: str,
+    current_user: User = Depends(get_admin_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """停用已发布的数据集版本，此后不能再基于它创建实验。"""
+    try:
+        return _response(await PlatformEvaluationService().retire_version(db=db, version_id=version_id))
+    except Exception as exc:
+        _raise_for_domain_error(exc)
+
+
 @evaluation_platform_router.post("/experiments")
 async def create_experiment(
     payload: ExperimentCreateRequest,
