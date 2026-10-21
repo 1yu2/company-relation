@@ -6,6 +6,8 @@
 
 ## v0.7.2 (current)
 
+- 修复 api 与 worker 同时启动（如热重载）时安装内置 Skill 的目录替换竞争：两者共享 saves 目录，并发 rename 会让 worker 以 `FileNotFoundError` 启动失败；现在用 saves 目录下的跨进程文件锁串行化安装，并补充双进程并发回归测试。
+
 - 修复工具失败状态与评测盲区：execute 非零退出码（包括 grep 无匹配返回 1）记为 error，保留失败工具输出并正确显示错误卡片；增加真实 DeepAgents execute 格式契约回归测试。
 
 - 修复企业尽调长任务跨进程恢复边界：报告、Neo4j 图投影和文本证据索引统一保存可恢复请求参数并由 ARQ worker 按任务 ID 原子认领；启动时补投递 pending，活跃任务不被误判，过期任务按最多一次策略恢复，失败或取消不发布半成品版本。
