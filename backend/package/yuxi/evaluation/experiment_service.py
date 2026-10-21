@@ -637,24 +637,34 @@ async def experiment_executor_lock(
         yield False
         return
     owner = asyncio.current_task()
+    stopped_by_heartbeat: list[bool] = []
     heartbeat = asyncio.create_task(_keep_lock_alive(lock, ttl_seconds))
-    heartbeat.add_done_callback(partial(_stop_owner_on_lock_loss, owner))
+    stop_owner = partial(_stop_owner_on_lock_loss, owner, stopped_by_heartbeat)
+    heartbeat.add_done_callback(stop_owner)
     try:
         yield True
     finally:
-        # 心跳是无限循环，未被取消就结束只可能是续期失败。
+        # 先摘掉回调：心跳恰好在退出时失败、回调尚未执行的话，不能在离开上下文后再取消 owner。
+        heartbeat.remove_done_callback(stop_owner)
+        # 心跳是无限循环，未被取消就结束只可能是续期失败；锁已丢失，不能再释放。
         if heartbeat.done() and not heartbeat.cancelled():
-            owner.uncancel()
-            raise ExperimentLockLostError(
-                f"实验 {experiment_id} 的执行锁续期失败，已停止执行"
-            ) from heartbeat.exception()
-        heartbeat.cancel()
-        await asyncio.gather(heartbeat, return_exceptions=True)
-        await lock.release()
+            if stopped_by_heartbeat:
+                owner.uncancel()
+            # 只有心跳发出的取消转换为 ExperimentLockLostError；外部取消（如 worker 关闭）同时到达时，
+            # 保留正在传播的 CancelledError，让 ARQ 按取消处理、实验保持 RUNNING，由启动恢复续跑。
+            if not owner.cancelling():
+                raise ExperimentLockLostError(
+                    f"实验 {experiment_id} 的执行锁续期失败，已停止执行"
+                ) from heartbeat.exception()
+        else:
+            heartbeat.cancel()
+            await asyncio.gather(heartbeat, return_exceptions=True)
+            await lock.release()
 
 
-def _stop_owner_on_lock_loss(owner: asyncio.Task, heartbeat: asyncio.Task) -> None:
+def _stop_owner_on_lock_loss(owner: asyncio.Task, stopped: list[bool], heartbeat: asyncio.Task) -> None:
     if not heartbeat.cancelled():
+        stopped.append(True)
         owner.cancel()
 
 

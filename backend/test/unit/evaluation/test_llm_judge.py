@@ -91,9 +91,18 @@ async def test_forbidden_tool_fails_before_judge_verdict(monkeypatch):
     assert metrics["task_pass"]["reason_code"] == "forbidden_tool_called"
 
 
-def test_metric_version_changes_with_rubric_or_judge_model():
-    assert llm_judge.METRIC_VERSION.startswith(f"llm-judge-{llm_judge.RUBRIC_VERSION}-")
-    assert len(llm_judge.METRIC_VERSION.rsplit("-", 1)[1]) == 8
+def test_metric_version_changes_when_rubric_template_or_model_changes():
+    """改 rubric、prompt 模板或 Judge 模型中任何一项，评分版本都必须改变，新旧 Judge 的结果才不会被混在一起比较。"""
+    current = (llm_judge.RUBRIC, llm_judge.PROMPT_TEMPLATE, llm_judge.JUDGE_MODEL_SPEC)
+    variants = [
+        (current[0] + "\n5. 新增规则", current[1], current[2]),
+        (current[0], current[1] + "\n请简短回答理由", current[2]),
+        (current[0], current[1], "alibaba-cn:qwen3.7-flash"),
+    ]
+
+    assert llm_judge.METRIC_VERSION == f"llm-judge-{llm_judge.RUBRIC_VERSION}-{llm_judge.judge_checksum(*current)}"
+    checksums = {llm_judge.judge_checksum(*args) for args in [current, *variants]}
+    assert len(checksums) == 4
 
 
 def test_cohen_kappa_matches_hand_calculation():

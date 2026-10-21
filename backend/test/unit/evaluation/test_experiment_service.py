@@ -1117,3 +1117,42 @@ async def test_async_judge_evaluator_is_awaited_and_persisted(evaluation_session
     assert metrics["judge_correct"]["metric_version"] == llm_judge.METRIC_VERSION
     assert metrics["task_pass"]["reason_code"] == "judge_not_calibrated"
     assert experiment["config_snapshot"]["captured"]["evaluators"] == {"agent_open_answer_v1": llm_judge.METRIC_VERSION}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("failure", ["slow", "error"])
+async def test_judge_timeout_or_error_is_not_scored_as_agent_failure(evaluation_session, monkeypatch, failure):
+    """Judge 超时或调用失败属于评测侧错误：rollout 不评分、不进入通过率分母，也不记为 Agent 超时。"""
+    import asyncio
+
+    from yuxi.evaluation import llm_judge
+
+    async def call(prompt, stream=False):
+        if failure == "error":
+            raise RuntimeError("judge provider down")
+        await asyncio.sleep(1)
+        return SimpleNamespace(content='{"verdict": "pass", "reason": "ok"}')
+
+    monkeypatch.setattr(llm_judge, "select_model", lambda model_spec: SimpleNamespace(call=call))
+    monkeypatch.setattr(llm_judge, "JUDGE_TIMEOUT_SECONDS", 0.05)
+    service = PlatformEvaluationService()
+    dataset = await service.create_dataset(
+        db=evaluation_session, name="open", description="", source_kind="fixture", created_by="admin"
+    )
+    version = await service.create_version(
+        db=evaluation_session,
+        dataset_id=dataset["dataset_id"],
+        source={"type": "inline"},
+        tasks=[{"task_key": "open-1", "protocol": "agent_open_answer_v1", "input": {"query": "hello"}, "expected": {}}],
+    )
+    await service.publish_version(db=evaluation_session, version_id=version["version_id"])
+    experiment = await service.create_experiment(
+        db=evaluation_session, data={"dataset_version_id": version["version_id"]}, created_by="admin"
+    )
+
+    result = await service.run_experiment(db=evaluation_session, experiment_id=experiment["experiment_id"])
+
+    rollout = result["rollouts"][0]
+    assert (rollout["status"], rollout["reason_code"]) == ("FAILED", "runner_error")
+    assert result["metrics"] == []
+    assert result["aggregate"]["measured_task_count"] == 0

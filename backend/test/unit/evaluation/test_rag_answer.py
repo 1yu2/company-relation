@@ -90,3 +90,30 @@ def test_answer_without_retrieval_call_is_attributed_to_missing_retrieval():
     metrics = _evaluate(task, "不知道。", [])
 
     assert metrics["task_pass"]["reason_code"] == "retrieval_not_called"
+
+
+@pytest.mark.parametrize(
+    "expected",
+    [
+        {},
+        {"answer_must_contain": [], "relevant_chunk_ids": []},
+        # 参考答案写成了其他协议的字段：本协议读不到要点，不能给任意回答通过分。
+        {"final_answer": {"value": "12.5%"}},
+    ],
+)
+def test_missing_reference_is_not_measured_instead_of_passing(expected):
+    metrics = _evaluate({"expected": expected}, "", [])
+
+    assert (metrics["task_pass"]["status"], metrics["task_pass"]["reason_code"]) == (
+        "not_measured",
+        "answer_reference_missing",
+    )
+    assert {metrics[name]["status"] for name in ("hit_at_k", "recall_at_k", "mrr", "ndcg_at_k")} == {"not_measured"}
+
+
+def test_missing_reference_still_fails_on_forbidden_tool():
+    task = {"expected": {"tool_policy": {"forbidden": ["execute"]}}}
+
+    metrics = _evaluate(task, "", [{"name": "execute", "args": {}, "status": "success"}])
+
+    assert metrics["task_pass"]["reason_code"] == "forbidden_tool_called"

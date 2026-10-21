@@ -79,7 +79,8 @@ class PlatformEvaluationExperiment(Base):
     source_kind = Column(String(32), nullable=False, default="fixture", index=True)
     agent_slug = Column(String(255))
     runner = Column(String(64), nullable=False, default="fixture")
-    evaluator_version = Column(String(64), nullable=False, default="deterministic-v1")
+    # 多协议数据集按协议拼接各评分版本，长度不固定；各协议明细见 config_snapshot.captured.evaluators。
+    evaluator_version = Column(Text, nullable=False, default="deterministic-v1")
     config_snapshot = Column(JSON_VALUE, nullable=False, default=dict)
     concurrency = Column(Integer, nullable=False, default=1)
     timeout_seconds = Column(Integer, nullable=False, default=30)
