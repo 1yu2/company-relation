@@ -67,7 +67,7 @@ Agent 运行时以垂直流水线组织：ARQ Worker 加载 AgentRun 后，经 1
 
 登录用户在主聊天窗口选择“企业尽调智能体”后直接提问。当前部署已将企业尽调 Agent 绑定到通过连通性检查且支持工具调用的模型；其他部署也必须配置可用对话模型。本地开发使用不提交的 `.env`。
 
-企业尽调专属质量评测、QA Benchmark、性能评测、评测页面和发布门禁已经从当前代码中移除。PostgreSQL 中既有历史评测表和数据未执行 `DROP` 或 `DELETE`，但当前应用不再映射、创建或访问这些表。
+企业尽调的质量评测已经接入下文的通用 [Agent 评测体系](#agent-评测体系)：使用 `company_due_diligence` runner 和 Q-02 题集（v3，36 题）。在最新代码上，确定性工作流的 pass@1 为 **80.6%（29/36，实验 `pex_23894b696b5ae6ad943e2011531d`）**。剩下的 7 题失败都是因为关键词路由不认识“股东情况”这类说法，这是企业尽调 Agent 化要解决的问题。Q-02 v3 的参考答案由源表只读 SQL 独立生成，**尚未经人工抽查**，引用时需要注明。早期的企业尽调专属评测页面和 QA Benchmark 已经移除；对应的历史表没有删除，但应用不再访问。
 
 相关文档：
 
@@ -80,6 +80,36 @@ Agent 运行时以垂直流水线组织：ARQ Worker 加载 AgentRun 后，经 1
 - 平台语音统一复用“模型供应商”中的 Qwen/阿里云百炼 URL、Key 与模型配置，不维护第二套语音凭据。
 - [现有公开企业关系评测基线](docs/agents/company-relation-evaluation.md)
 - 本地开发审计与架构图：`docs/vibe/2026-08-10-guangdong-enterprise-data-audit.md`、`docs/vibe/2026-08-11-company-due-diligence-end-to-end.drawio`（`docs/vibe` 默认不提交）
+
+## Agent 评测体系
+
+平台内置了可复现的 Agent 评测闭环：同一份数据集在相同配置下可以重复运行，结果可以逐题对比，换模型、换 prompt 或修改工具前后都能用同一把尺子衡量。评测通过真实的 AgentRun 链路执行（ARQ worker → LangGraph → 沙盒），不走旁路。
+
+| 环节 | 能力 |
+| --- | --- |
+| 数据集 | 版本化且发布后不可修改；未经复核（`pending_review`）的题、期望由被测服务自身输出生成（`source_generated`）的题都不能发布；已发布的版本可以停用 |
+| 执行 | 后台 worker 执行，按 `concurrency` 并发；每条 rollout 单独提交，中断后可以续跑；执行锁保证同一实验只有一个执行者；取消会级联中止在途 AgentRun |
+| 评分协议 | 代码题 `agent_final_answer_v1`、故障注入 `agent_fault_recovery_v1`、知识库问答 `agent_rag_answer_v1`（Hit@K / MRR / nDCG@K 与失败归因）、开放式回答 `agent_open_answer_v1`（版本化 LLM Judge，人工校准达标前不计入通过率）、企业尽调 `cdd_q02_review_v1` |
+| 指标 | pass@1 / pass@k / pass^k、按层的通过率（结果层、检索层、轨迹层）、失败恢复率、耗时分位数、token 与成本 |
+| 可复现 | 创建实验时记录配置快照（实际模型、prompt 与配置校验和、工具清单、数据集版本、评分器版本、代码校验和）；执行时固定使用快照中的模型；评分器在创建实验后升级则拒绝执行 |
+| 对比与门禁 | 两次实验逐题配对，给出修复 / 退化、McNemar 检验和性能差异；数据集或评分口径不同时拒绝对比；`make eval-gate` 按阈值判定能否替换基线 |
+| 线上回流 | 按抽样率抽取线上对话，用通用规则（失败、空回答、循环、超预算、工具报错、点踩）筛出可疑样本，进入失败池；人工复核后生成草稿题（默认不抽样） |
+
+使用方式：
+
+- 页面：`/evaluation`，包含实验列表、指标、逐题回答与工具调用、配置快照、基线对比和失败池。
+- 导入数据集：见 [scripts/eval/datasets/README.md](scripts/eval/datasets/README.md)。当前的通用题集是 `agent_python_tasks_v1.json`（16 题，已人工确认）；`agent_fault_tasks_v1.json`（8 道故障注入题）还在等待人工确认。
+- 回归门禁：`make eval-gate BASE=<基线实验 ID> CANDIDATE=<候选实验 ID>`，任一规则失败时退出码非 0。阈值由同配置重复实验的噪声推导，只适用于 `agent_python_tasks_v1`。
+
+当前基线（`default-chatbot` + `deepseek:deepseek-v4-flash`，本地 Docker 环境）：
+
+| 题集 | 结果 | 实验 |
+| --- | --- | --- |
+| `agent_python_tasks_v1`，每题 3 次 | pass@1 85.4%（41/48），pass^3 81.3%，答案值正确率 100%；失败集中在“没有只输出答案”的格式问题 | `pex_ac41bcb1a9633efa776f0eadfe04` |
+| 同题集换 `qwen3.7-flash` | 通过率不变（0 修复 / 0 退化），Agent 端到端 P50 增加 70% | `pex_b7fafad784abd613ba0ea709ab07` |
+| 并发压测，每组 32 个样本 | 并发 1 / 4 / 8 / 16 时吞吐为 5.9 / 19.7 / 27.2 / 35.2 题/分钟，pass@1 均为 87.5% | `pex_707919b432e935c3588f28c2a050` 等 4 组 |
+
+这些数字都来自本机上的单次运行，只用于说明评测体系能做什么，不能外推为生产环境的准确率或容量。知识库问答的真实实验、LLM Judge 的人工校准、线上抽样率等还需要提供数据、标注或人工决策。
 
 ## 快速开始
 
@@ -109,6 +139,14 @@ docker compose up --build
 等待启动完成后，浏览器打开 `http://localhost:5173`，使用初始化时生成的管理员账户登录即可。
 
 > 💡 不需要知识库 / 知识图谱等重依赖时，可使用 `make up-lite` 以 LITE 轻量模式启动，加快冷启动速度。更多部署说明见 [项目文档](https://1yu2.github.io/company-relation/)。
+
+**4. 开发与质量门禁**
+
+```bash
+make verify
+```
+
+`make verify` 在运行中的容器里执行后端单测、Ruff 检查与格式检查、前端单测、ESLint 和生产构建，不会自动修改代码。GitHub Actions 的 CI 运行同一份检查清单，并检查 PR 中的空白字符错误。集成测试需要真实的 PostgreSQL / Redis / MySQL，会读取 `.env` 中的 `TEST_*` 或 `E2E_*` 账号，需要在本地单独运行。测试规范见 [testing-guidelines.md](docs/develop-guides/testing-guidelines.md)。
 
 ## 致谢
 
