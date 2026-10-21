@@ -6,6 +6,8 @@
 口径（2026-10-20 用户确认）：
 - 当前股东：is_history=0 且持股比例 > 0；默认按持股比例取前 10，问题中出现“全部”时全部列出。
 - 注册资本带单位：按原文金额（含万/亿）换算为基础货币单位。
+- 股东认缴/实缴总额：total_*_capi_new 以万元计，*_currency_unit 只是币种代码；按带单位原文 total_*_capi 换算为元，
+  原文没有币种时取币种代码字段（2026-10-21 用户确认，v4）。
 - 不存在企业 + 上下文 eid：按实际情况，问题点名的企业不存在即为 not_found。
 - 源数据持股合计不足 100% 时照实返回，只在审核清单中提示。
 
@@ -39,7 +41,7 @@ from yuxi.company_due_diligence.qa.service import company_question_service
 from yuxi.evaluation.company_due_diligence import evaluate_company_due_diligence
 
 DEFAULT_TOP_N = 10
-REGISTERED_CAPITAL_PATTERN = re.compile(r"([+-]?\d+(?:\.\d+)?)(万|亿)?元?(人民币|美元|港元)?")
+AMOUNT_PATTERN = re.compile(r"([+-]?\d+(?:\.\d+)?)(万|亿)?元?(人民币|美元|港元)?")
 CURRENCY_CODES = {"人民币": "CNY", "美元": "USD", "港元": "HKD"}
 NOT_FOUND_NAME_SQL = "SELECT count(*) FROM t_enterprise WHERE name = :name OR format_name = :name"
 ENTERPRISE_SQL = """
@@ -49,8 +51,8 @@ ENTERPRISE_SQL = """
     WHERE e.eid = :eid
 """
 SHAREHOLDER_SQL = """
-    SELECT id, stock_id, stock_name, stock_percent, total_should_capi_new, should_currency_unit,
-           total_real_capi_new, real_currency_unit
+    SELECT id, stock_id, stock_name, stock_percent, total_should_capi, should_currency_unit,
+           total_real_capi, real_currency_unit
     FROM t_partners_alls
     WHERE eid = :eid AND is_history = 0
 """
@@ -160,9 +162,9 @@ async def fetch_current_holders(conn, eid: str, *, list_all: bool) -> tuple[list
 def profile_facts(company: dict, fact_types: tuple[str, ...]) -> list[dict]:
     row, eid = company["row"], company["eid"]
     source_id = build_source_id("t_enterprise", eid)
-    capital, currency = parse_registered_capital(row["regist_capi"])
+    capital, currency = parse_amount(row["regist_capi"])
     values = {
-        "registered_capital": (capital, currency),
+        "registered_capital": (capital, currency or "CNY"),
         "legal_representative": (normalize_optional_text(row["oper_name"]), None),
         "business_status": (normalize_optional_text(row["status"]), None),
         "established_date": (normalize_optional_text(row["start_date"]), None),
@@ -171,14 +173,14 @@ def profile_facts(company: dict, fact_types: tuple[str, ...]) -> list[dict]:
     return [fact(eid, fact_type, *values[fact_type], source_id) for fact_type in fact_types if values[fact_type][0]]
 
 
-def parse_registered_capital(value: str) -> tuple[str, str]:
-    """解析源表“30299.5606万元人民币”格式；项目的 normalize_amount 不接受“万元人民币”。"""
-    match = REGISTERED_CAPITAL_PATTERN.fullmatch(value.replace(",", "").replace(" ", ""))
+def parse_amount(value: str) -> tuple[str, str | None]:
+    """解析源表“30299.5606万元人民币”“12600.2912万人民币”格式，金额换算为基础货币单位，未写币种时返回 None。"""
+    match = AMOUNT_PATTERN.fullmatch(value.replace(",", "").replace(" ", ""))
     if match is None:
-        raise ValueError(f"无法解析注册资本: {value}")
+        raise ValueError(f"无法解析金额: {value}")
     amount, magnitude, currency = match.groups()
     multiplier = {None: 1, "万": 10_000, "亿": 100_000_000}[magnitude]
-    return normalize_decimal(Decimal(amount) * multiplier), CURRENCY_CODES[currency or "人民币"]
+    return normalize_decimal(Decimal(amount) * multiplier), CURRENCY_CODES.get(currency)
 
 
 def shareholder_facts(holders: list[dict], *, with_capital: bool) -> list[dict]:
@@ -191,12 +193,15 @@ def shareholder_facts(holders: list[dict], *, with_capital: bool) -> list[dict]:
         if not with_capital:
             continue
         for fact_type, amount_field, unit_field in (
-            ("subscribed_capital_total", "total_should_capi_new", "should_currency_unit"),
-            ("paid_capital_total", "total_real_capi_new", "real_currency_unit"),
+            ("subscribed_capital_total", "total_should_capi", "should_currency_unit"),
+            ("paid_capital_total", "total_real_capi", "real_currency_unit"),
         ):
-            amount = normalize_decimal(row[amount_field])
-            if amount is not None:
-                facts.append(fact(subject_id, fact_type, amount, normalize_optional_text(row[unit_field]), source_id))
+            text_value = normalize_optional_text(row[amount_field])
+            if text_value is None:
+                continue
+            amount, currency = parse_amount(text_value)
+            unit = currency or normalize_optional_text(row[unit_field])
+            facts.append(fact(subject_id, fact_type, amount, unit, source_id))
     return facts
 
 
