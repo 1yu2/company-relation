@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 from yuxi.company_due_diligence.models import ConfidenceLevel
 
 _DATE_FORMATS = ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%Y年%m月%d日")
-_AMOUNT_PATTERN = re.compile(r"^([+-]?\d+(?:\.\d+)?)\s*(万|亿)?\s*(人民币|美元|港元|元)?$")
+_AMOUNT_PATTERN = re.compile(r"^([+-]?\d+(?:\.\d+)?)\s*(万|亿)?\s*(元?(?:人民币|美元|港元)|元)?$")
 _CURRENCY_CODES = {"人民币": "CNY", "元": "CNY", "美元": "USD", "港元": "HKD"}
 
 
@@ -64,6 +64,8 @@ def normalize_amount(value: object) -> tuple[str | None, str | None]:
         raise ValueError(f"无法规范化金额: {text}")
 
     amount_text, magnitude, currency_text = match.groups()
+    if currency_text and currency_text != "元":
+        currency_text = currency_text.removeprefix("元")
     multiplier = {None: Decimal(1), "万": Decimal(10000), "亿": Decimal(100000000)}[magnitude]
     amount = normalize_decimal(Decimal(amount_text) * multiplier)
     return amount, _CURRENCY_CODES.get(currency_text)

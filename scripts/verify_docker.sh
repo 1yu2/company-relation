@@ -33,6 +33,7 @@ api uv run --group test pytest --import-mode=importlib \
   test/unit/services/test_chat_service_sync.py \
   test/unit/services/test_conversation_queue_history.py \
   test/unit/backends/test_execute_status.py \
+  test/unit/toolkits/test_kbs_tools.py \
   test/unit/services/test_run_submission_service.py \
   test/unit/services/test_agent_run_service.py \
   test/unit/backends/test_sandbox_backends.py \
@@ -40,6 +41,21 @@ api uv run --group test pytest --import-mode=importlib \
   -m "not slow"
 api uv run --group dev ruff check server package
 api uv run --group dev ruff format --check \
+  package/yuxi/company_due_diligence/normalization.py \
+  package/yuxi/company_due_diligence/models.py \
+  package/yuxi/company_due_diligence/repositories/shareholder.py \
+  package/yuxi/company_due_diligence/structured_query_service.py \
+  package/yuxi/company_due_diligence/entity_mentions.py \
+  package/yuxi/company_due_diligence/qa/graph.py \
+  package/yuxi/company_due_diligence/qa/service.py \
+  package/yuxi/agents/toolkits/kbs/tools.py \
+  test/unit/company_due_diligence/test_normalization.py \
+  test/unit/company_due_diligence/test_entity_mentions.py \
+  test/unit/company_due_diligence/test_structured_query_service.py \
+  test/unit/company_due_diligence/test_structured_repositories.py \
+  test/unit/company_due_diligence/qa/test_qa_service.py \
+  test/unit/company_due_diligence/qa/test_qa_workflow.py \
+  test/unit/toolkits/test_kbs_tools.py \
   package/yuxi/agents/backends/composite.py \
   package/yuxi/services/conversation_service.py \
   test/unit/backends/test_execute_status.py \

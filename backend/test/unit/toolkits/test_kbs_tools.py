@@ -5,10 +5,50 @@ from pathlib import Path
 from types import MethodType, SimpleNamespace
 
 import pytest
+from langchain_core.tools import ToolException
 
 from yuxi.agents.toolkits.kbs import tools
 from yuxi.knowledge.base import KnowledgeBase
 from yuxi.knowledge.manager import KnowledgeBaseManager
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool,args",
+    [
+        (tools.query_kb, {"kb_id": "missing", "query_text": "q"}),
+        (tools.open_kb_document, {"kb_id": "missing", "file_id": "f"}),
+        (tools.find_kb_document, {"kb_id": "missing", "file_id": "f", "patterns": ["q"]}),
+        (tools.download_kb_file, {"kb_id": "missing", "file_id": "f"}),
+        (tools.search_file, {"kb_name": "missing"}),
+    ],
+)
+async def test_kb_missing_target_returns_error_tool_message(monkeypatch, tool, args):
+    """经真实注册工具调用，缺失知识库必须生成 error 消息并保留文本。"""
+    monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
+    message = await tool.ainvoke({"type": "tool_call", "id": "missing-kb", "name": tool.name, "args": args})
+    assert message.status == "error"
+    assert "不存在" in message.content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail", [False, True])
+async def test_query_kb_backend_status_contract(monkeypatch, fail):
+    """真实工具框架将后端异常标错，普通含失败字样的检索内容保持成功。"""
+
+    async def retrieve(*args, **kwargs):
+        """固定返回检索内容或模拟后端不可用。"""
+        if fail:
+            raise RuntimeError("Milvus unavailable")
+        return "文档内容：检索失败 Error: 是一个示例"
+
+    monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
+    monkeypatch.setattr(tools, "_get_knowledge_base", lambda: SimpleNamespace(retrieve=retrieve))
+    message = await tools.query_kb.ainvoke(
+        {"type": "tool_call", "id": "backend-kb", "name": "query_kb", "args": {"kb_id": "db-1", "query_text": "q"}}
+    )
+    assert message.status == ("error" if fail else "success")
+    assert message.content == ("检索失败: Milvus unavailable" if fail else "文档内容：检索失败 Error: 是一个示例")
 
 
 def _tool_callable(tool):
@@ -305,14 +345,8 @@ async def test_find_kb_document_rejects_dify(monkeypatch) -> None:
     monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
 
     runtime = SimpleNamespace(context=SimpleNamespace())
-    result = await _run_find_kb_document(
-        kb_id="db-1",
-        file_id="file-1",
-        patterns=["token"],
-        runtime=runtime,
-    )
-
-    assert "只支持检索" in result
+    with pytest.raises(ToolException, match="只支持检索"):
+        await _run_find_kb_document(kb_id="db-1", file_id="file-1", patterns=["token"], runtime=runtime)
 
 
 @pytest.mark.asyncio
@@ -387,9 +421,8 @@ async def test_open_kb_document_rejects_invisible_resource(monkeypatch) -> None:
     monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
 
     runtime = SimpleNamespace(context=SimpleNamespace())
-    result = await _run_open_kb_document(kb_id="db-1", file_id="file-1", runtime=runtime)
-
-    assert "不存在或当前会话未启用" in result
+    with pytest.raises(ToolException, match="不存在或当前会话未启用"):
+        await _run_open_kb_document(kb_id="db-1", file_id="file-1", runtime=runtime)
 
 
 @pytest.mark.asyncio
@@ -404,9 +437,8 @@ async def test_open_kb_document_requires_markdown_content(monkeypatch) -> None:
     monkeypatch.setattr(tools.knowledge_base, "open_file_content", _fake_open_file_content)
 
     runtime = SimpleNamespace(context=SimpleNamespace())
-    result = await _run_open_kb_document(kb_id="db-1", file_id="file-1", runtime=runtime)
-
-    assert "没有解析后的 Markdown 内容" in result
+    with pytest.raises(ToolException, match="没有解析后的 Markdown 内容"):
+        await _run_open_kb_document(kb_id="db-1", file_id="file-1", runtime=runtime)
 
 
 def _search_file_callable():
@@ -422,9 +454,8 @@ async def test_search_file_requires_kb_name_or_query(monkeypatch) -> None:
     monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
 
     runtime = SimpleNamespace(context=SimpleNamespace())
-    result = await _run_search_file(runtime=runtime)
-
-    assert "不能同时为空" in result
+    with pytest.raises(ToolException, match="不能同时为空"):
+        await _run_search_file(runtime=runtime)
 
 
 @pytest.mark.asyncio
@@ -596,9 +627,8 @@ async def test_search_file_rejects_invisible_kb(monkeypatch) -> None:
     monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
 
     runtime = SimpleNamespace(context=SimpleNamespace())
-    result = await _run_search_file(kb_name="FAQ", query="test", runtime=runtime)
-
-    assert "不存在或当前会话未启用" in result
+    with pytest.raises(ToolException, match="不存在或当前会话未启用"):
+        await _run_search_file(kb_name="FAQ", query="test", runtime=runtime)
 
 
 @pytest.mark.asyncio
@@ -610,9 +640,8 @@ async def test_search_file_skips_read_only_kbs(monkeypatch) -> None:
     monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_read_only_kbs)
 
     runtime = SimpleNamespace(context=SimpleNamespace())
-    result = await _run_search_file(query="report", runtime=runtime)
-
-    assert "只支持检索，不支持文件搜索" in result
+    with pytest.raises(ToolException, match="只支持检索，不支持文件搜索"):
+        await _run_search_file(query="report", runtime=runtime)
 
 
 @pytest.mark.asyncio
@@ -760,9 +789,8 @@ async def test_download_kb_file_rejects_invisible_resource(monkeypatch) -> None:
     monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _visible_kbs)
 
     runtime = SimpleNamespace(context=SimpleNamespace())
-    result = await _run_download_kb_file(kb_id="db-1", file_id="file-1", runtime=runtime)
-
-    assert "不存在或当前会话未启用" in result
+    with pytest.raises(ToolException, match="不存在或当前会话未启用"):
+        await _run_download_kb_file(kb_id="db-1", file_id="file-1", runtime=runtime)
 
 
 @pytest.mark.asyncio
@@ -780,10 +808,9 @@ async def test_download_kb_file_rejects_readonly_knowledge_base(monkeypatch) -> 
     _patch_download_manager(monkeypatch, kb_type="dify", file_download=_must_not_download)
 
     runtime = SimpleNamespace(context=SimpleNamespace(file_thread_id="thread-1", uid="user-1"))
-    result = await _run_download_kb_file(kb_id="db-1", file_id="file-1", runtime=runtime)
-
+    with pytest.raises(ToolException, match="只支持检索"):
+        await _run_download_kb_file(kb_id="db-1", file_id="file-1", runtime=runtime)
     assert not_called["flag"] is False
-    assert "只支持检索" in result
 
 
 @pytest.mark.asyncio
@@ -791,8 +818,10 @@ async def test_download_kb_file_requires_kb_and_file_id(monkeypatch) -> None:
     monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", _fake_visible_kbs)
     runtime = SimpleNamespace(context=SimpleNamespace())
 
-    assert "请提供 kb_id" in await _run_download_kb_file(kb_id="", file_id="file-1", runtime=runtime)
-    assert "请提供 file_id" in await _run_download_kb_file(kb_id="db-1", file_id="", runtime=runtime)
+    with pytest.raises(ToolException, match="请提供 kb_id"):
+        await _run_download_kb_file(kb_id="", file_id="file-1", runtime=runtime)
+    with pytest.raises(ToolException, match="请提供 file_id"):
+        await _run_download_kb_file(kb_id="db-1", file_id="", runtime=runtime)
 
 
 @pytest.mark.asyncio
@@ -804,9 +833,8 @@ async def test_download_kb_file_missing_sandbox_context_returns_error(monkeypatc
     )
 
     runtime = SimpleNamespace(context=SimpleNamespace())
-    result = await _run_download_kb_file(kb_id="db-1", file_id="file-1", runtime=runtime)
-
-    assert "沙盒上下文" in result
+    with pytest.raises(ToolException, match="沙盒上下文"):
+        await _run_download_kb_file(kb_id="db-1", file_id="file-1", runtime=runtime)
 
 
 def test_resolve_download_output_path_strips_directory_and_avoids_traversal(monkeypatch, tmp_path) -> None:

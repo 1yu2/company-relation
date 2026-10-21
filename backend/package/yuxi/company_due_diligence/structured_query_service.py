@@ -196,7 +196,9 @@ class StructuredQueryService:
         if query_type == StructuredQueryType.HISTORICAL_SHAREHOLDERS:
             return await repositories.shareholder.list_historical(request.eid, **options), None
         if query_type == StructuredQueryType.SHAREHOLDER_CONTRIBUTIONS:
-            return await repositories.shareholder.list_contributions(request.eid, **options), None
+            return await repositories.shareholder.list_contributions(
+                request.eid, current_only=request.current_shareholders_only, **options
+            ), None
         if query_type == StructuredQueryType.PRODUCTS:
             return await repositories.product.list_products(request.eid, **options), None
         if query_type == StructuredQueryType.FINANCING_HISTORY:
@@ -262,8 +264,8 @@ def _map_profile_query(
     eid = row["eid"]
 
     if query_type in {StructuredQueryType.ENTERPRISE_PROFILE, StructuredQueryType.REGISTERED_CAPITAL}:
-        registered_capital = _safe_decimal(
-            row.get("regist_capi_new") if row.get("regist_capi_new") is not None else row.get("regist_capi"),
+        registered_capital, capital_currency = _safe_amount(
+            row.get("regist_capi"),
             "regist_capi",
             payload,
         )
@@ -274,7 +276,7 @@ def _map_profile_query(
             registered_capital,
             source_id,
             display=row.get("regist_capi"),
-            unit=_text(row.get("currency_unit")),
+            unit=capital_currency or _text(row.get("currency_unit")),
         )
         _add_fact(
             payload,

@@ -29,6 +29,12 @@ _SHAREHOLDER_FIELDS = """
     p.local_row_update_time
 """
 
+# 源字段同时存在小数和百分号文本，排序和正持股筛选必须使用同一比例。
+_OWNERSHIP_RATIO_SQL = """
+    CAST(NULLIF(TRIM(REPLACE(p.stock_percent, '%', '')), '') AS DECIMAL(30, 15))
+    / CASE WHEN INSTR(p.stock_percent, '%') > 0 THEN 100.0 ELSE 1 END
+"""
+
 
 class ShareholderRepository(BaseReadonlyRepository):
     """按企业查询当前、历史股东及出资明细。"""
@@ -84,10 +90,18 @@ class ShareholderRepository(BaseReadonlyRepository):
         limit: int,
         offset: int,
         sort_order: SortOrder,
+        current_only: bool = False,
     ) -> list[dict]:
         """分页查询带认缴或实缴 JSON 明细的股东记录。"""
         filters, parameters = _date_filters(start_date, end_date)
         direction = sort_order.value.upper()
+        current_filter = f"AND p.is_history = 0 AND ({_OWNERSHIP_RATIO_SQL}) > 0" if current_only else ""
+        detail_filter = "" if current_only else "AND (p.should_capi_items IS NOT NULL OR p.real_capi_items IS NOT NULL)"
+        ordering = (
+            f"({_OWNERSHIP_RATIO_SQL}) DESC, p.id ASC"
+            if current_only
+            else f"p.start_date {direction}, p.id {direction}"
+        )
         parameters.update({"eid": eid, "limit": limit, "offset": offset})
         return await self._fetch_all(
             text(
@@ -95,9 +109,10 @@ class ShareholderRepository(BaseReadonlyRepository):
                 SELECT {_SHAREHOLDER_FIELDS}
                 FROM t_partners_alls p
                 WHERE p.eid = :eid
-                  AND (p.should_capi_items IS NOT NULL OR p.real_capi_items IS NOT NULL)
+                  {detail_filter}
+                  {current_filter}
                   {filters}
-                ORDER BY p.start_date {direction}, p.id {direction}
+                ORDER BY {ordering}
                 LIMIT :limit OFFSET :offset
                 """
             ),
@@ -118,6 +133,10 @@ class ShareholderRepository(BaseReadonlyRepository):
         """按历史标记执行共享的受限股东查询。"""
         filters, parameters = _date_filters(start_date, end_date)
         direction = sort_order.value.upper()
+        positive_filter = f"AND ({_OWNERSHIP_RATIO_SQL}) > 0" if not is_history else ""
+        ordering = (
+            f"p.start_date {direction}, p.id {direction}" if is_history else f"({_OWNERSHIP_RATIO_SQL}) DESC, p.id ASC"
+        )
         parameters.update(
             {
                 "eid": eid,
@@ -133,8 +152,9 @@ class ShareholderRepository(BaseReadonlyRepository):
                 FROM t_partners_alls p
                 WHERE p.eid = :eid
                   AND p.is_history = :is_history
+                  {positive_filter}
                   {filters}
-                ORDER BY p.start_date {direction}, p.id {direction}
+                ORDER BY {ordering}
                 LIMIT :limit OFFSET :offset
                 """
             ),

@@ -78,18 +78,23 @@ class CompanyQuestionService:
         """执行企业问答；可复用领域智能体已校验的受控计划。"""
         started_at = time.perf_counter()
         resolved_plan = plan or self._planner.plan(request.question)
-        if request.company_ref is None:
-            references = extract_company_references(request.question)
-            if references:
-                updates = {"company_ref": references[0]}
-                if request.target_company_ref is None and resolved_plan.use_graph and len(references) > 1:
-                    updates["target_company_ref"] = references[1]
-                request = request.model_copy(update=updates)
-            else:
-                global_response = await self._global_service.query(request.question, top_k=request.top_k)
-                if global_response is not None:
-                    return _assemble_global_response(request, global_response, started_at)
-                return _needs_context_response(request, started_at)
+        references = extract_company_references(request.question)
+        if references and resolved_plan.use_graph and request.company_ref is not None:
+            # 关系问题已有主体（上下文企业或 Agent 已解析的主体）：问题点名的企业是关系目标，不能顶替主体。
+            # 调用方已给出目标时（Agent 已从同一句话解析出主体和目标）以调用方为准。
+            if request.target_company_ref is None:
+                subject, target = references[:2] if len(references) > 1 else (request.company_ref, references[0])
+                request = request.model_copy(update={"company_ref": subject, "target_company_ref": target})
+        elif references:
+            updates = {"company_ref": references[0]}
+            if request.target_company_ref is None and resolved_plan.use_graph and len(references) > 1:
+                updates["target_company_ref"] = references[1]
+            request = request.model_copy(update=updates)
+        elif request.company_ref is None:
+            global_response = await self._global_service.query(request.question, top_k=request.top_k)
+            if global_response is not None:
+                return _assemble_global_response(request, global_response, started_at)
+            return _needs_context_response(request, started_at)
 
         resolution = await self._resolver.resolve(request.company_ref)
         if resolution.status != ResolutionStatus.RESOLVED or resolution.company is None:
