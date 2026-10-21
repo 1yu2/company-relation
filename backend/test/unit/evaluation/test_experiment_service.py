@@ -1225,3 +1225,50 @@ async def test_run_refuses_when_evaluator_upgraded_after_creation(evaluation_ses
 
     with pytest.raises(ValueError, match="评分器版本与创建实验时不同"):
         await service.run_experiment(db=evaluation_session, experiment_id=experiment["experiment_id"])
+
+
+@pytest.mark.unit
+async def test_source_generated_expectations_cannot_be_published(evaluation_session):
+    """期望由被测服务自身输出生成的题不能作为评测基线发布（用它评测这个服务等于自己评自己）。"""
+    service = PlatformEvaluationService()
+    dataset = await service.create_dataset(
+        db=evaluation_session, name="self", description="", source_kind="fixture", created_by="admin"
+    )
+    version = await service.create_version(
+        db=evaluation_session,
+        dataset_id=dataset["dataset_id"],
+        source={"type": "inline"},
+        tasks=[{"task_key": "t1", "input": {"query": "q"}, "expected": {"review_status": "source_generated"}}],
+    )
+
+    with pytest.raises(ValueError, match="被测服务输出生成"):
+        await service.publish_version(db=evaluation_session, version_id=version["version_id"])
+
+
+@pytest.mark.unit
+async def test_retired_version_blocks_new_experiments_but_keeps_history(evaluation_session):
+    service = PlatformEvaluationService()
+    existing = await _fixture_experiment(service, evaluation_session)
+    version_id = existing["dataset_version_id"]
+
+    retired = await service.retire_version(db=evaluation_session, version_id=version_id)
+
+    assert retired["status"] == "retired"
+    with pytest.raises(ValueError, match="只能基于已发布"):
+        await service.create_experiment(
+            db=evaluation_session, data={"dataset_version_id": version_id}, created_by="admin"
+        )
+    assert (await service.get_experiment(db=evaluation_session, experiment_id=existing["experiment_id"])) is not None
+    # 只有已发布的版本可以停用；重复停用直接返回
+    assert (await service.retire_version(db=evaluation_session, version_id=version_id))["status"] == "retired"
+    dataset = await service.create_dataset(
+        db=evaluation_session, name="draft", description="", source_kind="fixture", created_by="admin"
+    )
+    draft = await service.create_version(
+        db=evaluation_session,
+        dataset_id=dataset["dataset_id"],
+        source={"type": "inline"},
+        tasks=[{"task_key": "t1", "input": {"query": "q"}, "expected": {}}],
+    )
+    with pytest.raises(ValueError, match="只有已发布"):
+        await service.retire_version(db=evaluation_session, version_id=draft["version_id"])

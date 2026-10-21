@@ -183,6 +183,9 @@ class PlatformEvaluationService:
         # 候选题（企业尽调候选集、线上抽样回流题）即使已填写部分期望，只要仍是 pending_review 就不能发布。
         if any((task.expected or {}).get("review_status") == "pending_review" for task in tasks):
             raise ValueError("存在尚未复核的任务，不能发布")
+        # 期望由被测服务自己的输出生成：用它评测这个服务等于自己评自己，必然高分，不能作为评测基线。
+        if any((task.expected or {}).get("review_status") == "source_generated" for task in tasks):
+            raise ValueError("存在由被测服务输出生成期望的任务，不能作为评测基线发布")
         domain_tasks = [task for task in tasks if task.protocol == "cdd_q02_review_v1"]
         if any(not (task.expected or {}).get("status") for task in domain_tasks):
             raise ValueError("企业尽调任务缺少可比较的参考状态")
@@ -191,6 +194,18 @@ class PlatformEvaluationService:
             {"status": "published", "published_at": utc_now_naive()},
         )
         return _serialize(published)
+
+    async def retire_version(self, *, db, version_id: str) -> dict[str, Any]:
+        """停用已发布的版本：不能再基于它创建实验；已有实验和对比保持不变，便于回查历史结论。"""
+        repo = self._repo(db)
+        version = await repo.get_version(version_id)
+        if version is None:
+            raise LookupError("数据集版本不存在")
+        if version.status == "retired":
+            return _serialize(version)
+        if version.status != "published":
+            raise ValueError("只有已发布的数据集版本可以停用")
+        return _serialize(await repo.update_version(version_id, {"status": "retired"}))
 
     async def get_version(self, *, db, version_id: str) -> dict[str, Any] | None:
         version = await self._repo(db).get_version(version_id)

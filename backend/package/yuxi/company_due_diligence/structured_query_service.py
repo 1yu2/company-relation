@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -53,6 +54,10 @@ _PROFILE_QUERY_TYPES = {
     StructuredQueryType.LEGAL_REPRESENTATIVE,
     StructuredQueryType.BUSINESS_STATUS,
 }
+
+
+# 金额文本开头的数字部分，剩下的是单位（如“万元人民币”）。
+_LEADING_AMOUNT = re.compile(r"^[+-]?[\d,.\s]+")
 
 
 class StructuredRepositories:
@@ -278,14 +283,21 @@ def _map_profile_query(
             display=row.get("regist_capi"),
             unit=capital_currency or _text(row.get("currency_unit")),
         )
+        # 源数据核对（2026-10-21，924 家企业）：regist_capi 全部以“万元人民币”结尾，actual_capi 是不带单位的数值，
+        # 921 家与 regist_capi_new（万元）相等、其余 2 家更小，与注册资本同单位，所以按 regist_capi 的单位换算。
+        capital_unit_text = _LEADING_AMOUNT.sub("", _text(row.get("regist_capi")) or "")
+        actual_capi = _text(row.get("actual_capi"))
+        actual_capital, actual_currency = _safe_amount(
+            f"{actual_capi}{capital_unit_text}" if actual_capi else None, "actual_capi", payload
+        )
         _add_fact(
             payload,
             eid,
             "actual_capital",
-            _safe_decimal(row.get("actual_capi"), "actual_capi", payload),
+            actual_capital,
             source_id,
             display=row.get("actual_capi"),
-            unit=_text(row.get("currency_unit")),
+            unit=actual_currency or _text(row.get("currency_unit")),
         )
 
     if query_type in {StructuredQueryType.ENTERPRISE_PROFILE, StructuredQueryType.LEGAL_REPRESENTATIVE}:
