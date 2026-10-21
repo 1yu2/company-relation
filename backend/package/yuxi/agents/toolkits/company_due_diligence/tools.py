@@ -2,6 +2,7 @@
 
 from datetime import date
 
+from langchain_core.tools import ToolException
 from pydantic import AliasChoices, BaseModel, Field
 
 from yuxi.agents.toolkits.registry import tool
@@ -132,11 +133,7 @@ async def query_external_company_data(
     """
     company_context = _company_context(company_name, confirmed_eid, credit_code=credit_code, stock_code=stock_code)
     if company_context is None or not company_context.get("eid"):
-        return {
-            "error": "必须先确认企业身份（confirmed_eid）才能查询外部数据。",
-            "facts": [],
-            "sources": [],
-        }
+        raise ToolException("必须先确认企业身份（confirmed_eid）才能查询外部数据。")
     from yuxi.company_due_diligence.qa.service import (
         _config_value,
         _enabled_external_providers,
@@ -149,11 +146,7 @@ async def query_external_company_data(
     if requested_providers is not None:
         disabled_providers = set(requested_providers) - set(enabled_provider_names)
         if disabled_providers:
-            return {
-                "error": f"Provider 未启用：{', '.join(sorted(disabled_providers))}",
-                "facts": [],
-                "sources": [],
-            }
+            raise ToolException(f"Provider 未启用：{', '.join(sorted(disabled_providers))}")
     response = await external_company_data_service.query(
         ExternalCompanyDataRequest(
             company_ref=company_context,
