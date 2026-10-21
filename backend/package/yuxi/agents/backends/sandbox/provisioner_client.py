@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 import httpx
@@ -12,17 +13,25 @@ class SandboxRecord:
     status: str | None = None
 
 
+# 创建沙盒时 provisioner 会等容器通过健康检查，最长 SANDBOX_HEALTH_TIMEOUT_SECONDS（默认 300 秒）。
+# 客户端的等待不能比这短：并发 8 时 all-in-one 镜像同时启动、争抢 CPU，实测创建耗时 p95 约 21 秒、
+# 最长 25 秒（2026-10-21），原来统一的 20 秒超时会让 2.5% 的创建在服务端仍在正常进行时被判失败。
+_CREATE_TIMEOUT_MARGIN_SECONDS = 30
+
+
 class ProvisionerClient:
     def __init__(self, base_url: str, *, token: str, timeout_seconds: int = 20):
         self._base_url = base_url.rstrip("/")
         self._timeout = httpx.Timeout(timeout_seconds)
+        health_timeout = int(os.getenv("SANDBOX_HEALTH_TIMEOUT_SECONDS") or 300)
+        self._create_timeout = httpx.Timeout(health_timeout + _CREATE_TIMEOUT_MARGIN_SECONDS)
         self._headers = {"Authorization": f"Bearer {token}"}
 
-    def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
+    def _request(self, method: str, path: str, *, timeout: httpx.Timeout | None = None, **kwargs) -> httpx.Response:
         return httpx.request(
             method=method,
             url=f"{self._base_url}{path}",
-            timeout=self._timeout,
+            timeout=timeout or self._timeout,
             headers=self._headers,
             **kwargs,
         )
@@ -44,6 +53,7 @@ class ProvisionerClient:
         response = self._request(
             "POST",
             "/api/sandboxes",
+            timeout=self._create_timeout,
             json={
                 "sandbox_id": sandbox_id,
                 "thread_id": thread_id,
