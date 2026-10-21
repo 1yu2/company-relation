@@ -1156,3 +1156,72 @@ async def test_judge_timeout_or_error_is_not_scored_as_agent_failure(evaluation_
     assert (rollout["status"], rollout["reason_code"]) == ("FAILED", "runner_error")
     assert result["metrics"] == []
     assert result["aggregate"]["measured_task_count"] == 0
+
+
+@pytest.fixture
+async def file_sessions(tmp_path):
+    """文件 SQLite：每个会话独立连接，才能复现两个会话之间的竞争。"""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/evaluation.db")
+    tables = [
+        PlatformEvaluationDataset.__table__,
+        PlatformEvaluationDatasetVersion.__table__,
+        PlatformEvaluationTask.__table__,
+        PlatformEvaluationExperiment.__table__,
+        PlatformEvaluationRollout.__table__,
+        PlatformEvaluationTraceEvent.__table__,
+        PlatformEvaluationMetricResult.__table__,
+        PlatformEvaluationFailure.__table__,
+    ]
+    async with engine.begin() as connection:
+        await connection.run_sync(lambda sync_connection: Base.metadata.create_all(sync_connection, tables=tables))
+    yield async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    await engine.dispose()
+
+
+@pytest.mark.unit
+async def test_cancel_between_dispatch_and_rollout_creation_still_wins(file_sessions, monkeypatch):
+    """取消恰好在“派发前检查”和“创建 rollout”之间完成：这条 rollout 也要按取消收尾，不能跑完并写入指标。"""
+    import asyncio
+
+    from yuxi.evaluation import experiment_service
+
+    reached, proceed = asyncio.Event(), asyncio.Event()
+    original = experiment_service.PlatformEvaluationService._run_one_rollout
+
+    async def pause_before_creation(self, **kwargs):
+        reached.set()
+        await proceed.wait()
+        return await original(self, **kwargs)
+
+    monkeypatch.setattr(experiment_service.PlatformEvaluationService, "_run_one_rollout", pause_before_creation)
+    service = PlatformEvaluationService()
+    async with file_sessions() as db:
+        experiment = await _fixture_experiment(service, db, keys=("t1",))
+        await db.commit()
+        job = asyncio.create_task(service.run_experiment(db=db, experiment_id=experiment["experiment_id"]))
+        await reached.wait()
+        async with file_sessions() as other:
+            cancelled = await service.cancel_experiment(db=other, experiment_id=experiment["experiment_id"])
+            await other.commit()
+        assert (cancelled["status"], cancelled["rollouts"]) == ("CANCELLED", [])
+        proceed.set()
+
+        result = await job
+
+    assert result["status"] == "CANCELLED"
+    assert [item["status"] for item in result["rollouts"]] == ["CANCELLED"]
+    assert result["metrics"] == []
+
+
+@pytest.mark.unit
+async def test_run_refuses_when_evaluator_upgraded_after_creation(evaluation_session, monkeypatch):
+    """创建实验后评分器升级：继续执行会把新版本的分数挂在旧快照下、对比时混比新旧分数，所以直接拒绝执行。"""
+    from yuxi.evaluation import experiment_service
+
+    service = PlatformEvaluationService()
+    experiment = await _fixture_experiment(service, evaluation_session)
+    evaluator, _ = experiment_service.PROTOCOL_EVALUATORS["agent_tool_final_v1"]
+    monkeypatch.setitem(experiment_service.PROTOCOL_EVALUATORS, "agent_tool_final_v1", (evaluator, "deterministic-v2"))
+
+    with pytest.raises(ValueError, match="评分器版本与创建实验时不同"):
+        await service.run_experiment(db=evaluation_session, experiment_id=experiment["experiment_id"])
