@@ -112,7 +112,7 @@ def _constructed_samples(companies: list[dict]) -> list[dict]:
         )
         a_holder = (
             f"第一大股东为{holder_name}，持股{percent}%［F:{ratio['fact_id']}］，"
-            f"认缴出资{subscribed['display_value']}万元［F:{subscribed['fact_id']}］。"
+            f"认缴出资{subscribed['display_value']}［F:{subscribed['fact_id']}］。"
         )
         other_rep = _profile(other)["legal_representative"]
         cases = [
