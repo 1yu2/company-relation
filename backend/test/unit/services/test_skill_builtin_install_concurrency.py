@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import subprocess
 import sys
 import textwrap
 import time
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from yuxi.agents.skills import service as svc
 
 INSTALLER_SCRIPT = textwrap.dedent(
     """
@@ -52,3 +58,65 @@ def test_concurrent_builtin_skill_installs_on_shared_save_dir_do_not_crash(tmp_p
     installed = save_dir / "skills" / "image-gen"
     assert (installed / "scripts" / "run.py").read_text(encoding="utf-8") == "print('ok')\n"
     assert sorted(path.name for path in installed.parent.iterdir()) == ["image-gen"]
+
+
+LOCK_HOLDER_SCRIPT = textwrap.dedent(
+    """
+    import fcntl
+    import sys
+    import time
+    from pathlib import Path
+
+    lock_path, ready = Path(sys.argv[1]), Path(sys.argv[2])
+    with lock_path.open("a") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        ready.touch()
+        time.sleep(0.6)
+    """
+)
+
+
+@pytest.mark.asyncio
+async def test_waiting_for_install_lock_does_not_block_event_loop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """另一个进程持有安装锁时，init_builtin_skills 在线程里等待，事件循环上的其他任务照常推进。"""
+    monkeypatch.setattr(svc.sys_config, "save_dir", str(tmp_path))
+    source_dir = tmp_path / "builtin" / "reporter"
+    source_dir.mkdir(parents=True)
+    (source_dir / "SKILL.md").write_text("---\nname: reporter\ndescription: x\n---\n", encoding="utf-8")
+    spec = SimpleNamespace(
+        slug="reporter",
+        source_dir=source_dir,
+        description="x",
+        tool_dependencies=(),
+        mcp_dependencies=(),
+        skill_dependencies=(),
+    )
+    monkeypatch.setattr(svc, "get_builtin_skill_specs", lambda: [spec])
+
+    class FakeRepo:
+        def __init__(self, _db):
+            pass
+
+        async def get_by_slug(self, slug: str):
+            return None
+
+        async def create(self, **kwargs):
+            return SimpleNamespace(**kwargs)
+
+    monkeypatch.setattr(svc, "SkillRepository", FakeRepo)
+    ready = tmp_path / "holder-ready"
+    holder = subprocess.Popen(
+        [sys.executable, "-c", LOCK_HOLDER_SCRIPT, str(tmp_path / ".builtin-skills.lock"), str(ready)]
+    )
+    while not ready.exists():
+        await asyncio.sleep(0.01)
+
+    install = asyncio.create_task(svc.init_builtin_skills(None))
+    started = time.monotonic()
+    await asyncio.sleep(0.05)
+    tick_delay = time.monotonic() - started
+
+    assert tick_delay < 0.3, f"持锁等待阻塞了事件循环 {tick_delay:.2f}s"
+    assert not install.done()
+    assert [item.slug for item in await install] == ["reporter"]
+    assert holder.wait(timeout=10) == 0

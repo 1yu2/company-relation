@@ -5,11 +5,13 @@
 校准：用人工标注的校准集计算 Judge 与人工的一致率和 Cohen's κ（calibration_report）。
 JUDGE_CALIBRATED 为 False 时，judge_correct 照常记录并展示，但 task_pass 记为 not_measured（judge_not_calibrated）；
 是否达标、阈值多少由人决定，确认后再把开关改为 True。
-Judge 输出无法解析（格式错误、拒答）时记为 not_measured，不默认判为通过或失败；调用模型失败直接抛出，按评测侧错误处理。
+Judge 输出无法解析（格式错误、拒答）时记为 not_measured，不默认判为通过或失败；调用模型失败或超过 JUDGE_TIMEOUT_SECONDS
+直接抛出，按评测侧错误（runner_error）处理，不评分，也不计入 Agent 失败。
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -22,6 +24,8 @@ from yuxi.models import select_model
 RUBRIC_VERSION = "open-answer-v1"
 JUDGE_MODEL_SPEC = "deepseek:deepseek-v4-flash"
 JUDGE_CALIBRATED = False
+# 实验的 timeout_seconds 只约束被测 Agent；评分阶段单独限时，避免慢 Judge 长时间占住并发槽和数据库连接。
+JUDGE_TIMEOUT_SECONDS = 60
 RUBRIC = """你是一名严格的评测员。请根据参考答案和评分要点，判断回答是否正确回答了问题。
 判定规则：
 1. 回答必须覆盖全部评分要点；缺少任何一个要点即为不通过。
@@ -43,9 +47,20 @@ PROMPT_TEMPLATE = """{rubric}
 {answer}
 
 只输出一个 JSON 对象，不要输出其他文字：{{"verdict": "pass" 或 "fail", "reason": "一句话理由"}}"""
-_CHECKSUM = hashlib.sha256(f"{RUBRIC}\n{PROMPT_TEMPLATE}\n{JUDGE_MODEL_SPEC}".encode()).hexdigest()[:8]
+
+
+def judge_checksum(rubric: str, template: str, model_spec: str) -> str:
+    """rubric、prompt 模板、Judge 模型三者共同决定评分口径，任何一项变化都会改变校验和。"""
+    return hashlib.sha256(f"{rubric}\n{template}\n{model_spec}".encode()).hexdigest()[:8]
+
+
+_CHECKSUM = judge_checksum(RUBRIC, PROMPT_TEMPLATE, JUDGE_MODEL_SPEC)
 METRIC_VERSION = f"llm-judge-{RUBRIC_VERSION}-{_CHECKSUM}"
 _JSON_OBJECT = re.compile(r"\{.*\}", re.S)
+
+
+class JudgeTimeoutError(RuntimeError):
+    """Judge 超时属于评测侧错误：这题不评分，不计入 Agent 失败。"""
 
 
 async def evaluate_open_answer(
@@ -60,7 +75,13 @@ async def evaluate_open_answer(
         points=list(expected.get("rubric_points") or []),
         answer=str(actual.get("final_answer") or ""),
     )
-    response = await select_model(JUDGE_MODEL_SPEC).call(prompt, stream=False)
+    try:
+        response = await asyncio.wait_for(
+            select_model(JUDGE_MODEL_SPEC).call(prompt, stream=False), timeout=JUDGE_TIMEOUT_SECONDS
+        )
+    except TimeoutError as exc:
+        # 不能原样抛出 TimeoutError：实验服务会把它当成被测 Agent 超时，计入失败。
+        raise JudgeTimeoutError(f"Judge 在 {JUDGE_TIMEOUT_SECONDS} 秒内没有返回") from exc
     verdict = parse_verdict(response.content)
     details = {"judge_model": JUDGE_MODEL_SPEC, "rubric_version": RUBRIC_VERSION, "prompt_checksum": _CHECKSUM}
     if verdict is None:

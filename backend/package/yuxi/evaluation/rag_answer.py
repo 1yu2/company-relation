@@ -36,23 +36,39 @@ def evaluate_rag_answer(
 
     shared = {item["metric_name"]: item for item in evaluate_agent_final_answer(task, actual, trace_events)}
     answer = str(actual.get("final_answer") or "").lower()
-    missing_points = [point for point in expected.get("answer_must_contain", []) if point.lower() not in answer]
-    answer_correct = _metric(
-        "answer_correct",
-        float(not missing_points),
-        "failed" if missing_points else "passed",
-        "answer_point_missing" if missing_points else None,
+    points = list(expected.get("answer_must_contain") or [])
+    missing_points = [point for point in points if point.lower() not in answer]
+    # 没有参考要点就无法判断回答对错：记为不可测，不能因为“没有缺失的要点”而判为通过。
+    answer_correct = (
+        _metric("answer_correct", None, "not_measured", "answer_reference_missing")
+        if not points
+        else _metric(
+            "answer_correct",
+            float(not missing_points),
+            "failed" if missing_points else "passed",
+            "answer_point_missing" if missing_points else None,
+        )
     )
     result = [_restamp(shared["tool_safety"]), _restamp(shared["tool_selection"]), answer_correct]
-    retrieval = [
-        _measured("hit_at_k", hit_at_k(ranking, relevant, k)),
-        _measured("recall_at_k", RetrievalMetrics.recall_at_k(ranking, relevant, k)),
-        _measured("mrr", reciprocal_rank(ranking, relevant)),
-        _measured("ndcg_at_k", ndcg_at_k(ranking, relevant, k)),
-    ]
+    # 没有标注相关片段时检索指标同样不可测，否则会记成 0 分。
+    retrieval = (
+        [
+            _measured("hit_at_k", hit_at_k(ranking, relevant, k)),
+            _measured("recall_at_k", RetrievalMetrics.recall_at_k(ranking, relevant, k)),
+            _measured("mrr", reciprocal_rank(ranking, relevant)),
+            _measured("ndcg_at_k", ndcg_at_k(ranking, relevant, k)),
+        ]
+        if relevant
+        else [
+            _metric(name, None, "not_measured", "relevant_chunks_missing")
+            for name in ("hit_at_k", "recall_at_k", "mrr", "ndcg_at_k")
+        ]
+    )
 
     failure = next((item for item in result if item["status"] == "failed"), None)
-    if failure is None:
+    if failure is None and answer_correct["status"] == "not_measured":
+        task_pass = _metric("task_pass", None, "not_measured", answer_correct["reason_code"])
+    elif failure is None:
         task_pass = _metric("task_pass", 1.0, "passed", None)
     elif failure is answer_correct:
         task_pass = _metric("task_pass", 0.0, "failed", _failure_stage(retrieval_calls, ranking, relevant, k))

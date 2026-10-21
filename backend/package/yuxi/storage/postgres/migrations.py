@@ -11,6 +11,15 @@ from sqlalchemy import text
 MIGRATION_TABLE = "yuxi_schema_migrations"
 MIGRATION_LOCK_KEY = "yuxi-schema-migrations"
 BASELINE_VERSION = 1
+# (版本号, 名称, SQL)：按版本号升序执行，每个版本只执行一次；启动时 create_all 已先建好表。
+MIGRATIONS: list[tuple[int, str, str]] = [
+    (
+        2,
+        "platform-eval-evaluator-version-text",
+        # 多协议数据集的评分版本按协议拼接，长度会超过 varchar(64)；各协议明细仍在 captured.evaluators。
+        "ALTER TABLE platform_eval_experiments ALTER COLUMN evaluator_version TYPE TEXT",
+    ),
+]
 
 
 async def run_versioned_migrations(engine) -> None:
@@ -37,4 +46,12 @@ async def run_versioned_migrations(engine) -> None:
             await connection.execute(
                 text(f"INSERT INTO {MIGRATION_TABLE} (version, name) VALUES (:version, :name)"),
                 {"version": BASELINE_VERSION, "name": "startup-ddl-baseline"},
+            )
+        for version, name, statement in MIGRATIONS:
+            if version in applied_versions:
+                continue
+            await connection.execute(text(statement))
+            await connection.execute(
+                text(f"INSERT INTO {MIGRATION_TABLE} (version, name) VALUES (:version, :name)"),
+                {"version": version, "name": name},
             )

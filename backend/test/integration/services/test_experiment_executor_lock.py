@@ -61,3 +61,33 @@ async def test_executor_stops_within_one_heartbeat_after_losing_lock():
     # 执行者自身没有残留的取消请求，后续标记 FAILED 等收尾操作可以正常 await。
     assert asyncio.current_task().cancelling() == 0
     await asyncio.sleep(0)
+
+
+async def test_external_cancel_survives_concurrent_lock_loss():
+    """worker 关闭先取消执行者，执行者清理期间锁续期又失败：仍按取消向外传播，而不是变成锁丢失异常。
+
+    取消向外传播时 ARQ 按取消处理，实验保持 RUNNING，由下次启动恢复续跑；变成普通异常则会被标记为 FAILED。
+    """
+    experiment_id = f"pytest-{uuid.uuid4().hex}"
+    redis = await get_redis_client()
+    cleanup_started = asyncio.Event()
+
+    async def executor():
+        async with experiment_executor_lock(experiment_id, ttl_seconds=3):
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                cleanup_started.set()
+                # 模拟取消后的清理（中止 AgentRun 等）；期间心跳（每 1 秒）续期失败。
+                await asyncio.sleep(2)
+                raise
+
+    task = asyncio.create_task(executor())
+    await asyncio.sleep(0.1)
+    task.cancel()
+    await cleanup_started.wait()
+    await redis.delete(f"platform-eval:executor:{experiment_id}")
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert task.cancelled()

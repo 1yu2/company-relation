@@ -1788,7 +1788,8 @@ async def init_builtin_skills(db: AsyncSession, *, created_by: str = "system") -
         if existing and not is_builtin_skill(existing):
             raise ValueError(f"内置 skill '{slug}' 与已存在的非内置 skill 冲突")
 
-        _install_builtin_skill_dir(get_skills_root_dir() / slug, Path(spec["source_dir"]))
+        # 加锁和目录复制都是阻塞操作，另一个进程持锁时可能等待整个安装过程；放到线程里，不阻塞事件循环。
+        await asyncio.to_thread(_install_builtin_skill_dir, get_skills_root_dir() / slug, Path(spec["source_dir"]))
 
         if existing:
             if existing.name != spec["name"] or existing.description != spec["description"]:
