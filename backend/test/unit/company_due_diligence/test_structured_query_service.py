@@ -168,6 +168,38 @@ async def test_shareholder_query_distinguishes_history_and_truncation():
     assert historical.relations[0].relation_type == "had_shareholder"
 
 
+async def test_shareholder_capital_totals_convert_wan_text_to_yuan():
+    """股东认缴/实缴总额按原文“万人民币”换算为元，币种取原文而不是源币种代码字段。"""
+    row = _shareholder_row(1, False)
+    bare_wan = _shareholder_row(2, False)
+    bare_wan["total_should_capi"] = "3.5万"
+
+    result = await _service(FakeRepositories([row, bare_wan])).query(
+        StructuredQueryRequest(eid="eid-1", query_type=StructuredQueryType.CURRENT_SHAREHOLDERS)
+    )
+
+    facts = {(fact.subject_id, fact.fact_type): fact for fact in result.facts}
+    holder, bare_holder = (relation.target_entity_id for relation in result.relations)
+    subscribed = facts[(holder, "subscribed_capital_total")]
+    assert (subscribed.normalized_value, subscribed.unit, subscribed.display_value) == (
+        "1005000",
+        "CNY",
+        "100.5万人民币",
+    )
+    paid = facts[(holder, "paid_capital_total")]
+    assert (paid.normalized_value, paid.unit) == ("800000", "CNY")
+    assert result.relations[0].properties == {
+        "ownership_ratio": "0.125",
+        "subscribed_capital": "1005000",
+        "subscribed_currency": "CNY",
+        "paid_capital": "800000",
+        "paid_currency": "CNY",
+    }
+    # 原文只有“万”没有币种时，币种回落到源币种代码字段。
+    bare_subscribed = facts[(bare_holder, "subscribed_capital_total")]
+    assert (bare_subscribed.normalized_value, bare_subscribed.unit) == ("35000", "XXX")
+
+
 async def test_contribution_json_keeps_amount_type_and_date():
     """认缴和实缴 JSON 应按源字段完整映射且保留出资方式。"""
     row = _shareholder_row(1, False)
@@ -255,10 +287,10 @@ def _shareholder_row(record_id: int, is_history: bool) -> dict:
         "stock_id": f"shareholder-{record_id}",
         "stock_type": "企业",
         "stock_percent": "12.5%",
-        "total_real_capi_new": "80",
+        "total_real_capi": "80万人民币",
         "real_currency_unit": "CNY",
-        "total_should_capi_new": "100",
-        "should_currency_unit": "CNY",
+        "total_should_capi": "100.5万人民币",
+        "should_currency_unit": "XXX",
         "should_capi_items": "[]",
         "real_capi_items": "[]",
         "start_date": "2024-01-01",

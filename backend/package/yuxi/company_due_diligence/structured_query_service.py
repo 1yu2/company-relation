@@ -390,8 +390,12 @@ def _map_shareholders(
             source_ids=[source_id],
         )
         ratio = _safe_percentage(row.get("stock_percent"), "stock_percent", payload)
-        subscribed = _safe_decimal(row.get("total_should_capi_new"), "total_should_capi_new", payload)
-        paid = _safe_decimal(row.get("total_real_capi_new"), "total_real_capi_new", payload)
+        # 源数据核对（2026-10-21）：total_*_capi 是带单位原文（如“12600.2912万人民币”），与 total_*_capi_new（万元）
+        # 数值一致；*_currency_unit 只是币种代码（CNY/XXX），不是数量单位，所以按原文换算到元。
+        subscribed, subscribed_currency = _safe_amount(row.get("total_should_capi"), "total_should_capi", payload)
+        subscribed_currency = subscribed_currency or _text(row.get("should_currency_unit"))
+        paid, paid_currency = _safe_amount(row.get("total_real_capi"), "total_real_capi", payload)
+        paid_currency = paid_currency or _text(row.get("real_currency_unit"))
         relation_type = "had_shareholder" if bool(row.get("is_history")) else "has_shareholder"
         relation_id = build_stable_id("relation", relation_type, eid, shareholder_id, record_key)
         payload.relations[relation_id] = Relation(
@@ -404,9 +408,9 @@ def _map_shareholders(
                 for key, value in {
                     "ownership_ratio": ratio,
                     "subscribed_capital": subscribed,
-                    "subscribed_currency": _text(row.get("should_currency_unit")),
+                    "subscribed_currency": subscribed_currency,
                     "paid_capital": paid,
-                    "paid_currency": _text(row.get("real_currency_unit")),
+                    "paid_currency": paid_currency,
                 }.items()
                 if value is not None
             },
@@ -422,8 +426,8 @@ def _map_shareholders(
             "subscribed_capital_total",
             subscribed,
             source_id,
-            display=row.get("total_should_capi_new"),
-            unit=_text(row.get("should_currency_unit")),
+            display=row.get("total_should_capi"),
+            unit=subscribed_currency,
         )
         _add_fact(
             payload,
@@ -431,8 +435,8 @@ def _map_shareholders(
             "paid_capital_total",
             paid,
             source_id,
-            display=row.get("total_real_capi_new"),
-            unit=_text(row.get("real_currency_unit")),
+            display=row.get("total_real_capi"),
+            unit=paid_currency,
         )
         if query_type == StructuredQueryType.SHAREHOLDER_CONTRIBUTIONS:
             _map_contribution_items(payload, shareholder_id, source_id, row)
