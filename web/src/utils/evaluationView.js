@@ -53,7 +53,8 @@ const REASON_LABELS = {
   retrieval_miss: '检索未命中',
   ranking_miss: '相关内容排名靠后',
   generation_error: '回答生成错误',
-  judge_failed: 'Judge 调用失败',
+  // judge_failed 是 Judge 判定回答不通过；Judge 调用失败或超时走评测侧错误（runner_error），不会产生这个原因码
+  judge_failed: 'Judge 判定未通过',
   judge_output_invalid: 'Judge 输出无效',
   judge_not_calibrated: 'Judge 尚未完成人工校准',
   run_failed: 'Run 运行失败',

@@ -131,6 +131,8 @@ test('P1 指标使用中文名，检索层排在结果层之后和轨迹层之�
     'judge_not_calibrated'
   ])
     assert.match(reasonLabel(code), /[\u4e00-\u9fff]/)
+  // judge_failed 表示 Judge 判定回答不通过，不是调用失败（调用失败按评测侧错误处理，不评分）
+  assert.equal(reasonLabel('judge_failed'), 'Judge 判定未通过')
 })
 
 test('仅有故障注入样本时展示恢复率，恢复为零仍需显示', () => {
