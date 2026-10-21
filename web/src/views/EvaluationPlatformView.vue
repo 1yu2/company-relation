@@ -2,12 +2,14 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { CircleAlert, GitCompareArrows, Play, RefreshCw, Square } from 'lucide-vue-next'
 import PageHeader from '@/components/shared/PageHeader.vue'
+import EvaluationFailurePool from '@/components/evaluation/EvaluationFailurePool.vue'
 import { evaluationApi } from '@/apis/evaluation_api'
 import {
   buildLatencyRows,
   buildMetricRows,
   buildRolloutRows,
   experimentIdentity,
+  faultRecoveryStat,
   formatCount,
   formatMs,
   formatPValue,
@@ -21,6 +23,7 @@ import {
 } from '@/utils/evaluationView'
 
 const POLL_INTERVAL_MS = 5000
+const activeTab = ref('experiments')
 
 const experiments = ref([])
 const selectedId = ref('')
@@ -46,9 +49,11 @@ const visibleRows = computed(() =>
 )
 const metricRows = computed(() => buildMetricRows(detail.value?.metric_breakdown))
 const resultMetricRows = computed(() => metricRows.value.filter((row) => row.layer === 'result'))
+const retrievalMetricRows = computed(() => metricRows.value.filter((row) => row.layer === 'retrieval'))
 const trajectoryMetricRows = computed(() =>
-  metricRows.value.filter((row) => row.layer !== 'result')
+  metricRows.value.filter((row) => row.layer === 'trajectory')
 )
+const otherMetricRows = computed(() => metricRows.value.filter((row) => row.layer === 'other'))
 const performance = computed(() => detail.value?.performance || {})
 const latencyRows = computed(() => buildLatencyRows(performance.value))
 const breakdown = computed(() => detail.value?.metric_breakdown || {})
@@ -89,8 +94,11 @@ const keyStats = computed(() => {
   const stats = [
     {
       label: '任务成功率',
-      ...taskSuccessStat(detail.value?.aggregate, detail.value?.max_attempts, counts)
+      ...taskSuccessStat(
+        detail.value?.aggregate, detail.value?.max_attempts, counts, taskPass.reason_counts
+      )
     },
+    faultRecoveryStat(detail.value?.fault_recovery),
     answerValue && {
       label: '答案值正确率',
       value: formatPercent(answerValue.pass_rate),
@@ -289,16 +297,40 @@ onBeforeUnmount(() => clearTimeout(pollTimer))
   <div class="evaluation-page">
     <PageHeader title="Agent 评测" :show-border="true">
       <template #actions>
-        <a-button class="lucide-icon-btn" :loading="loading" @click="refresh">
+        <a-button
+          v-if="activeTab === 'experiments'"
+          class="lucide-icon-btn"
+          :loading="loading"
+          @click="refresh"
+        >
           <RefreshCw v-if="!loading" :size="16" /> 刷新
         </a-button>
       </template>
     </PageHeader>
 
     <div class="evaluation-content">
-      <p v-if="error" class="error-banner" role="alert"><CircleAlert :size="16" /> {{ error }}</p>
+      <div class="view-tabs" role="tablist" aria-label="评测视图">
+        <button
+          id="experiments-tab" role="tab" :aria-selected="activeTab === 'experiments'"
+          aria-controls="experiments-panel" @click="activeTab = 'experiments'"
+        >实验</button>
+        <button
+          id="findings-tab" role="tab" :aria-selected="activeTab === 'findings'"
+          aria-controls="findings-panel" @click="activeTab = 'findings'"
+        >失败池</button>
+      </div>
+      <EvaluationFailurePool
+        v-if="activeTab === 'findings'" id="findings-panel"
+        role="tabpanel" aria-labelledby="findings-tab"
+      />
+      <p v-if="error && activeTab === 'experiments'" class="error-banner" role="alert">
+        <CircleAlert :size="16" /> {{ error }}
+      </p>
 
-      <div class="evaluation-layout">
+      <div
+        v-show="activeTab === 'experiments'" id="experiments-panel" class="evaluation-layout"
+        role="tabpanel" aria-labelledby="experiments-tab"
+      >
         <aside class="experiment-panel" aria-label="实验列表">
           <div class="panel-title">
             <h2>实验</h2>
@@ -399,6 +431,7 @@ onBeforeUnmount(() => clearTimeout(pollTimer))
               <span class="muted">{{ stat.label }}</span>
               <strong>{{ stat.value }}</strong>
               <small class="muted">{{ stat.hint }}</small>
+              <small v-if="stat.notice" class="calibration-note">{{ stat.notice }}</small>
             </div>
           </section>
 
@@ -407,11 +440,13 @@ onBeforeUnmount(() => clearTimeout(pollTimer))
             <div
               v-for="group in [
                 { title: '结果层', hint: '全部通过才算任务成功', rows: resultMetricRows },
+                { title: '检索层', hint: '反映相关内容的命中、召回与排序', rows: retrievalMetricRows },
                 {
                   title: '轨迹层',
                   hint: '只反映过程质量，不影响任务成功',
                   rows: trajectoryMetricRows
-                }
+                },
+                { title: '其他', hint: '', rows: otherMetricRows }
               ]"
               :key="group.title"
               class="metric-group"
@@ -885,6 +920,32 @@ onBeforeUnmount(() => clearTimeout(pollTimer))
   flex-direction: column;
   gap: 16px;
   padding: var(--page-padding);
+}
+.view-tabs {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid var(--gray-150);
+  button {
+    padding: 8px 16px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    &[aria-selected='true'] {
+      border-bottom-color: var(--main-color);
+      color: var(--main-color);
+    }
+    &:hover {
+      background: var(--gray-25);
+    }
+    &:focus-visible {
+      outline: 2px solid var(--main-color);
+    }
+  }
+}
+.calibration-note {
+  color: var(--color-warning-900);
 }
 .evaluation-layout {
   display: grid;

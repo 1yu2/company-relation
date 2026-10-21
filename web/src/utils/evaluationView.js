@@ -10,6 +10,14 @@ export const METRIC_META = {
   tool_selection: { label: '按要求调用工具', layer: 'result' },
   answer_value: { label: '答案值正确', layer: 'result' },
   answer_format: { label: '答案格式符合', layer: 'result' },
+  failure_reported: { label: '如实报告失败', layer: 'result' },
+  answer_correct: { label: '回答正确', layer: 'result' },
+  judge_correct: { label: 'Judge 判定正确', layer: 'result' },
+  hit_at_k: { label: '前 K 条命中率', layer: 'retrieval' },
+  recall_at_k: { label: '前 K 条召回率', layer: 'retrieval' },
+  mrr: { label: '平均倒数排名', layer: 'retrieval' },
+  ndcg_at_k: { label: '前 K 条归一化折损增益', layer: 'retrieval' },
+  fault_injected: { label: '故障注入占比', layer: 'trajectory' },
   tool_call_budget: { label: '工具调用不超预算', layer: 'trajectory' },
   loop_detected: { label: '无重复调用循环', layer: 'trajectory' },
   duplicate_call_rate: { label: '重复调用占比', layer: 'trajectory' },
@@ -36,7 +44,22 @@ const REASON_LABELS = {
   agent_run_interrupted: 'Agent 运行中断',
   agent_run_rejected: 'Agent 拒绝执行',
   expected_answer_missing: '题目缺少期望答案',
-  answer_value_incorrect: '答案错误，未评格式'
+  answer_value_incorrect: '答案错误，未评格式',
+  failure_not_reported: '未如实报告失败',
+  answer_point_missing: '缺少答案要点',
+  answer_reference_missing: '缺少答案参考',
+  relevant_chunks_missing: '缺少相关分块标注',
+  retrieval_not_called: '未调用检索',
+  retrieval_miss: '检索未命中',
+  ranking_miss: '相关内容排名靠后',
+  generation_error: '回答生成错误',
+  judge_failed: 'Judge 调用失败',
+  judge_output_invalid: 'Judge 输出无效',
+  judge_not_calibrated: 'Judge 尚未完成人工校准',
+  run_failed: 'Run 运行失败',
+  final_answer_missing: '缺少最终回答',
+  tool_error: '工具报错',
+  user_disliked: '用户点踩'
 }
 
 const STATUS_META = {
@@ -53,7 +76,9 @@ const STATUS_META = {
   passed: { label: '通过', tone: 'success' },
   failed: { label: '未通过', tone: 'error' },
   not_measured: { label: '未评分', tone: 'neutral' },
-  unavailable: { label: '数据不可用', tone: 'warning' }
+  unavailable: { label: '数据不可用', tone: 'warning' },
+  pending_review: { label: '待复核', tone: 'warning' },
+  promoted: { label: '已生成草稿', tone: 'neutral' }
 }
 
 const ACTIVE_STATUSES = new Set(['QUEUED', 'RUNNING', 'AGGREGATING', 'CANCELLING'])
@@ -90,18 +115,35 @@ export const formatPValue = (value) => {
  * 任务成功率卡片：按题计算的 pass@1（每题多次尝试先取平均，再对题平均），而不是按尝试次数统计。
  * 超时等 Agent 失败已由后端计为未通过；只有评测侧错误没有评分，单独说明题数，不混入分母。
  */
-export const taskSuccessStat = (aggregate, maxAttempts, taskPassCounts) => {
+export const taskSuccessStat = (aggregate, maxAttempts, taskPassCounts, reasonCounts = {}) => {
   const measured = aggregate?.measured_task_count ?? 0
   const unscored = aggregate?.not_measured_tasks ?? 0
+  const uncalibrated = reasonCounts.judge_not_calibrated || 0
+  const attempts = Object.values(taskPassCounts || {}).reduce((sum, count) => sum + count, 0)
   const hint =
     (maxAttempts || 1) > 1
       ? `${measured} 题 · 每题 ${maxAttempts} 次尝试取平均`
       : `${taskPassCounts?.passed || 0} / ${measured} 题通过`
   return {
     value: formatPercent(aggregate?.['pass@1']),
-    hint: unscored ? `${hint} · ${unscored} 题因评测侧错误未评分` : hint
+    hint: unscored
+      ? `${hint} · ${unscored} 题${uncalibrated ? '' : '因评测侧错误'}未评分`
+      : hint,
+    ...(uncalibrated > attempts / 2
+      ? { notice: 'LLM Judge 尚未完成人工校准，开放式题不计入通过率' }
+      : {})
   }
 }
+
+/** 只有实际注入故障的实验才显示恢复率，直接使用后端汇总口径。 */
+export const faultRecoveryStat = (recovery) =>
+  recovery?.injected > 0
+    ? {
+        label: '失败恢复率',
+        value: `${recovery.recovered}/${recovery.injected}`,
+        hint: formatPercent(recovery.rate)
+      }
+    : null
 
 /** 从实验快照中取页面需要的身份信息：Agent、实际模型、数据集版本和评分器。 */
 export const experimentIdentity = (experiment) => {
@@ -154,9 +196,9 @@ export const buildRolloutRows = (experiment, tasksById) => {
     )
 }
 
-/** 指标明细按 结果层 → 轨迹层 排序，未登记的指标排在最后。 */
+/** 指标明细按 结果层 → 检索层 → 轨迹层 排序，未登记的指标排在最后。 */
 export const buildMetricRows = (breakdown) => {
-  const order = ['result', 'trajectory']
+  const order = ['result', 'retrieval', 'trajectory']
   return Object.entries(breakdown || {})
     .filter(([name]) => METRIC_META[name]?.layer !== 'summary')
     .map(([name, item]) => ({

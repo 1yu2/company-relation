@@ -74,6 +74,9 @@ api uv run --group dev ruff format --check \
   server/routers/system_router.py \
   server/utils/lifespan.py
 web pnpm test:unit
+web pnpm exec prettier --check \
+  test/unit/evaluationView.test.js \
+  src/components/evaluation/EvaluationFailurePool.vue
 web pnpm exec eslint src
 web pnpm run build
 

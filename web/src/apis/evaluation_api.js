@@ -5,6 +5,16 @@ import { apiGet, apiPost } from './base'
  * 所有来源（Agent/Tool/MCP、RAG、Graph）使用同一套资源查询协议。
  */
 export const evaluationApi = {
+  listOnlineFindings: ({ status = '', limit = 500 } = {}) => {
+    const params = new URLSearchParams({ limit: String(limit) })
+    if (status) params.set('status', status)
+    return apiGet(`/api/platform-evaluations/online-findings?${params.toString()}`)
+  },
+  promoteOnlineFindings: (datasetId, findingIds) =>
+    apiPost('/api/platform-evaluations/online-findings/promote', {
+      dataset_id: datasetId,
+      finding_ids: findingIds
+    }),
   listDatasets: (sourceKind, { limit = 50, cursor = '' } = {}) => {
     const params = new URLSearchParams({ limit: String(limit) })
     if (sourceKind) params.set('source_kind', sourceKind)
