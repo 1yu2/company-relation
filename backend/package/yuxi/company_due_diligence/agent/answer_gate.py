@@ -5,7 +5,7 @@
 
 - G1 ``citation_unknown``：引用 ID 不在本次工具结果中，或引用格式无法解析。
 - G2 ``citation_value_mismatch``：被引用事实的值没有出现在同一句中。只容忍千分位、
-  百分比与小数、万元与元三种格式差异；数值按句中写法的小数位四舍五入后比较。
+  百分比与小数、万元与元、日期 ``YYYY-MM-DD`` 与 ``YYYY年M月D日`` 四种格式差异；数值按句中写法的小数位四舍五入后比较。
 - G3 ``citation_subject_mismatch``：被引用事实的主体既不是目标企业，也不是与目标企业
   直接相连的关联主体（如股东）。
 - G4 只报告：只引用了证据（E）的句子使用确定性措辞。
@@ -25,6 +25,7 @@ _LEADING_CITATIONS = re.compile(r"^\s*(?:［[^］]*］\s*)+")
 # 千分位只接受英文逗号三位分组，避免把“10，20”这类列举当成一个数。
 _NUMBER = re.compile(r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(%|％|万)?")
 _SCALES = {"%": Decimal("0.01"), "％": Decimal("0.01"), "万": Decimal(10000)}
+_ISO_DATE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 _DEFINITE_WORDING = ("确认", "确定", "证实", "毫无疑问")
 
 
@@ -171,6 +172,9 @@ def _value_in_sentence(fact: dict, text: str, *, min_digits: int = 0) -> bool:
     literals = {
         re.sub(r"\s", "", str(v)) for v in (fact.get("display_value"), fact["normalized_value"]) if v is not None
     }
+    if date := _ISO_DATE.fullmatch(str(fact["normalized_value"])):
+        year, month, day = (int(part) for part in date.groups())
+        literals |= {f"{year}年{month}月{day}日", f"{year}年{month:02d}月{day:02d}日"}
     if any(len(literal) >= 2 and literal in compact for literal in literals):
         return True
     try:

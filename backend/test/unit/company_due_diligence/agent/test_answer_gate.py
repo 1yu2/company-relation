@@ -73,6 +73,19 @@ def test_value_tolerates_thousands_separator_percent_and_wan_yuan():
     assert validate_answer_citations("持股1.3%［F:fact:h］。", half, EID).passed
 
 
+def test_date_tolerates_chinese_format_but_not_wrong_day():
+    """G2 日期容忍：2014-05-22 可写作 2014年5月22日 或 2014年05月22日，日期写错仍拦。"""
+    results = [{"facts": [{"fact_id": "fact:date", "subject_id": EID, "normalized_value": "2014-05-22"}]}]
+
+    for answer in (
+        "成立于2014-05-22［F:fact:date］。",
+        "成立于2014年5月22日［F:fact:date］。",
+        "成立于2014年05月22日［F:fact:date］。",
+    ):
+        assert validate_answer_citations(answer, results, EID).passed, answer
+    assert not validate_answer_citations("成立于2014年5月23日［F:fact:date］。", results, EID).passed
+
+
 def test_wrong_value_or_unit_is_blocked():
     """G2：数值写错、单位写错（万元写成元）或换了人名都拦。"""
     assert _codes("注册资本为30299.5606元［F:fact:cap］。") == ["citation_value_mismatch"]
