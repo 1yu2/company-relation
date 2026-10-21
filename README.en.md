@@ -33,6 +33,7 @@ Navigation: [Introduction](https://xerrors.github.io/Yuxi/) ｜ [Quick Start](ht
 - 🕸️ **Knowledge graph** — Build, visualize, and retrieve entity-relation graphs inside Milvus knowledge bases, then fuse graph hits with chunk retrieval for agent reasoning.
 - 🏢 **Multi-tenancy & permissions** — User / department-level access control, unified model provider configuration, and API Key authentication for external system integration.
 - ⚙️ **Platform & engineering** — Vue + FastAPI architecture, ready-to-run Docker Compose deployment, dark mode, a lightweight LITE startup mode, and production-grade orchestration.
+- 📏 **Agent evaluation** — Reproducible, versioned datasets run through the real AgentRun pipeline, with layered metrics (pass@1 / pass@k / pass^k, retrieval, trajectory, fault recovery), configuration snapshots, paired comparison with McNemar, a regression gate (`make eval-gate`), and an online-sampling failure pool. See [Agent Evaluation](#agent-evaluation).
 
 ## Tech Stack
 
@@ -46,6 +47,18 @@ Navigation: [Introduction](https://xerrors.github.io/Yuxi/) ｜ [Quick Start](ht
 
 
 ![image-20260606190609377](https://xerrors.oss-cn-shanghai.aliyuncs.com/github/image-20260606190609377.png)
+
+## Agent Evaluation
+
+The platform evaluates agents end to end through the same AgentRun pipeline used in chat (ARQ worker → LangGraph → sandbox):
+
+- **Datasets** are versioned and immutable once published; tasks still under review (`pending_review`) or whose expectations were generated from the system's own output (`source_generated`) cannot be published, and published versions can be retired.
+- **Experiments** run in the background with configurable concurrency, commit per rollout, resume after interruption, and cascade cancellation to in-flight runs.
+- **Scoring protocols**: code tasks, fault injection, knowledge-base QA (Hit@K / MRR / nDCG@K with failure attribution), open answers judged by a versioned LLM Judge (excluded from pass rates until human-calibrated), and company due diligence.
+- **Reproducibility**: each experiment snapshots the resolved model, prompt/config checksums, tools, dataset version, evaluator versions and code checksum; runs pin the snapshot model and refuse to run if an evaluator changed after creation.
+- **Comparison and gate**: paired per-task comparison (fixed / broken, McNemar, latency and token deltas), refused across different datasets or scoring versions; `make eval-gate BASE=<id> CANDIDATE=<id>` applies noise-derived thresholds.
+
+Use the `/evaluation` page, import datasets as described in [scripts/eval/datasets/README.md](scripts/eval/datasets/README.md), and run `make verify` before opening a PR (CI runs the same checks). Current local baselines and their experiment IDs are listed in the Chinese [README](README.md#agent-评测体系); they come from single local runs and do not represent production accuracy or capacity.
 
 ## Quick Start
 

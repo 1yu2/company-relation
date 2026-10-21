@@ -1,6 +1,10 @@
 # 智能体评估
 
-Yuxi 的智能体评估用于回答一个具体问题：某个 Agent 在一组固定任务上能不能稳定完成工作。它不在 Yuxi 内部维护评估数据集、评分规则或对比报表，而是把这些能力交给 Langfuse；Yuxi 只负责按真实 Agent 运行链路执行每条样例，并把结果回写到 Langfuse experiment。
+::: tip 两种评估方式
+Yuxi 现在有两条评估路径：本页介绍的 **Langfuse dataset experiment**（数据集与评分都在 Langfuse 中维护），以及平台内置的 **Agent 评测体系**（`/evaluation` 页面；数据集、评分协议、对比与回归门禁都在 Yuxi 内部维护，见仓库 README 的“Agent 评测体系”一节与 `scripts/eval/datasets/README.md`）。需要可复现的逐题对比与回归门禁时，使用平台内置评测。
+:::
+
+Yuxi 的智能体评估用于回答一个具体问题：某个 Agent 在一组固定任务上能不能稳定完成工作。本页介绍的流程不在 Yuxi 内部维护评估数据集、评分规则或对比报表，而是把这些能力交给 Langfuse；Yuxi 只负责按真实 Agent 运行链路执行每条样例，并把结果回写到 Langfuse experiment。
 
 ## 适用边界
 
