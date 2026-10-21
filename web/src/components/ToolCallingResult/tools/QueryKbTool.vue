@@ -10,7 +10,8 @@
       </div>
     </template>
     <template #result="{ resultContent }">
-      <div class="query-kb-result">
+      <pre v-if="toolCall.status === 'error'" class="query-kb-error">{{ resultContent }}</pre>
+      <div v-else class="query-kb-result">
         <KbResultGroupedList
           v-if="parsedResult(resultContent).chunks.length > 0"
           :chunks="parsedResult(resultContent).chunks"
@@ -198,6 +199,17 @@ const getReferenceLabel = (reference, index) => {
 </script>
 
 <style scoped lang="less">
+.query-kb-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--gray-25);
+  color: var(--color-error-500);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .query-kb-result {
   background: var(--gray-0);
   border-radius: 8px;
