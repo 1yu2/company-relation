@@ -252,11 +252,7 @@ class PlatformEvaluationService:
         config_snapshot = redact_value(dict(data.get("config_snapshot") or {}))
         if "pricing" in config_snapshot:
             config_snapshot["pricing"] = validate_pricing(config_snapshot["pricing"])
-        evaluator_versions = (
-            {task.protocol: CDD_METRIC_VERSION for task in tasks}
-            if runner == "company_due_diligence"
-            else {task.protocol: PROTOCOL_EVALUATORS[task.protocol][1] for task in tasks}
-        )
+        evaluator_versions = _evaluator_versions(runner, tasks)
         # 服务端采集的事实统一放在 captured 下，调用方传入的同名字段不会覆盖它。
         captured = capture_common_snapshot(version=version, tasks=tasks, evaluator_versions=evaluator_versions)
         if runner == "agent_run":
@@ -374,12 +370,20 @@ class PlatformEvaluationService:
             return await self.experiment_summary(db=db, experiment_id=experiment_id)
         if experiment.status not in RUNNABLE_EXPERIMENT_STATUSES:
             raise ValueError(f"实验状态不可运行: {experiment.status}")
+        tasks = await repo.list_tasks(experiment.dataset_version_id)
+        # 创建实验之后评分器升级过：继续执行会让新版本的分数挂在旧快照下，对比时按快照判断口径会混比新旧分数。
+        snapshot_versions = (experiment.config_snapshot.get("captured") or {}).get("evaluators")
+        current_versions = _evaluator_versions(experiment.runner, tasks)
+        if snapshot_versions is not None and snapshot_versions != current_versions:
+            raise ValueError(
+                f"评分器版本与创建实验时不同（创建时 {snapshot_versions}，当前 {current_versions}），请重新创建实验"
+            )
         await repo.update_experiment(
             experiment_id, {"status": "RUNNING", "started_at": experiment.started_at or utc_now_naive()}
         )
         await db.commit()
         pending = []
-        for task in await repo.list_tasks(experiment.dataset_version_id):
+        for task in tasks:
             for attempt in range(1, experiment.max_attempts + 1):
                 key = checksum_for(
                     {
@@ -496,6 +500,23 @@ class PlatformEvaluationService:
         )
         rollout_id = rollout.rollout_id
         await db.commit()
+        # 派发前的取消检查与创建 rollout 之间有窗口：取消恰好在这期间完成时看不到这条 rollout。
+        # 创建后再查一次，按取消流程收尾；此后到达的取消能看到这条 RUNNING rollout，由“取消优先”处理。
+        if await _cancel_requested(repo, experiment.experiment_id):
+            await repo.update_rollout(
+                rollout_id,
+                {
+                    "status": "CANCELLED",
+                    "failure_type": "cancelled",
+                    "reason_code": "cancelled",
+                    "finished_at": utc_now_naive(),
+                },
+            )
+            await repo.save_failures(
+                [_failure_row({"reason_code": "cancelled", "metric_name": "task_pass"}, rollout_id, None)]
+            )
+            await db.commit()
+            return
         try:
             if experiment.runner == "fixture":
                 runner = _run_fixture
@@ -747,6 +768,13 @@ async def _rollout_cancelled(repo: PlatformEvaluationRepository, rollout_id: str
     """实验在本题执行期间被取消时，取消优先：丢弃晚到的结果，避免覆盖已写入的取消状态。"""
     rollout = await repo.get_rollout(rollout_id)
     return rollout is not None and rollout.status == "CANCELLED"
+
+
+def _evaluator_versions(runner: str, tasks: list[PlatformEvaluationTask]) -> dict[str, str]:
+    """本实验各协议实际使用的评分器版本；创建实验时写入快照，执行前用它核对评分器是否升级过。"""
+    if runner == "company_due_diligence":
+        return {task.protocol: CDD_METRIC_VERSION for task in tasks}
+    return {task.protocol: PROTOCOL_EVALUATORS[task.protocol][1] for task in tasks}
 
 
 def _scoring_versions(summary: dict[str, Any]) -> set[str]:
