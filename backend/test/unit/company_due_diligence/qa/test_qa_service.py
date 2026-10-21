@@ -381,3 +381,35 @@ async def test_multi_hop_response_keeps_nodes_edge_direction_and_source():
     assert result.data_quality.minimum_confidence == ConfidenceLevel.HIGH
     assert build_source_id("t_partners_alls", "partner-1") in {source.source_id for source in result.sources}
     assert result.projection_versions == {"neo4j": "cdd-test"}
+
+
+@pytest.mark.parametrize(
+    ("target_company_ref", "expected_order"),
+    [
+        # Agent 已从同一句话解析出主体和目标：以调用方为准，主体不能被问题里点名的目标顶替。
+        ({"eid": "eid-target"}, ["eid-context", "eid-target"]),
+        # 只有上下文主体：问题点名的企业作为关系目标。
+        (None, ["eid-context", "腾讯科技（深圳）有限公司"]),
+    ],
+)
+async def test_named_company_in_relation_question_is_target_not_subject(target_company_ref, expected_order):
+    """关系问题中点名的企业是目标；修复前主体被替换成点名企业，变成目标企业到自身的路径查询。"""
+    seen = []
+
+    class Resolver:
+        """记录解析顺序，任何身份都可解析。"""
+
+        async def resolve(self, reference):
+            """按调用顺序记录 eid 或名称。"""
+            seen.append(reference.eid or reference.name)
+            return _resolution()
+
+    await CompanyQuestionService(resolver=Resolver(), workflow=GraphWorkflow()).query(
+        CompanyQuestionRequest(
+            company_ref={"eid": "eid-context"},
+            target_company_ref=target_company_ref,
+            question="它和“腾讯科技（深圳）有限公司”有什么关联路径？",
+        )
+    )
+
+    assert seen == expected_order

@@ -79,7 +79,13 @@ class CompanyQuestionService:
         started_at = time.perf_counter()
         resolved_plan = plan or self._planner.plan(request.question)
         references = extract_company_references(request.question)
-        if references:
+        if references and resolved_plan.use_graph and request.company_ref is not None:
+            # 关系问题已有主体（上下文企业或 Agent 已解析的主体）：问题点名的企业是关系目标，不能顶替主体。
+            # 调用方已给出目标时（Agent 已从同一句话解析出主体和目标）以调用方为准。
+            if request.target_company_ref is None:
+                subject, target = references[:2] if len(references) > 1 else (request.company_ref, references[0])
+                request = request.model_copy(update={"company_ref": subject, "target_company_ref": target})
+        elif references:
             updates = {"company_ref": references[0]}
             if request.target_company_ref is None and resolved_plan.use_graph and len(references) > 1:
                 updates["target_company_ref"] = references[1]
