@@ -876,3 +876,19 @@ def _async_get_file_download(content: bytes, filename: str):
         }
 
     return _impl
+
+
+@pytest.mark.asyncio
+async def test_search_file_without_any_visible_kb_is_empty_result_not_error(monkeypatch) -> None:
+    """没有可访问的知识库是空结果，不是工具失败；点名一个不存在的知识库才是错误（见上面的参数化用例）。"""
+
+    async def no_visible_kbs(_runtime):
+        return []
+
+    monkeypatch.setattr(tools, "_resolve_visible_knowledge_bases_for_query", no_visible_kbs)
+    message = await tools.search_file.ainvoke(
+        {"type": "tool_call", "id": "no-kb", "name": tools.search_file.name, "args": {"query": "q"}}
+    )
+
+    assert message.status == "success"
+    assert "没有可访问的知识库" in message.content

@@ -310,7 +310,8 @@ async def search_file(
 
     visible_kbs = await _resolve_visible_knowledge_bases_for_query(runtime)
     if not visible_kbs:
-        raise ToolException("无法获取当前会话可访问的知识库")
+        # 没有可访问的知识库是正常的空结果（与 list_kbs 一致），不是工具执行失败，不计入工具报错率。
+        return "当前会话没有可访问的知识库"
 
     if kb_name:
         target_kbs = [kb for kb in visible_kbs if kb.get("name") == kb_name]
