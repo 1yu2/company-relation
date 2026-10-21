@@ -27,6 +27,12 @@ from yuxi.company_due_diligence.report.service import due_diligence_report_servi
 from yuxi.company_due_diligence.structured_query_service import structured_query_service
 from yuxi.services.task_service import tasker
 
+_LIST_ALL_QUERY_TYPES = {
+    StructuredQueryType.CURRENT_SHAREHOLDERS,
+    StructuredQueryType.HISTORICAL_SHAREHOLDERS,
+    StructuredQueryType.SHAREHOLDER_CONTRIBUTIONS,
+}
+
 ConfirmedEid = Annotated[
     str,
     Field(
@@ -93,7 +99,18 @@ class QueryFactsInput(DatedCompanyInput):
             "financial_metric_series 财务指标序列"
         )
     )
-    list_all: bool = Field(default=False, description="默认返回前 10 条；明确要求全部时为 true，按既有分页取全")
+    list_all: bool = Field(
+        default=False,
+        description="仅股东类查询可用：默认返回前 10 条，用户明确要求全部股东时为 true，按既有分页取全",
+    )
+
+    @model_validator(mode="after")
+    def limit_list_all_to_shareholders(self):
+        """“全部列出”只对股东类查询开放：单家企业的专利关系最多约 32 万条、许可约 1.3 万条，
+        逐页取全会把数十万条事实塞进模型上下文；股东类最多约 186 条（2026-10-21 源表统计）。"""
+        if self.list_all and self.query_type not in _LIST_ALL_QUERY_TYPES:
+            raise ToolException(f"参数错误：list_all 只支持股东类查询，{self.query_type.value} 请使用默认前 10 条")
+        return self
 
 
 class QueryRelationsInput(CddToolInput):

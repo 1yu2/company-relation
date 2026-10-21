@@ -425,3 +425,12 @@ async def test_registration_does_not_enable_tools_for_agent():
     from yuxi.agents.toolkits.service import resolve_configured_runtime_tools
 
     assert await resolve_configured_runtime_tools(SimpleNamespace(tools=[], mcps=[])) == []
+
+
+@pytest.mark.parametrize("query_type", ["patent_summary", "licenses", "administrative_penalties"])
+async def test_list_all_is_rejected_outside_shareholder_queries(domain, query_type):
+    """list_all 只对股东类开放：单家企业专利关系最多约 32 万条，逐页取全会撑爆模型上下文。"""
+    message = await tool_message(tools.cdd_query_facts, {"eid": "eid-1", "query_type": query_type, "list_all": True})
+
+    assert message.status == "error"
+    assert "list_all 只支持股东类查询" in message.content
