@@ -5,7 +5,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
-METRIC_VERSION = "company-due-diligence-deterministic-v1"
+# v2：多返回的事实不再判错，只要求带有本次响应中存在的来源；v1 要求事实集合完全相等。
+METRIC_VERSION = "company-due-diligence-deterministic-v2"
 
 
 def evaluate_company_due_diligence(task: dict[str, Any], actual: dict[str, Any]) -> list[dict[str, Any]]:
@@ -77,20 +78,36 @@ def evaluate_company_due_diligence(task: dict[str, Any], actual: dict[str, Any])
     expected_facts = [item for item in expected.get("facts", []) if "fact_id" in item]
     actual_facts = actual.get("facts") or []
     if expected_facts:
-        # 同一个 fact_id 的错误数值、单位、业务日期或来源也必须失败。
+        # 期望事实必须全部出现，同一个 fact_id 的错误数值、单位、业务日期或来源都算失败。
+        # 回答多出的事实不算错（问注册资本时顺带返回实缴资本是正确信息），但必须带有本次响应中存在的来源，
+        # 否则就是无法回查的结论。
         fields = ("fact_id", "subject_id", "fact_type", "normalized_value", "unit", "effective_date", "source_id")
         actual_by_id = {item.get("fact_id"): item for item in actual_facts}
-        passed = len(actual_by_id) == len(actual_facts) == len(expected_facts) and all(
+        expected_ids = {item["fact_id"] for item in expected_facts}
+        response_sources = {item["source_id"] for item in actual.get("sources", []) if item.get("source_id")}
+        expected_matched = len(actual_by_id) == len(actual_facts) and all(
             "normalized_value" in item
             and all(actual_by_id.get(item["fact_id"], {}).get(key) == item[key] for key in fields if key in item)
             for item in expected_facts
         )
+        extras_sourced = all(
+            item.get("source_id") in response_sources
+            for item in actual_facts
+            if item.get("fact_id") not in expected_ids
+        )
+        reason = (
+            None
+            if expected_matched and extras_sourced
+            else "fact_value_mismatch"
+            if not expected_matched
+            else "unsourced_extra_fact"
+        )
         quality.append(
             _metric(
                 "fact_correctness",
-                float(passed),
-                "passed" if passed else "failed",
-                None if passed else "fact_value_mismatch",
+                float(reason is None),
+                "passed" if reason is None else "failed",
+                reason,
             )
         )
     else:

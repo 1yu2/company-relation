@@ -81,3 +81,26 @@ def test_unexpected_source_outage_is_unavailable_not_quality_failure():
     }
     assert metrics["task_pass"]["status"] == "unavailable"
     assert metrics["task_pass"]["value"] is None
+
+
+def test_extra_sourced_fact_passes_but_unsourced_or_missing_fact_fails():
+    """v2：多返回且有来源的事实不算错；多返回但来源不在响应中、或缺少期望事实，都判失败。"""
+    extra = {"fact_id": "paid-capital", "normalized_value": 50, "unit": "万元", "source_id": "source-1"}
+    with_extra = _actual()
+    with_extra["facts"].append(extra)
+    unsourced = _actual()
+    unsourced["facts"].append(extra | {"source_id": "not-in-response"})
+    missing = _actual()
+    missing["facts"] = [extra]
+
+    def fact_metric(actual):
+        return {item["metric_name"]: item for item in evaluate_company_due_diligence(_task(), actual)}[
+            "fact_correctness"
+        ]
+
+    assert fact_metric(with_extra)["status"] == "passed"
+    assert (fact_metric(unsourced)["status"], fact_metric(unsourced)["reason_code"]) == (
+        "failed",
+        "unsourced_extra_fact",
+    )
+    assert (fact_metric(missing)["status"], fact_metric(missing)["reason_code"]) == ("failed", "fact_value_mismatch")
