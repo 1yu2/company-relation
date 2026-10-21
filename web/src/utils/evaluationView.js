@@ -127,9 +127,7 @@ export const taskSuccessStat = (aggregate, maxAttempts, taskPassCounts, reasonCo
       : `${taskPassCounts?.passed || 0} / ${measured} 题通过`
   return {
     value: formatPercent(aggregate?.['pass@1']),
-    hint: unscored
-      ? `${hint} · ${unscored} 题${uncalibrated ? '' : '因评测侧错误'}未评分`
-      : hint,
+    hint: unscored ? `${hint} · ${unscored} 题${uncalibrated ? '' : '因评测侧错误'}未评分` : hint,
     ...(uncalibrated > attempts / 2
       ? { notice: 'LLM Judge 尚未完成人工校准，开放式题不计入通过率' }
       : {})

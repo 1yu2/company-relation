@@ -49,7 +49,9 @@ const visibleRows = computed(() =>
 )
 const metricRows = computed(() => buildMetricRows(detail.value?.metric_breakdown))
 const resultMetricRows = computed(() => metricRows.value.filter((row) => row.layer === 'result'))
-const retrievalMetricRows = computed(() => metricRows.value.filter((row) => row.layer === 'retrieval'))
+const retrievalMetricRows = computed(() =>
+  metricRows.value.filter((row) => row.layer === 'retrieval')
+)
 const trajectoryMetricRows = computed(() =>
   metricRows.value.filter((row) => row.layer === 'trajectory')
 )
@@ -95,7 +97,10 @@ const keyStats = computed(() => {
     {
       label: '任务成功率',
       ...taskSuccessStat(
-        detail.value?.aggregate, detail.value?.max_attempts, counts, taskPass.reason_counts
+        detail.value?.aggregate,
+        detail.value?.max_attempts,
+        counts,
+        taskPass.reason_counts
       )
     },
     faultRecoveryStat(detail.value?.fault_recovery),
@@ -311,25 +316,40 @@ onBeforeUnmount(() => clearTimeout(pollTimer))
     <div class="evaluation-content">
       <div class="view-tabs" role="tablist" aria-label="评测视图">
         <button
-          id="experiments-tab" role="tab" :aria-selected="activeTab === 'experiments'"
-          aria-controls="experiments-panel" @click="activeTab = 'experiments'"
-        >实验</button>
+          id="experiments-tab"
+          role="tab"
+          :aria-selected="activeTab === 'experiments'"
+          aria-controls="experiments-panel"
+          @click="activeTab = 'experiments'"
+        >
+          实验
+        </button>
         <button
-          id="findings-tab" role="tab" :aria-selected="activeTab === 'findings'"
-          aria-controls="findings-panel" @click="activeTab = 'findings'"
-        >失败池</button>
+          id="findings-tab"
+          role="tab"
+          :aria-selected="activeTab === 'findings'"
+          aria-controls="findings-panel"
+          @click="activeTab = 'findings'"
+        >
+          失败池
+        </button>
       </div>
       <EvaluationFailurePool
-        v-if="activeTab === 'findings'" id="findings-panel"
-        role="tabpanel" aria-labelledby="findings-tab"
+        v-if="activeTab === 'findings'"
+        id="findings-panel"
+        role="tabpanel"
+        aria-labelledby="findings-tab"
       />
       <p v-if="error && activeTab === 'experiments'" class="error-banner" role="alert">
         <CircleAlert :size="16" /> {{ error }}
       </p>
 
       <div
-        v-show="activeTab === 'experiments'" id="experiments-panel" class="evaluation-layout"
-        role="tabpanel" aria-labelledby="experiments-tab"
+        v-show="activeTab === 'experiments'"
+        id="experiments-panel"
+        class="evaluation-layout"
+        role="tabpanel"
+        aria-labelledby="experiments-tab"
       >
         <aside class="experiment-panel" aria-label="实验列表">
           <div class="panel-title">
@@ -440,7 +460,11 @@ onBeforeUnmount(() => clearTimeout(pollTimer))
             <div
               v-for="group in [
                 { title: '结果层', hint: '全部通过才算任务成功', rows: resultMetricRows },
-                { title: '检索层', hint: '反映相关内容的命中、召回与排序', rows: retrievalMetricRows },
+                {
+                  title: '检索层',
+                  hint: '反映相关内容的命中、召回与排序',
+                  rows: retrievalMetricRows
+                },
                 {
                   title: '轨迹层',
                   hint: '只反映过程质量，不影响任务成功',

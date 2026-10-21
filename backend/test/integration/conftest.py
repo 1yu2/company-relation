@@ -28,8 +28,9 @@ load_dotenv(PROJECT_ROOT / ".env", override=False)
 load_dotenv(PROJECT_ROOT / "test/.env.test", override=False)
 
 API_BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:5050").rstrip("/")
-ADMIN_LOGIN = os.getenv("TEST_USERNAME")
-ADMIN_PASSWORD = os.getenv("TEST_PASSWORD")
+# 与 e2e/conftest.py 一致：未单独配置 TEST_* 时使用 .env 中的 E2E 管理员账号。
+ADMIN_LOGIN = os.getenv("TEST_USERNAME") or os.getenv("E2E_USERNAME")
+ADMIN_PASSWORD = os.getenv("TEST_PASSWORD") or os.getenv("E2E_PASSWORD")
 LITE_MODE = os.getenv("LITE_MODE", "").lower() in {"true", "1"}
 
 _ADMIN_TOKEN_CACHE: str | None = None
@@ -55,7 +56,9 @@ def ensure_live_api_schema():
 
 def _require_admin_credentials() -> tuple[str, str]:
     if not ADMIN_LOGIN or not ADMIN_PASSWORD:
-        pytest.skip("Integration credentials are not configured via TEST_USERNAME / TEST_PASSWORD.")
+        pytest.skip(
+            "Integration credentials are not configured via TEST_USERNAME / TEST_PASSWORD or E2E_USERNAME / E2E_PASSWORD."
+        )
     return ADMIN_LOGIN, ADMIN_PASSWORD
 
 
