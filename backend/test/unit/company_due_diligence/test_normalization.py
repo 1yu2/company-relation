@@ -31,6 +31,12 @@ def test_amount_normalizes_chinese_magnitude_and_currency():
     assert normalize_amount("80.50") == ("80.5", None)
 
 
+@pytest.mark.parametrize("raw,expected", [("30299.5606万元人民币", "302995606"), ("1.5亿元人民币", "150000000")])
+def test_amount_accepts_source_currency_suffix(raw, expected):
+    """源表的元和币种连续后缀应保留倍率和币种。"""
+    assert normalize_amount(raw) == (expected, "CNY")
+
+
 def test_date_and_empty_values_have_consistent_representation():
     """日期和空值应转换为 date 与 None。"""
     assert normalize_optional_text("   ") is None

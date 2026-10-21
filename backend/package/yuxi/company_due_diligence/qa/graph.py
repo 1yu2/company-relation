@@ -9,7 +9,12 @@ from yuxi.company_due_diligence.evidence.query_service import EvidenceQueryServi
 from yuxi.company_due_diligence.graph.query_service import GraphPathQueryService, graph_path_query_service
 from yuxi.company_due_diligence.graph.repository import GraphUnavailableError
 from yuxi.company_due_diligence.graph.schema import GraphPathQuery, GraphPathResult
-from yuxi.company_due_diligence.models import SourceStatus, StructuredQueryRequest, StructuredQueryResult
+from yuxi.company_due_diligence.models import (
+    SourceStatus,
+    StructuredQueryRequest,
+    StructuredQueryResult,
+    StructuredQueryType,
+)
 from yuxi.company_due_diligence.qa.models import (
     CompanyQuestionRequest,
     QueryPlan,
@@ -58,8 +63,13 @@ class QAWorkflow:
         plan: QueryPlan,
     ) -> QAWorkflowResult:
         """执行有限查询计划并把单源故障保留为明确步骤状态。"""
-        tasks = [self._run_structured(eid, query_type, request) for query_type in plan.structured_queries]
-        structured = list(await asyncio.gather(*tasks)) if tasks else []
+        current_shareholders = StructuredQueryType.CURRENT_SHAREHOLDERS in plan.structured_queries
+        tasks = [
+            self._run_structured(eid, query_type, request, current_shareholders)
+            for query_type in plan.structured_queries
+        ]
+        pages = await asyncio.gather(*tasks) if tasks else []
+        structured = [result for query_pages in pages for result in query_pages]
         steps = [_structured_step(result) for result in structured]
 
         graph = None
@@ -124,17 +134,32 @@ class QAWorkflow:
 
         return QAWorkflowResult(structured=structured, graph=graph, evidence=evidence, steps=steps)
 
-    async def _run_structured(self, eid, query_type, request) -> StructuredQueryResult:
-        """执行一个受控结构化查询。"""
-        return await self._structured_service.query(
-            StructuredQueryRequest(
-                eid=eid,
-                query_type=query_type,
-                start_date=request.start_date,
-                end_date=request.as_of,
-                page_size=min(request.top_k, 100),
-            )
+    async def _run_structured(self, eid, query_type, request, current_shareholders) -> list[StructuredQueryResult]:
+        """执行受控查询；明确要求全部当前股东时逐页取完。"""
+        all_shareholders = (
+            current_shareholders
+            and "全部" in request.question
+            and query_type
+            in {
+                StructuredQueryType.CURRENT_SHAREHOLDERS,
+                StructuredQueryType.SHAREHOLDER_CONTRIBUTIONS,
+            }
         )
+        query = StructuredQueryRequest(
+            eid=eid,
+            query_type=query_type,
+            start_date=request.start_date,
+            end_date=request.as_of,
+            page_size=100 if all_shareholders else min(request.top_k, 100),
+            current_shareholders_only=current_shareholders,
+        )
+        results = []
+        while True:
+            result = await self._structured_service.query(query)
+            results.append(result)
+            if not all_shareholders or not result.pagination.has_more:
+                return results
+            query = query.model_copy(update={"page": query.page + 1})
 
 
 def _structured_step(result: StructuredQueryResult) -> QueryStep:

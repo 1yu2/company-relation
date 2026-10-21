@@ -9,6 +9,7 @@ from yuxi.company_due_diligence.models import CompanyReference
 _COMPANY_PATTERN = re.compile(r"([\u4e00-\u9fffA-Za-z0-9（）()·]{2,80}?(?:股份有限公司|有限责任公司|有限公司))")
 _CREDIT_CODE_PATTERN = re.compile(r"(?<![0-9A-Z])([0-9A-Z]{18})(?![0-9A-Z])", re.IGNORECASE)
 _STOCK_CODE_PATTERN = re.compile(r"(?<![0-9A-Z])(\d{6}(?:\.(?:SZ|SH|BJ))?)(?![0-9A-Z])", re.IGNORECASE)
+_NAMED_COMPANY_PATTERN = re.compile(r"(?:企业|公司)\s*[“‘\"']([^”’\"']{1,128})[”’\"']")
 _LEADING_MENTION_WORDS = ("请帮我", "帮我", "请分析", "请调查", "调查", "分析", "查询", "比较", "关于", "与", "和")
 
 
@@ -25,7 +26,12 @@ def extract_company_mentions(message: str) -> list[str]:
 def extract_company_references(message: str) -> list[CompanyReference]:
     """按自然语言出现顺序提取企业名称、信用代码和股票代码。"""
     matches: list[tuple[int, CompanyReference]] = []
+    named_matches = list(_NAMED_COMPANY_PATTERN.finditer(message))
+    matches.extend((match.start(), CompanyReference(name=match.group(1))) for match in named_matches)
     for match in _COMPANY_PATTERN.finditer(message):
+        # 同一段引号内的法律全称只算一次，避免挤占第二家企业的位置。
+        if any(named.start(1) <= match.start() and match.end() <= named.end(1) for named in named_matches):
+            continue
         mention = _normalize_company_mention(match.group(1))
         if mention:
             matches.append((match.start(), CompanyReference(name=mention)))

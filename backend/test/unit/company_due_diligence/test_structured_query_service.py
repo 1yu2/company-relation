@@ -123,6 +123,24 @@ async def test_profile_query_normalizes_values_and_keeps_stable_sources():
     assert first.pagination.returned == 1
 
 
+async def test_registered_capital_uses_source_amount_unit(monkeypatch):
+    """注册资本按源文案换算为元，实收资本单位未确认时不改变。"""
+    repository = FakeRepositories()
+
+    async def get_profile(_eid):
+        """返回带万元单位的固定源行。"""
+        return {**_profile_row(), "regist_capi": "30299.5606万元人民币", "regist_capi_new": "30299.5606"}
+
+    monkeypatch.setattr(repository, "get_profile", get_profile)
+    result = await _service(repository).query(
+        StructuredQueryRequest(eid="eid-1", query_type=StructuredQueryType.REGISTERED_CAPITAL)
+    )
+    facts = {fact.fact_type: fact for fact in result.facts}
+    assert facts["registered_capital"].normalized_value == "302995606"
+    assert facts["registered_capital"].unit == "CNY"
+    assert facts["actual_capital"].normalized_value == "800"
+
+
 async def test_shareholder_query_distinguishes_history_and_truncation():
     """当前和历史股东应使用不同关系类型并用 limit+1 判断截断。"""
     rows = [_shareholder_row(1, False), _shareholder_row(2, False)]

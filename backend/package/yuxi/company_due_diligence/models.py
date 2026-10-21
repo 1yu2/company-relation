@@ -312,6 +312,7 @@ class StructuredQueryRequest(BaseModel):
     page_size: int = Field(default=20, ge=1, le=100)
     sort_order: SortOrder = SortOrder.DESC
     indicator_name: str | None = Field(default=None, max_length=128)
+    current_shareholders_only: bool = False
 
     @field_validator("eid", "indicator_name", mode="before")
     @classmethod

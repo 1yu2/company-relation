@@ -79,3 +79,54 @@ async def test_simple_question_does_not_call_graph_or_evidence():
     assert result.graph is None
     assert result.evidence is None
     assert [step.source for step in result.steps] == ["mysql"]
+
+
+@pytest.mark.parametrize("all_holders,expected", [(False, 10), (True, 125)])
+async def test_current_shareholders_fetch_all_pages_when_requested(all_holders, expected):
+    """默认前十；明确全部时跨越百条分页，并把当前语义传给出资查询。"""
+    calls = []
+
+    class PagedService:
+        """按页返回固定的 125 条事实。"""
+
+        async def query(self, request):
+            """模拟底层分页契约，不复制业务筛选。"""
+            calls.append(request)
+            start = (request.page - 1) * request.page_size
+            end = min(start + request.page_size, 125)
+            return StructuredQueryResult(
+                query_type=request.query_type,
+                eid=request.eid,
+                facts=[
+                    Fact(
+                        fact_id=f"f-{i}",
+                        subject_id="holder",
+                        fact_type="ownership_ratio",
+                        normalized_value="0.01",
+                        source_id="source",
+                    )
+                    for i in range(start, end)
+                ],
+                data_quality=DataQuality(),
+                pagination=Pagination(
+                    page=request.page,
+                    page_size=request.page_size,
+                    returned=end - start,
+                    has_more=end < 125,
+                    truncated=end < 125,
+                ),
+                latency=LatencyBreakdown(),
+            )
+
+    request = CompanyQuestionRequest(question=f"查询{'全部' if all_holders else ''}当前股东和出资情况")
+    result = await QAWorkflow(structured_service=PagedService()).execute(
+        eid="eid-1", target_eid=None, request=request, plan=QuestionPlanner().plan(request.question)
+    )
+    for query_type in (StructuredQueryType.CURRENT_SHAREHOLDERS, StructuredQueryType.SHAREHOLDER_CONTRIBUTIONS):
+        pages = [item for item in result.structured if item.query_type == query_type]
+        assert sum(len(item.facts) for item in pages) == expected
+        if all_holders:
+            assert [item.pagination.page for item in pages] == [1, 2]
+            assert not pages[-1].pagination.has_more
+    contribution_calls = [call for call in calls if call.query_type == StructuredQueryType.SHAREHOLDER_CONTRIBUTIONS]
+    assert contribution_calls and all(call.current_shareholders_only for call in contribution_calls)

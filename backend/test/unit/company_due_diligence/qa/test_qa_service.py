@@ -39,6 +39,39 @@ from yuxi.company_due_diligence.qa.service import CompanyQuestionService, Source
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.fixture(autouse=True)
+def disable_external_fallback_config(monkeypatch):
+    """装配单测不读取 PostgreSQL 的外部补数配置。"""
+
+    async def load_config():
+        """返回未启用外部补数的固定配置。"""
+        return {}
+
+    monkeypatch.setattr("yuxi.company_due_diligence.qa.service._load_external_data_config", load_config)
+
+
+@pytest.mark.parametrize("missing_name", ["Q02不存在企业", "缺失科技有限公司"])
+async def test_explicit_missing_company_overrides_context_eid(missing_name):
+    """问题点名不存在的企业时不得查询上下文企业。"""
+
+    class Resolver:
+        """按输入身份返回固定解析结果，保留真实的优先级错误。"""
+
+        async def resolve(self, reference):
+            """上下文可解析，点名企业不存在。"""
+            return _resolution(
+                ResolutionStatus.NOT_FOUND if reference.name == missing_name else ResolutionStatus.RESOLVED
+            )
+
+    workflow = FakeWorkflow(build_source_id("t_enterprise", "eid-1"))
+    result = await CompanyQuestionService(resolver=Resolver(), workflow=workflow).query(
+        CompanyQuestionRequest(company_ref={"eid": "eid-1"}, question=f"查询企业“{missing_name}”的工商信息")
+    )
+    assert result.resolution_status == ResolutionStatus.NOT_FOUND
+    assert result.facts == []
+    assert workflow.calls == 0
+
+
 def _company() -> ResolvedCompany:
     """构造带事实主库来源的标准企业身份。"""
     source_id = build_source_id("t_enterprise", "eid-1")

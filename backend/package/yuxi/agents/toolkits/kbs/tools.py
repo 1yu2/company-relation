@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import Any
 
+from langchain_core.tools import ToolException
 from langgraph.prebuilt.tool_node import ToolRuntime
 from pydantic import BaseModel, Field
 
@@ -65,7 +66,7 @@ async def list_kbs(dummy: str, runtime: ToolRuntime) -> str:
     runtime_context = runtime.context
     uid = getattr(runtime_context, "uid", None)
     if not uid:
-        return "无法获取用户信息"
+        raise ToolException("无法获取用户信息")
 
     available_kbs = await _resolve_visible_knowledge_bases_for_query(runtime)
     if not available_kbs:
@@ -102,7 +103,7 @@ async def get_mindmap(kb_name: str, runtime: ToolRuntime) -> str:
         知识库的思维导图结构（文本格式）
     """
     if not kb_name:
-        return "请提供知识库名称"
+        raise ToolException("请提供知识库名称")
 
     # 获取所有检索器
     knowledge_base = _get_knowledge_base()
@@ -118,7 +119,7 @@ async def get_mindmap(kb_name: str, runtime: ToolRuntime) -> str:
             break
 
     if not target_kb_id:
-        return f"知识库 '{kb_name}' 不存在"
+        raise ToolException(f"知识库 '{kb_name}' 不存在")
 
     try:
         from yuxi.repositories.knowledge_base_repository import KnowledgeBaseRepository
@@ -127,7 +128,7 @@ async def get_mindmap(kb_name: str, runtime: ToolRuntime) -> str:
         kb = await kb_repo.get_by_kb_id(target_kb_id)
 
         if kb is None:
-            return f"知识库 {target_info['name']} 不存在"
+            raise ToolException(f"知识库 {target_info['name']} 不存在")
 
         mindmap_data = kb.mindmap
 
@@ -148,9 +149,11 @@ async def get_mindmap(kb_name: str, runtime: ToolRuntime) -> str:
 
         return mindmap_text
 
+    except ToolException:
+        raise
     except Exception as e:
         logger.error(f"获取思维导图失败: {e}")
-        return f"获取思维导图失败: {str(e)}"
+        raise ToolException(f"获取思维导图失败: {e}") from e
 
 
 QueryKBInput = SearchInputSchema
@@ -164,21 +167,21 @@ async def query_kb(kb_id: str, query_text: str, file_name: str | None = None, ru
     file_id 可继续用于 find_kb_document 或 open_kb_document。
     """
     if not kb_id:
-        return "请提供 kb_id"
+        raise ToolException("请提供 kb_id")
     if not query_text:
-        return "请提供查询内容"
+        raise ToolException("请提供查询内容")
 
     visible_kbs = await _resolve_visible_knowledge_bases_for_query(runtime)
     target_kb_id, target_error = _find_query_target(kb_id=kb_id, visible_kbs=visible_kbs)
     if target_error:
-        return target_error
+        raise ToolException(target_error)
 
     try:
         kwargs = {"file_name": file_name} if file_name else {}
         return await _get_knowledge_base().retrieve(target_kb_id, query_text, **kwargs)
     except Exception as e:
         logger.error(f"检索失败: {e}")
-        return f"检索失败: {str(e)}"
+        raise ToolException(f"检索失败: {e}") from e
 
 
 OpenKBDocumentInput = OpenInputSchema
@@ -201,14 +204,14 @@ async def open_kb_document(
     normalized_kb_id = str(kb_id or "").strip()
     normalized_file_id = str(file_id or "").strip()
     if not normalized_kb_id:
-        return "请提供 kb_id"
+        raise ToolException("请提供 kb_id")
     if not normalized_file_id:
-        return "请提供 file_id"
+        raise ToolException("请提供 file_id")
 
     visible_kbs = await _resolve_visible_knowledge_bases_for_query(runtime)
     target_kb_id, target_error = _find_query_target(kb_id=normalized_kb_id, visible_kbs=visible_kbs)
     if target_error:
-        return target_error
+        raise ToolException(target_error)
 
     try:
         start_offset = int(line) - 1 if line is not None else int(offset or 0)
@@ -220,7 +223,7 @@ async def open_kb_document(
         )
     except Exception as e:
         logger.error(f"打开知识库文档失败: {e}")
-        return f"打开知识库文档失败: {str(e)}"
+        raise ToolException(f"打开知识库文档失败: {e}") from e
 
 
 FindKBDocumentInput = FindInputSchema
@@ -244,16 +247,16 @@ async def find_kb_document(
     normalized_kb_id = str(kb_id or "").strip()
     normalized_file_id = str(file_id or "").strip()
     if not normalized_kb_id:
-        return "请提供 kb_id"
+        raise ToolException("请提供 kb_id")
     if not normalized_file_id:
-        return "请提供 file_id"
+        raise ToolException("请提供 file_id")
     if not patterns:
-        return "请提供 patterns"
+        raise ToolException("请提供 patterns")
 
     visible_kbs = await _resolve_visible_knowledge_bases_for_query(runtime)
     target_kb_id, target_error = _find_query_target(kb_id=normalized_kb_id, visible_kbs=visible_kbs)
     if target_error:
-        return target_error
+        raise ToolException(target_error)
 
     try:
         return await _get_knowledge_base().find_in_document(
@@ -267,7 +270,7 @@ async def find_kb_document(
         )
     except Exception as e:
         logger.error(f"知识库文档内检索失败: {e}")
-        return f"知识库文档内检索失败: {str(e)}"
+        raise ToolException(f"知识库文档内检索失败: {e}") from e
 
 
 class SearchFileInput(BaseModel):
@@ -303,29 +306,28 @@ async def search_file(
         匹配的文件列表和分页信息
     """
     if not kb_name and not query:
-        return "请提供知识库名称或搜索关键词，不能同时为空"
+        raise ToolException("请提供知识库名称或搜索关键词，不能同时为空")
 
     visible_kbs = await _resolve_visible_knowledge_bases_for_query(runtime)
     if not visible_kbs:
-        return "无法获取当前会话可访问的知识库"
+        raise ToolException("无法获取当前会话可访问的知识库")
 
     if kb_name:
         target_kbs = [kb for kb in visible_kbs if kb.get("name") == kb_name]
         if not target_kbs:
-            return f"知识库 '{kb_name}' 不存在或当前会话未启用"
+            raise ToolException(f"知识库 '{kb_name}' 不存在或当前会话未启用")
     else:
         target_kbs = visible_kbs
 
     knowledge_base = _get_knowledge_base()
     searchable_kbs = [kb for kb in target_kbs if knowledge_base.database_type_supports_documents(kb.get("kb_type"))]
     if not searchable_kbs:
-        return "当前匹配的知识库只支持检索，不支持文件搜索"
-    return await knowledge_base.search_document_files(
-        searchable_kbs,
-        query=query,
-        offset=offset,
-        limit=limit,
-    )
+        raise ToolException("当前匹配的知识库只支持检索，不支持文件搜索")
+    try:
+        return await knowledge_base.search_document_files(searchable_kbs, query=query, offset=offset, limit=limit)
+    except Exception as e:
+        logger.error(f"搜索知识库文件失败: {e}")
+        raise ToolException(f"搜索知识库文件失败: {e}") from e
 
 
 class DownloadKBFileInput(BaseModel):
@@ -356,35 +358,35 @@ async def download_kb_file(
     normalized_kb_id = str(kb_id or "").strip()
     normalized_file_id = str(file_id or "").strip()
     if not normalized_kb_id:
-        return "请提供 kb_id"
+        raise ToolException("请提供 kb_id")
     if not normalized_file_id:
-        return "请提供 file_id"
+        raise ToolException("请提供 file_id")
 
     visible_kbs = await _resolve_visible_knowledge_bases_for_query(runtime)
     target_kb_id, target_error = _find_query_target(kb_id=normalized_kb_id, visible_kbs=visible_kbs)
     if target_error:
-        return target_error
+        raise ToolException(target_error)
 
     knowledge_base = _get_knowledge_base()
     try:
         data = await knowledge_base.get_file_download(target_kb_id, normalized_file_id, variant="original")
     except ValueError as e:
-        return str(e)
+        raise ToolException(str(e)) from e
     except Exception as e:
         logger.error(f"下载知识库原始文件失败: {e}")
-        return f"下载知识库原始文件失败: {str(e)}"
+        raise ToolException(f"下载知识库原始文件失败: {e}") from e
 
     file_thread_id = _runtime_thread_id(runtime)
     uid = _runtime_uid(runtime)
     if not file_thread_id or not uid:
-        return "无法获取当前会话的沙盒上下文，缺少 file_thread_id 或 uid"
+        raise ToolException("无法获取当前会话的沙盒上下文，缺少 file_thread_id 或 uid")
 
     output_path = _resolve_download_output_path(file_thread_id, uid, data, normalized_file_id, save_as)
     try:
         output_path.write_bytes(data["content"])
     except OSError as e:
         logger.error(f"写入沙盒 outputs 失败: {e}")
-        return f"写入沙盒 outputs 失败: {str(e)}"
+        raise ToolException(f"写入沙盒 outputs 失败: {e}") from e
 
     return {
         "virtual_path": virtual_path_for_thread_file(file_thread_id, output_path, uid=uid),
