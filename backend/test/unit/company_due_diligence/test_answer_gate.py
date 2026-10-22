@@ -62,6 +62,13 @@ def test_unknown_or_malformed_citation_is_blocked():
     assert _codes("法定代表人为包晓军［fact:rep］。") == ["citation_unknown"]
 
 
+def test_citation_without_type_prefix_resolves_when_unique():
+    """省略 fact: 前缀但唯一对应时视为同一引用；ID 写错或用事实类型名代替仍拦。"""
+    assert _codes("法定代表人为包晓军［F:rep］。") == []
+    assert _codes("法定代表人为李四［F:rep］。") == ["citation_value_mismatch"]
+    assert _codes("法定代表人为包晓军［F:legal_representative］。") == ["citation_unknown"]
+
+
 def test_value_tolerates_thousands_separator_percent_and_wan_yuan():
     """G2 只容忍三种格式差异，数值按句中写法的小数位四舍五入。"""
     assert _codes("注册资本为302,995,606元［F:fact:cap］。") == []

@@ -58,10 +58,15 @@ FACT_TYPE_LABELS = {
 
 
 class CompanyAnswerGateMiddleware(AgentMiddleware):
-    """只挂在企业尽调 Agent 上；工具调用响应原样放行，只校验最终回答。"""
+    """只挂在企业尽调 Agent 上；工具调用响应原样放行，只校验最终回答。
 
-    def __init__(self, max_rewrites: int = 2):
+    交给模型的工具只保留 Agent 配置的工具和任务清单：平台默认挂载的文件系统、沙盒执行等通用工具
+    对尽调没有用，暴露出来后有的模型会去调用（例如 execute 需要人工审批，运行因此中断）。
+    """
+
+    def __init__(self, allowed_tools: list[str], max_rewrites: int = 2):
         super().__init__()
+        self.allowed_tools = {*allowed_tools, "write_todos"}
         self.max_rewrites = max_rewrites
 
     async def awrap_model_call(
@@ -70,7 +75,10 @@ class CompanyAnswerGateMiddleware(AgentMiddleware):
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
         model = request.model
-        request = request.override(model=model.model_copy(update={"tags": [*(model.tags or []), TAG_NOSTREAM]}))
+        request = request.override(
+            model=model.model_copy(update={"tags": [*(model.tags or []), TAG_NOSTREAM]}),
+            tools=[tool for tool in request.tools if _tool_name(tool) in self.allowed_tools],
+        )
         tool_results, company_eids = _current_turn_results(request.messages)
         attempts = []
         for _ in range(self.max_rewrites + 1):
@@ -100,6 +108,8 @@ class CompanyAnswerGateMiddleware(AgentMiddleware):
                         content="［来源校验未通过］上一版回答存在以下问题，请只依据本轮工具结果重写完整回答，"
                         "不要提及本条说明。引用的事实必须在同一句写出其值，数值按系统提示中的格式书写"
                         "（例如持股比例写作保留两位小数的百分比），不要照抄原始小数；"
+                        "引用 ID 必须从工具结果的 fact_id、relation_id、path_id、evidence_id 原样抄写"
+                        "（形如［F:fact:3a1c0d9e8b7f6a5d4c3b2a19］），不能用事实类型名（如 enterprise_profile）代替；"
                         "如果该句是概括、比较或推断（例如“持股比例最高”“股权高度集中”），删除这句的引用，"
                         f"或先单独写出具体值并引用：\n{feedback}"
                     ),
@@ -108,6 +118,10 @@ class CompanyAnswerGateMiddleware(AgentMiddleware):
         fallback = AIMessage(content=_fallback_answer(tool_results), id=answer.id)
         fallback.response_metadata["answer_gate"] = _gate_metadata(attempts, result, fallback=True)
         return ModelResponse(result=[fallback], structured_response=None)
+
+
+def _tool_name(tool) -> str | None:
+    return tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
 
 
 def _current_turn_results(messages: list) -> tuple[list[dict], set[str]]:

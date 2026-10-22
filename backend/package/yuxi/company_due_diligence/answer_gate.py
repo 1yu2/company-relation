@@ -3,7 +3,8 @@
 引用格式为句末全角方括号，例如 ``［F:fact:3a1c…］``；前缀 F/R/P/E 分别对应
 事实、关系、路径、证据，ID 必须来自本次 Run 中 ``cdd_`` 工具实际返回的结果。
 
-- G1 ``citation_unknown``：引用 ID 不在本次工具结果中，或引用格式无法解析。
+- G1 ``citation_unknown``：引用 ID 不在本次工具结果中，或引用格式无法解析；省略 ``fact:`` 等类型前缀但
+  能唯一对应一个结果时视为同一引用（不同模型抄写 ID 的习惯不同，含义没有歧义）。
 - G2 ``citation_value_mismatch``：被引用事实的值没有出现在同一句中。只容忍千分位、
   百分比与小数、万元/亿元与元、日期 ``YYYY-MM-DD`` 与 ``YYYY年M月D日`` 几种格式差异；
   数值按句中写法的小数位四舍五入后比较。
@@ -96,7 +97,7 @@ def validate_answer_citations(answer: str, tool_results: list[dict], company_eid
         prefixes = set()
         for token in tokens:
             match = _CITATION_TOKEN.match(token)
-            target = index[match.group(1)].get(match.group(2)) if match else None
+            target = _lookup(index[match.group(1)], match.group(2)) if match else None
             if target is None:
                 violations.append(
                     GateViolation(
@@ -149,6 +150,14 @@ def validate_answer_citations(answer: str, tool_results: list[dict], company_eid
         cited_sentence_count=cited,
         uncited_fact_sentence_count=uncited_fact,
     )
+
+
+def _lookup(results: dict[str, dict], result_id: str) -> dict | None:
+    """按 ID 取结果；模型省略“fact:”等类型前缀时，只有唯一匹配才认，ID 本身仍须逐字正确。"""
+    if result_id in results:
+        return results[result_id]
+    matches = [result for key, result in results.items() if key.split(":", 1)[-1] == result_id]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _index_tool_results(tool_results: list[dict]) -> dict[str, dict[str, dict]]:

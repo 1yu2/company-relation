@@ -84,7 +84,7 @@ async def _build_middlewares(context):
         middlewares.append(approval_middleware)
     # 门禁放在最内层：每次重写都直接调用模型，外层中间件只看到通过校验或回退后的回答。
     if getattr(context, "company_answer_gate", False):
-        middlewares.append(CompanyAnswerGateMiddleware())
+        middlewares.append(CompanyAnswerGateMiddleware(allowed_tools=context.tools or []))
     return middlewares
 
 
