@@ -9,7 +9,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from langgraph.constants import TAG_NOSTREAM
 
-from yuxi.agents.middlewares.company_answer_gate import FALLBACK_NOTICE, CompanyAnswerGateMiddleware
+from yuxi.agents.middlewares.company_answer_gate import FALLBACK_NOTICE, CompanyAnswerGateMiddleware, _fallback_answer
 
 EID = "eid-a"
 FACTS = {
@@ -88,9 +88,41 @@ async def test_three_failures_fall_back_to_fact_list():
     content = response.result[-1].content
     assert len(requests) == 3
     assert content.startswith(FALLBACK_NOTICE) and "李四" not in content
-    assert "纳睿雷达｜legal_representative：包晓军［F:fact:rep］" in content
+    assert "纳睿雷达｜法定代表人：包晓军［F:fact:rep］" in content
+    assert "纳睿雷达｜注册资本：30299.5606万元人民币［F:fact:cap］" in content
     gate = response.result[-1].response_metadata["answer_gate"]
     assert (gate["fallback"], len(gate["attempts"])) == (True, 3)
+
+
+def test_fallback_fact_list_uses_chinese_labels_and_readable_values():
+    """兜底清单不出现英文字段名：比例转百分数，出资项、知识产权条目和财务指标取可读部分。"""
+    holder = "shareholder-1"
+    facts = [
+        {"fact_id": "fact:r", "subject_id": holder, "fact_type": "ownership_ratio", "normalized_value": "0.2441755716"},
+        {
+            "fact_id": "fact:c",
+            "subject_id": holder,
+            "fact_type": "subscribed_contribution",
+            "normalized_value": {"amount": "1000000", "currency": "元", "invest_type": "货币", "date": "2020-01-01"},
+        },
+        {
+            "fact_id": "fact:p",
+            "subject_id": EID,
+            "fact_type": "patent_item",
+            "normalized_value": {"item_id": "patent-1", "name": "一种雷达"},
+        },
+        {"fact_id": "fact:m", "subject_id": EID, "fact_type": "financial_metric:营业收入", "normalized_value": "100"},
+    ]
+    entities = [{"entity_id": EID, "name": "纳睿雷达"}, {"entity_id": holder, "name": "某投资公司"}]
+
+    lines = _fallback_answer([{"facts": facts, "entities": entities}]).splitlines()[1:]
+
+    assert lines == [
+        "- 某投资公司｜持股比例：24.42%［F:fact:r］",
+        "- 某投资公司｜认缴出资：1000000元（货币，2020-01-01）［F:fact:c］",
+        "- 纳睿雷达｜专利：一种雷达［F:fact:p］",
+        "- 纳睿雷达｜营业收入：100［F:fact:m］",
+    ]
 
 
 async def test_tool_call_response_is_not_gated():

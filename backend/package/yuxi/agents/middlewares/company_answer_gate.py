@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable
+from decimal import Decimal
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 from langchain.messages import AIMessage, HumanMessage, ToolMessage
@@ -18,6 +19,42 @@ from langgraph.constants import TAG_NOSTREAM
 from yuxi.company_due_diligence.agent.answer_gate import validate_answer_citations
 
 FALLBACK_NOTICE = "未能生成通过来源校验的回答。以下是本轮工具返回的事实，未经模型组织："
+# 兜底事实清单的字段中文名，覆盖结构化查询与 AkShare 产出的全部事实类型；
+# 财务指标 financial_metric:<指标名> 直接用指标名。
+FACT_TYPE_LABELS = {
+    "business_status": "经营状态",
+    "established_date": "成立日期",
+    "legal_representative": "法定代表人",
+    "registered_capital": "注册资本",
+    "actual_capital": "实缴资本",
+    "credit_code": "统一社会信用代码",
+    "stock_code": "股票代码",
+    "business_scope": "经营范围",
+    "province_code": "省份代码",
+    "district_code": "区县代码",
+    "ownership_ratio": "持股比例",
+    "subscribed_capital_total": "认缴出资总额",
+    "paid_capital_total": "实缴出资总额",
+    "subscribed_contribution": "认缴出资",
+    "paid_contribution": "实缴出资",
+    "financing_amount": "融资金额",
+    "estimated_amount": "估算融资金额",
+    "pre_money_valuation": "投前估值",
+    "post_money_valuation": "投后估值",
+    "penalty_amount": "处罚金额",
+    "overdue_amount": "欠缴金额",
+    "license_status": "许可证状态",
+    "patent_item": "专利",
+    "trademark_item": "商标",
+    "copyright_item": "著作权",
+    "stock_abbreviation": "股票简称",
+    "total_market_cap": "总市值",
+    "circulating_market_cap": "流通市值",
+    "industry": "行业",
+    "listing_date": "上市时间",
+    "total_shares": "总股本",
+    "circulating_shares": "流通股",
+}
 
 
 class CompanyAnswerGateMiddleware(AgentMiddleware):
@@ -96,11 +133,30 @@ def _gate_metadata(attempts: list, result, *, fallback: bool) -> dict:
 
 
 def _fallback_answer(tool_results: list[dict]) -> str:
-    """按主体列出本轮事实与引用；值用展示值，没有展示值时用规范值。"""
+    """按主体列出本轮事实与引用，字段用中文名，值转为可读文本。"""
     names = {e["entity_id"]: e["name"] for r in tool_results for e in r.get("entities", [])}
     lines = [FALLBACK_NOTICE]
     for fact in (f for r in tool_results for f in r.get("facts", [])):
-        value = fact.get("display_value") or fact["normalized_value"]
         subject = names.get(fact["subject_id"], fact["subject_id"])
-        lines.append(f"- {subject}｜{fact['fact_type']}：{value}［F:{fact['fact_id']}］")
+        lines.append(f"- {subject}｜{_fact_label(fact['fact_type'])}：{_fact_value(fact)}［F:{fact['fact_id']}］")
     return "\n".join(lines)
+
+
+def _fact_label(fact_type: str) -> str:
+    if fact_type.startswith("financial_metric:"):
+        return fact_type.removeprefix("financial_metric:")
+    return FACT_TYPE_LABELS.get(fact_type, fact_type)
+
+
+def _fact_value(fact: dict) -> str:
+    """比例显示为百分数；出资项和知识产权条目的规范值是字典，取可读部分；其余用展示值，没有时用规范值。"""
+    value = fact["normalized_value"]
+    if fact["fact_type"] == "ownership_ratio":
+        return f"{Decimal(value) * 100:.2f}%"
+    if isinstance(value, dict):
+        if "name" in value:
+            return value["name"]
+        detail = "，".join(value[key] for key in ("invest_type", "date") if value.get(key))
+        amount = f"{value.get('amount', '')}{value.get('currency', '')}"
+        return f"{amount}（{detail}）" if detail else amount
+    return fact.get("display_value") or str(value)
