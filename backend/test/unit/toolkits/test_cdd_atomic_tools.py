@@ -437,3 +437,13 @@ async def test_global_stats_source_unavailable_is_error(monkeypatch):
     message = await tool_message(tools.cdd_query_global_stats, {"operation": "shared_shareholders"})
 
     assert message.status == "error" and "来源不可用" in message.content
+
+
+async def test_agent_cdd_tools_are_exempt_from_large_result_eviction():
+    """企业尽调智能体挂载的 cdd_ 工具结果必须整段留在上下文：卸载成文件预览后模型看不到 ID，门禁也无法解析。"""
+    from yuxi.agents.backends.composite import _TOOL_RESULT_EVICTION_EXEMPT_TOOLS
+    from yuxi.repositories.agent_repository import COMPANY_DUE_DILIGENCE_TOOLS
+
+    cdd_tools = {name for name in COMPANY_DUE_DILIGENCE_TOOLS if name.startswith("cdd_")}
+
+    assert cdd_tools <= _TOOL_RESULT_EVICTION_EXEMPT_TOOLS
