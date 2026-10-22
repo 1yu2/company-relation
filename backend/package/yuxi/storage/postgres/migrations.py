@@ -1,7 +1,9 @@
 """PostgreSQL 版本迁移入口。
 
 首个版本只登记现有启动 DDL 已完成的基线，不修改历史业务表。后续 schema
-变更必须新增有序版本，并在同一数据库 advisory lock 内执行。
+变更必须新增有序版本，并在同一数据库 advisory lock 内执行。api 与 worker 会同时
+启动，所有启动 DDL 事务（建表、版本迁移、运行时 schema 演进）都先调用
+lock_startup_ddl 串行执行，避免并发 ALTER 的锁升级互相死锁。
 """
 
 from __future__ import annotations
@@ -22,9 +24,18 @@ MIGRATIONS: list[tuple[int, str, str]] = [
 ]
 
 
+async def lock_startup_ddl(connection) -> None:
+    """在当前事务内获取启动 DDL 的 advisory lock，事务结束时自动释放。"""
+    await connection.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
+        {"lock_key": MIGRATION_LOCK_KEY},
+    )
+
+
 async def run_versioned_migrations(engine) -> None:
     """在数据库锁内幂等登记并执行版本迁移。"""
     async with engine.begin() as connection:
+        await lock_startup_ddl(connection)
         await connection.execute(
             text(
                 f"""
@@ -35,10 +46,6 @@ async def run_versioned_migrations(engine) -> None:
                 )
                 """
             )
-        )
-        await connection.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
-            {"lock_key": MIGRATION_LOCK_KEY},
         )
         result = await connection.execute(text(f"SELECT version FROM {MIGRATION_TABLE}"))
         applied_versions = {int(row[0]) for row in result}
