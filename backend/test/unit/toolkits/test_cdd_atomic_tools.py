@@ -23,11 +23,10 @@ from yuxi.company_due_diligence.models import (
     Evidence,
     LatencyBreakdown,
     Source,
+    SourceStatus,
     StructuredQueryRequest,
     StructuredQueryType,
 )
-from yuxi.company_due_diligence.report.models import DueDiligenceReportRequest, ReportSection
-from yuxi.company_due_diligence.report.service import ReportDispatchError
 from yuxi.company_due_diligence.structured_query_service import StructuredQueryService
 
 pytestmark = pytest.mark.asyncio
@@ -206,10 +205,9 @@ async def test_dates_reach_structured_service(domain, monkeypatch):
             tools.cdd_search_evidence,
             {"eid": "eid-1", "query": "风险", "start_date": "2025-01-01", "end_date": "2020-01-01"},
         ),
-        (tools.cdd_create_report, {"eid": "eid-1", "topics": []}),
         (tools.cdd_query_relations, {}),
         (tools.cdd_search_evidence, {"query": "风险"}),
-        (tools.cdd_create_report, {}),
+        (tools.cdd_query_global_stats, {"operation": "free_sql"}),
     ],
 )
 async def test_invalid_arguments_become_error_tool_message(domain, tool, args):
@@ -226,7 +224,6 @@ async def test_invalid_arguments_become_error_tool_message(domain, tool, args):
         (tools.cdd_query_relations, {"start_eid": "missing"}),
         (tools.cdd_query_relations, {"start_eid": "eid-1", "target_eid": "missing"}),
         (tools.cdd_search_evidence, {"eid": "missing", "query": "风险"}),
-        (tools.cdd_create_report, {"eid": "missing"}),
     ],
 )
 async def test_unknown_eid_rejected_before_domain_query(domain, tool, args):
@@ -331,45 +328,14 @@ async def test_evidence_backend_failure_returns_error(domain, monkeypatch):
     assert message.status == "error" and "来源不可用" in message.content
 
 
-@pytest.mark.parametrize(
-    "topics,sections",
-    [
-        (None, list(ReportSection)),
-        (["shareholders"], [ReportSection.IDENTITY, ReportSection.SHAREHOLDERS, ReportSection.DATA_QUALITY]),
-    ],
-)
-async def test_report_uses_existing_async_submission(domain, monkeypatch, topics, sections):
-    """报告工具只提交既有章节请求，并返回任务编号和当前状态。"""
-    create = AsyncMock(return_value=SimpleNamespace(id="task-1", status="pending"))
-    monkeypatch.setattr(tools, "due_diligence_report_service", SimpleNamespace(create=create))
-    result = await tools.cdd_create_report.ainvoke({"eid": "eid-1", **({"topics": topics} if topics else {})})
-    assert result == {"task_id": "task-1", "status": "pending"}
-    request, tasker = create.call_args.args
-    assert request == DueDiligenceReportRequest(company_ref={"eid": "eid-1"}, sections=sections)
-    assert tasker is tools.tasker
-
-
-async def test_report_dispatch_failure_returns_error(domain, monkeypatch):
-    """报告投递失败不能返回已接受。"""
-    monkeypatch.setattr(
-        tools,
-        "due_diligence_report_service",
-        SimpleNamespace(create=AsyncMock(side_effect=ReportDispatchError("报告执行队列不可用"))),
-    )
-    message = await tool_message(tools.cdd_create_report, {"eid": "eid-1"})
-    assert message.status == "error" and "队列不可用" in message.content
-
-
 async def test_external_errors_and_success_contract(monkeypatch):
     """仅两条既有约束改为工具错误，正常返回及服务入参保持原样。"""
     missing = await tool_message(legacy.query_external_company_data, {"question": "补充工商", "topics": ["profile"]})
     assert missing.status == "error" and "必须先确认" in missing.content
-    from yuxi.company_due_diligence.qa import service as qa_service
-
     monkeypatch.setattr(
-        qa_service, "_load_external_data_config", AsyncMock(return_value={"providers": {"akshare": {"enabled": True}}})
+        legacy, "load_external_data_config", AsyncMock(return_value={"providers": {"akshare": {"enabled": True}}})
     )
-    monkeypatch.setattr(qa_service, "_enabled_external_providers", lambda _: ["akshare"])
+    monkeypatch.setattr(legacy, "enabled_external_providers", lambda _: ["akshare"])
     args = {"question": "补充工商", "confirmed_eid": "eid-1", "topics": ["profile"], "providers": ["disabled"]}
     disabled = await tool_message(legacy.query_external_company_data, args)
     assert disabled.status == "error" and "Provider 未启用" in disabled.content
@@ -389,7 +355,7 @@ async def test_atomic_registration_and_query_enum():
         tools.cdd_query_facts,
         tools.cdd_query_relations,
         tools.cdd_search_evidence,
-        tools.cdd_create_report,
+        tools.cdd_query_global_stats,
     ]
     assert all(get_extra_metadata(t.name).category == "company_due_diligence" for t in new_tools)
     schema = tools.cdd_query_facts.args_schema.model_json_schema()
@@ -436,3 +402,38 @@ async def test_list_all_is_rejected_outside_shareholder_queries(domain, query_ty
 
     assert message.status == "error"
     assert "list_all 只支持股东类查询" in message.content
+
+
+async def test_global_stats_returns_whitelisted_result_and_sources(monkeypatch):
+    """全局统计只按白名单统计项调用服务，返回统计结果与来源。"""
+    from yuxi.company_due_diligence.global_stats import GlobalQuestionOperation, GlobalQuestionResult
+
+    response = SimpleNamespace(
+        result=GlobalQuestionResult(operation="catalog_coverage", data_version="catalog-1", denominator=3),
+        sources=[],
+        data_quality=DataQuality(),
+    )
+    query = AsyncMock(return_value=response)
+    monkeypatch.setattr(tools, "global_question_service", SimpleNamespace(query=query))
+
+    result = await tools.cdd_query_global_stats.ainvoke({"operation": "catalog_coverage", "top_k": 5})
+
+    assert (result["operation"], result["denominator"], result["sources"]) == ("catalog_coverage", 3, [])
+    assert query.call_args.args == (GlobalQuestionOperation.CATALOG_COVERAGE,)
+    assert query.call_args.kwargs == {"top_k": 5}
+
+
+async def test_global_stats_source_unavailable_is_error(monkeypatch):
+    """主库不可用时全局统计报错，不能把分母 0 当作“没有企业”。"""
+    from yuxi.company_due_diligence.global_stats import GlobalQuestionResult
+
+    response = SimpleNamespace(
+        result=GlobalQuestionResult(operation="shared_shareholders", data_version="unavailable", denominator=0),
+        sources=[],
+        data_quality=DataQuality(source_status=SourceStatus.UNAVAILABLE, warnings=["企业事实主库当前不可用"]),
+    )
+    monkeypatch.setattr(tools, "global_question_service", SimpleNamespace(query=AsyncMock(return_value=response)))
+
+    message = await tool_message(tools.cdd_query_global_stats, {"operation": "shared_shareholders"})
+
+    assert message.status == "error" and "来源不可用" in message.content

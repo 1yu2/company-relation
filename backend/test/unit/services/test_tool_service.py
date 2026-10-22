@@ -51,7 +51,7 @@ def test_get_tool_metadata_includes_config_guide(monkeypatch):
 
 async def test_resolve_configured_runtime_tools_includes_non_buildin_local_tool(monkeypatch):
     """按名称配置的领域工具必须进入智能体运行时，而不受展示分类限制。"""
-    company_tool = SimpleNamespace(name="investigate_company")
+    company_tool = SimpleNamespace(name="cdd_query_facts")
     buildin_tool = SimpleNamespace(name="ask_user_question")
 
     monkeypatch.setattr(
@@ -72,7 +72,7 @@ async def test_resolve_configured_runtime_tools_includes_non_buildin_local_tool(
     )
 
     tools = await tool_service.resolve_configured_runtime_tools(
-        SimpleNamespace(tools=["investigate_company"], mcps=[])
+        SimpleNamespace(tools=["cdd_query_facts"], mcps=[])
     )
 
     assert tools == [company_tool]

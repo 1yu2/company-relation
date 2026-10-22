@@ -25,7 +25,6 @@ from yuxi.company_due_diligence.models import (
     StructuredQueryResult,
     StructuredQueryType,
 )
-from yuxi.company_due_diligence.qa.models import QueryPlan, QuestionType
 
 
 def _empty_structured_result(query_type: StructuredQueryType) -> StructuredQueryResult:
@@ -97,67 +96,6 @@ class FakeProvider(ExternalCompanyDataProvider):
             sources=self._sources,
             coverage={topic: CoverageStatus.COMPLETE for topic in request.topics},
         )
-
-
-def test_detect_topic_gaps_missing_when_no_data():
-    """内部无数据时主题标记为 missing。"""
-    service = ExternalCompanyDataService()
-    plan = QueryPlan(
-        question_type=QuestionType.STRUCTURED_FIELD,
-        structured_queries=[StructuredQueryType.ENTERPRISE_PROFILE],
-    )
-    gaps = service.detect_topic_gaps(
-        plan=plan,
-        structured_results=[_empty_structured_result(StructuredQueryType.ENTERPRISE_PROFILE)],
-    )
-    assert gaps["profile"] == CoverageStatus.MISSING
-
-
-def test_detect_topic_gaps_complete_when_has_data():
-    """内部有数据时主题标记为 complete。"""
-    service = ExternalCompanyDataService()
-    plan = QueryPlan(
-        question_type=QuestionType.STRUCTURED_FIELD,
-        structured_queries=[StructuredQueryType.ENTERPRISE_PROFILE],
-    )
-    gaps = service.detect_topic_gaps(
-        plan=plan,
-        structured_results=[_structured_result_with_facts(StructuredQueryType.ENTERPRISE_PROFILE)],
-        stale_threshold_days=365,
-    )
-    assert gaps["profile"] == CoverageStatus.COMPLETE
-
-
-def test_should_fallback_for_eligible_statuses():
-    """只有指定状态允许触发外部补数。"""
-    service = ExternalCompanyDataService()
-    assert service.should_fallback(CoverageStatus.MISSING)
-    assert service.should_fallback(CoverageStatus.PARTIAL)
-    assert service.should_fallback(CoverageStatus.STALE)
-    assert service.should_fallback(CoverageStatus.CONFLICT)
-    assert service.should_fallback(CoverageStatus.UNSUPPORTED)
-    assert not service.should_fallback(CoverageStatus.COMPLETE)
-
-
-def test_detect_topic_gaps_merges_duplicate_internal_queries():
-    """同一外部主题对应多个内部查询时保留最严格缺口状态。"""
-    service = ExternalCompanyDataService()
-    plan = QueryPlan(
-        question_type=QuestionType.STRUCTURED_LIST,
-        structured_queries=[
-            StructuredQueryType.CURRENT_SHAREHOLDERS,
-            StructuredQueryType.HISTORICAL_SHAREHOLDERS,
-        ],
-    )
-    gaps = service.detect_topic_gaps(
-        plan=plan,
-        structured_results=[
-            _empty_structured_result(StructuredQueryType.CURRENT_SHAREHOLDERS),
-            _structured_result_with_facts(StructuredQueryType.HISTORICAL_SHAREHOLDERS),
-        ],
-    )
-
-    assert gaps["shareholders"] == CoverageStatus.MISSING
 
 
 async def test_query_merges_facts_from_multiple_providers():

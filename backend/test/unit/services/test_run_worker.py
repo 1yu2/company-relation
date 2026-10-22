@@ -530,9 +530,6 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         del session
         calls.append("ensure_options_in_db")
 
-    async def fake_recover_reports():
-        calls.append("recover_reports")
-
     async def fake_recover_graph():
         calls.append("recover_graph")
 
@@ -555,10 +552,8 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     from yuxi.config import options
     from yuxi.company_due_diligence.evidence.service import evidence_index_service
     from yuxi.company_due_diligence.graph.service import graph_projection_service
-    from yuxi.company_due_diligence.report.service import due_diligence_report_service
 
     monkeypatch.setattr(options, "ensure_options_in_db", fake_ensure_options_in_db)
-    monkeypatch.setattr(due_diligence_report_service, "recover_pending_tasks", fake_recover_reports)
     monkeypatch.setattr(graph_projection_service, "recover_pending_tasks", fake_recover_graph)
     monkeypatch.setattr(evidence_index_service, "recover_pending_tasks", fake_recover_evidence)
     from yuxi.evaluation.experiment_service import PlatformEvaluationService
@@ -577,7 +572,6 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         "ensure_options_in_db",
         "start_runtime_sync",
         "recover_pending_dispatches",
-        "recover_reports",
         "recover_graph",
         "recover_evidence",
         "resume_platform_experiments",

@@ -16,7 +16,6 @@ from yuxi.utils.logging_config import logger
 TaskCoroutine = Callable[["TaskContext"], Awaitable[Any]]
 TERMINAL_STATUSES = {"success", "failed", "cancelled"}
 PERSISTED_TASK_TYPES = {
-    "company_due_diligence_report",
     "company_due_diligence_graph_projection",
     "company_due_diligence_evidence_index",
 }

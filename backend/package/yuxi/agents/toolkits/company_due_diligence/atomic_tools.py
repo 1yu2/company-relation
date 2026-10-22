@@ -1,4 +1,4 @@
-"""企业尽调原子工具：只适配既有领域服务，不参与 Agent 编排。"""
+"""企业尽调原子工具：只适配既有领域服务，由企业尽调 Agent 自主选择调用。"""
 
 from datetime import date
 from typing import Annotated
@@ -7,10 +7,10 @@ from langchain_core.tools import ToolException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from yuxi.agents.toolkits.registry import tool
-from yuxi.company_due_diligence.agent.models import InvestigationTopic
 from yuxi.company_due_diligence.entity_resolution import entity_resolution_service
 from yuxi.company_due_diligence.evidence.models import EvidenceDocumentType, EvidenceQuery
 from yuxi.company_due_diligence.evidence.query_service import evidence_query_service
+from yuxi.company_due_diligence.global_stats import GlobalQuestionOperation, global_question_service
 from yuxi.company_due_diligence.graph.query_service import graph_path_query_service
 from yuxi.company_due_diligence.graph.repository import GraphUnavailableError
 from yuxi.company_due_diligence.graph.schema import GraphPathQuery, GraphRelationType
@@ -21,11 +21,7 @@ from yuxi.company_due_diligence.models import (
     StructuredQueryRequest,
     StructuredQueryType,
 )
-from yuxi.company_due_diligence.report.intent import sections_for_topics
-from yuxi.company_due_diligence.report.models import DueDiligenceReportRequest
-from yuxi.company_due_diligence.report.service import due_diligence_report_service
 from yuxi.company_due_diligence.structured_query_service import structured_query_service
-from yuxi.services.task_service import tasker
 
 _LIST_ALL_QUERY_TYPES = {
     StructuredQueryType.CURRENT_SHAREHOLDERS,
@@ -137,15 +133,13 @@ class SearchEvidenceInput(DatedCompanyInput):
     top_k: int = Field(default=10, ge=1, le=50, description="召回片段数量")
 
 
-class CreateReportInput(CddToolInput):
-    """提交指定专题或默认完整尽调报告。"""
+class GlobalStatsInput(CddToolInput):
+    """从白名单统计项中选择一项全局统计。"""
 
-    eid: ConfirmedEid
-    topics: list[InvestigationTopic] = Field(
-        default_factory=lambda: [InvestigationTopic.FULL_DUE_DILIGENCE],
-        min_length=1,
-        description="报告专题；full_due_diligence 表示完整报告，默认完整报告",
+    operation: GlobalQuestionOperation = Field(
+        description="catalog_coverage：数据目录覆盖了多少企业及各数据域覆盖率；shared_shareholders：哪些股东同时持有多家企业"
     )
+    top_k: int = Field(default=10, ge=1, le=50, description="返回的示例企业或共同股东条数")
 
 
 @tool(category="company_due_diligence", display_name="解析企业身份", args_schema=ResolveCompanyInput)
@@ -275,19 +269,12 @@ async def cdd_search_evidence(
     }
 
 
-@tool(category="company_due_diligence", display_name="创建企业报告", args_schema=CreateReportInput)
-async def cdd_create_report(eid: str, topics: list[InvestigationTopic] | None = None) -> dict:
-    """沿既有持久化和 ARQ 链路异步生成专题或完整报告，只返回任务状态。"""
-    await _require_company(eid)
-    request = DueDiligenceReportRequest(
-        company_ref={"eid": eid},
-        sections=sections_for_topics(topics if topics is not None else [InvestigationTopic.FULL_DUE_DILIGENCE]),
-    )
-    try:
-        task = await due_diligence_report_service.create(request, tasker)
-    except Exception as exc:
-        raise ToolException(f"报告提交失败：{exc}") from exc
-    return {"task_id": task.id, "status": task.status}
+@tool(category="company_due_diligence", display_name="全局统计", args_schema=GlobalStatsInput)
+async def cdd_query_global_stats(operation: GlobalQuestionOperation, top_k: int = 10) -> dict:
+    """执行一项不针对单一企业的白名单统计（数据覆盖、共同股东），不执行自由 SQL。"""
+    response = await global_question_service.query(operation, top_k=top_k)
+    _require_available(response.data_quality)
+    return {**response.result.model_dump(mode="json"), "sources": _sources(response.sources)}
 
 
 async def _require_company(eid: str) -> None:

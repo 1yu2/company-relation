@@ -13,7 +13,7 @@ description: "企业尽调外部数据补数：仅在内部数据缺失、过期
 
 ## 使用前提
 
-1. 必须已经通过 `investigate_company` 确认企业身份，并取得 `company_context.eid`。
+1. 必须已经通过 `cdd_resolve_company` 确认企业身份，并取得唯一企业的 `eid`。
 2. 不得根据模型猜测 `eid`，也不得用外部数据源返回的企业名称覆盖已确认企业。
 3. 仅当用户问题涉及以下场景时才调用本工具：
    - 融资历史（内部无记录或记录不全）
@@ -23,14 +23,14 @@ description: "企业尽调外部数据补数：仅在内部数据缺失、过期
 
 ## 调用规则
 
-- 先调用 `investigate_company` 获取内部结果。
+- 先用 `cdd_query_facts` 等内部工具取数。
 - 如果内部结果已经完整且置信度高，不要再调用外部工具。
 - 仅在以下情况调用 `query_external_company_data`：
   - 内部结果明确提示数据缺失、过期或冲突；
   - 用户明确要求补充外部公开信息；
   - 主题属于 `profile`、`financials`、`financing`、`shareholders`、`news` 之一。
-- 传入的 `confirmed_eid` 必须来自 `investigate_company` 返回的 `company_context.eid`。
-- 查询上市公司主题时同时传入已确认的 `company_context.stock_code`，不得根据企业名称猜测股票代码。
+- 传入的 `confirmed_eid` 必须来自 `cdd_resolve_company` 返回的 `company.eid`。
+- 查询上市公司主题时同时传入 `cdd_resolve_company` 返回的 `company.stock_code`，不得根据企业名称猜测股票代码。
 - `topics` 按用户意图选择；不明确时优先使用 `["profile", "financials"]`。
 
 ## 结果表述约束

@@ -6,14 +6,6 @@ from httpx import ASGITransport, AsyncClient
 
 from server.routers.company_due_diligence_router import company_due_diligence_router
 from server.utils.auth_middleware import get_admin_user
-from yuxi.company_due_diligence.agent.models import (
-    CompanyInvestigationResponse,
-    InvestigationStatus,
-    Presentation,
-    PresentationType,
-    UnderstoodRequest,
-)
-from yuxi.company_due_diligence.agent.service import company_due_diligence_agent
 from yuxi.company_due_diligence.entity_resolution import entity_resolution_service
 from yuxi.company_due_diligence.evidence.models import EvidenceIndexInfo, EvidenceQueryResult
 from yuxi.company_due_diligence.evidence.query_service import evidence_query_service
@@ -33,9 +25,6 @@ from yuxi.company_due_diligence.models import (
     StructuredQueryType,
 )
 from yuxi.company_due_diligence.mysql import MySQLHealth, MySQLPoolHealth, company_due_diligence_mysql
-from yuxi.company_due_diligence.qa.models import CompanyQuestionResponse
-from yuxi.company_due_diligence.qa.service import company_question_service
-from yuxi.company_due_diligence.report.service import due_diligence_report_service
 from yuxi.company_due_diligence.structured_query_service import structured_query_service
 
 pytestmark = pytest.mark.asyncio
@@ -115,20 +104,9 @@ async def test_company_routes_delegate_to_resolution_service(monkeypatch):
             latency=LatencyBreakdown(),
         )
 
-    async def fake_company_question(request):
-        """返回固定拒答问答响应。"""
-        return CompanyQuestionResponse(
-            question=request.question,
-            resolution_status=ResolutionStatus.NOT_FOUND,
-            answer="企业无法唯一解析，未执行后续查询。",
-            data_quality=DataQuality(),
-            latency=LatencyBreakdown(),
-        )
-
     monkeypatch.setattr(entity_resolution_service, "resolve", fake_resolve)
     monkeypatch.setattr(entity_resolution_service, "search", fake_search)
     monkeypatch.setattr(structured_query_service, "query", fake_structured_query)
-    monkeypatch.setattr(company_question_service, "query", fake_company_question)
     app = FastAPI()
     app.include_router(company_due_diligence_router, prefix="/api")
     app.dependency_overrides[get_admin_user] = override_admin
@@ -140,10 +118,6 @@ async def test_company_routes_delegate_to_resolution_service(monkeypatch):
             "/api/company-due-diligence/structured-query",
             json={"eid": "eid-1", "query_type": "enterprise_profile"},
         )
-        question_response = await client.post(
-            "/api/company-due-diligence/query",
-            json={"company_ref": {"eid": "eid-1"}, "question": "注册资本？"},
-        )
 
     assert resolve_response.status_code == 200
     assert resolve_response.json()["reference"] == CompanyReference(eid="eid-1").model_dump()
@@ -151,53 +125,6 @@ async def test_company_routes_delegate_to_resolution_service(monkeypatch):
     assert search_response.json()["query"] == "示例"
     assert structured_response.status_code == 200
     assert structured_response.json()["query_type"] == StructuredQueryType.ENTERPRISE_PROFILE
-    assert question_response.status_code == 200
-    assert question_response.json()["resolution_status"] == ResolutionStatus.NOT_FOUND
-
-
-async def test_investigation_route_uses_unified_agent_contract(monkeypatch):
-    """统一调查路由应接收企业上下文和自然语言并返回动态展示契约。"""
-
-    async def override_admin():
-        """绕过持久化用户，仅验证路由装配。"""
-        return object()
-
-    async def fake_investigate(request, *, tasker):
-        """返回固定统一智能体响应。"""
-        assert request.company_context.name == "示例企业有限公司"
-        assert request.message == "股东有哪些？"
-        assert tasker is not None
-        return CompanyInvestigationResponse(
-            status=InvestigationStatus.COMPLETE,
-            understood_request=UnderstoodRequest(
-                topics=["shareholders"],
-                presentation=PresentationType.SUMMARY_WITH_LIST,
-                delivery="sync",
-                time_scope={"type": "latest_available"},
-                depth="standard",
-            ),
-            summary="返回股东列表。",
-            data_quality=DataQuality(),
-            presentation=Presentation(
-                type=PresentationType.SUMMARY_WITH_LIST,
-                components=["summary", "fact_table", "sources"],
-            ),
-        )
-
-    monkeypatch.setattr(company_due_diligence_agent, "investigate", fake_investigate)
-    app = FastAPI()
-    app.include_router(company_due_diligence_router, prefix="/api")
-    app.dependency_overrides[get_admin_user] = override_admin
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.post(
-            "/api/company-due-diligence/investigations",
-            json={"company_context": {"name": "示例企业有限公司"}, "message": "股东有哪些？"},
-        )
-
-    assert response.status_code == 200
-    assert response.json()["presentation"]["type"] == "summary_with_list"
-    assert response.json()["claim_ledger"] == {"claims": [], "validated": True}
 
 
 async def test_graph_projection_routes_delegate_to_task_service(monkeypatch):
@@ -327,85 +254,3 @@ async def test_evidence_routes_delegate_to_services(monkeypatch):
     assert task_response.json()["task"]["status"] == "success"
     assert info_response.json() == {"available": True, "current": None}
     assert query_response.json()["evidence"] == []
-
-
-async def test_report_routes_delegate_to_report_service(monkeypatch):
-    """报告路由应只负责权限、参数、状态码和下载响应。"""
-
-    async def override_admin():
-        """绕过持久化用户，仅验证路由装配。"""
-        return object()
-
-    class FakeTask:
-        """提供报告和重试任务 ID。"""
-
-        def __init__(self, task_id: str) -> None:
-            self.id = task_id
-
-    async def fake_create(request, _tasker):
-        """校验报告请求并返回主任务。"""
-        assert request.sections[0].value == "identity"
-        return FakeTask("report-1")
-
-    async def fake_list(_tasker, limit):
-        """返回固定报告摘要。"""
-        assert limit == 10
-        return [{"id": "report-1", "status": "success"}]
-
-    async def fake_get(report_id, _tasker):
-        """返回固定报告详情。"""
-        return {"task": {"id": report_id}, "report": {"report_id": report_id}}
-
-    async def fake_cancel(report_id, _tasker):
-        """记录取消请求。"""
-        assert report_id == "report-1"
-        return True
-
-    async def fake_retry(report_id, section, _tasker):
-        """返回固定章节重试任务。"""
-        assert report_id == "report-1"
-        assert section.value == "identity"
-        return FakeTask("retry-1")
-
-    async def fake_download(report_id, report_format):
-        """返回固定 Markdown 内容和 artifact。"""
-        from yuxi.company_due_diligence.report.models import ReportArtifact
-
-        assert report_id == "report-1"
-        return b"# report", ReportArtifact(
-            format=report_format,
-            bucket="test",
-            object_name="report.md",
-            checksum="a" * 64,
-            size_bytes=8,
-        )
-
-    monkeypatch.setattr(due_diligence_report_service, "create", fake_create)
-    monkeypatch.setattr(due_diligence_report_service, "list_reports", fake_list)
-    monkeypatch.setattr(due_diligence_report_service, "get_report", fake_get)
-    monkeypatch.setattr(due_diligence_report_service, "cancel", fake_cancel)
-    monkeypatch.setattr(due_diligence_report_service, "retry_section", fake_retry)
-    monkeypatch.setattr(due_diligence_report_service, "download", fake_download)
-    app = FastAPI()
-    app.include_router(company_due_diligence_router, prefix="/api")
-    app.dependency_overrides[get_admin_user] = override_admin
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        create_response = await client.post(
-            "/api/company-due-diligence/reports",
-            json={"company_ref": {"eid": "eid-1"}, "sections": ["identity"]},
-        )
-        list_response = await client.get("/api/company-due-diligence/reports?limit=10")
-        detail_response = await client.get("/api/company-due-diligence/reports/report-1")
-        cancel_response = await client.post("/api/company-due-diligence/reports/report-1/cancel")
-        retry_response = await client.post("/api/company-due-diligence/reports/report-1/sections/identity/retry")
-        download_response = await client.get("/api/company-due-diligence/reports/report-1/download?format=markdown")
-
-    assert create_response.status_code == 202
-    assert create_response.json()["report_id"] == "report-1"
-    assert list_response.json()["reports"][0]["id"] == "report-1"
-    assert detail_response.json()["report"]["report_id"] == "report-1"
-    assert cancel_response.status_code == 202
-    assert retry_response.json()["task_id"] == "retry-1"
-    assert download_response.content == b"# report"
-    assert download_response.headers["etag"] == "a" * 64

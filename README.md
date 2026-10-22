@@ -15,7 +15,7 @@
 
 本仓库在 Yuxi 智能体平台上做了两件事：
 
-1. **企业尽调智能体**：以现有广东企业 MySQL 作为**只读事实主库**，在主聊天中回答企业工商、股东、关系、风险、融资、知识产权等问题，并生成专题或完整尽调报告。每条结论都必须能回查到来源，LLM 不生成无来源的企业事实。
+1. **企业尽调智能体**：以现有广东企业 MySQL 作为**只读事实主库**，由模型在主聊天中自主选择尽调工具，回答企业工商、股东、关系、风险、融资、知识产权等问题，并在用户要求时输出专题或完整尽调报告。回答逐句引用工具结果，展示前先通过来源校验门禁，LLM 不生成无来源的企业事实。
 2. **Agent 评测体系**：平台内置的可复现评测闭环，通过真实的 AgentRun 链路执行，支持逐题对比和回归门禁，用来衡量智能体（包括企业尽调）的改动是否真的变好了。
 
 聊天、多租户、模型供应商、Skills / MCP / 子智能体、沙盒、知识库等通用能力来自 Yuxi，本文只做简述；详细说明见 [项目文档](https://1yu2.github.io/company-relation/)。
@@ -40,28 +40,30 @@ flowchart LR
 
 - 所有服务由 Docker Compose 管理，本地开发支持热重载。
 - 聊天请求先持久化为 AgentRun，再由 ARQ worker 执行 LangGraph；运行事件经 Redis Stream 通过 SSE 推回前端。
-- 报告生成、Neo4j 投影、证据索引和评测实验都是持久化到 PostgreSQL 的后台任务，由同一个 worker 认领执行，进程重启后可以恢复。
+- Neo4j 投影、证据索引和评测实验都是持久化到 PostgreSQL 的后台任务，由同一个 worker 认领执行，进程重启后可以恢复。
 
 ## 企业尽调架构
 
 ```mermaid
 flowchart TB
-    Chat[主聊天：企业尽调智能体] -->|工具 investigate_company| Agent
-    REST[REST /api/company-due-diligence/investigations] --> Agent
-    Agent[CompanyDueDiligenceAgent] --> Plan[InvestigationPlanner<br/>确定性意图解析：主题 / 时间 / 深度 / 展示方式]
-    Plan --> Resolve[EntityResolutionService<br/>名称、简称、信用代码、股票代码 → 唯一 eid]
-    Resolve -->|resolved| QA[CompanyQuestionService / QAWorkflow]
-    Resolve -->|ambiguous / not_found| Reject[返回候选或拒答]
-    QA --> SQ[StructuredQueryService<br/>17 类白名单查询]
-    QA --> GP[GraphPathQueryService<br/>最多三跳关系路径]
-    QA --> EV[EvidenceQueryService<br/>按企业 / 类型 / 日期过滤的文本证据]
-    QA -.可选.-> EXT[外部数据补数<br/>AkShare 公开数据]
-    SQ --> MY[(MySQL 只读)]
-    GP --> NEO[(Neo4j)]
-    EV --> MV[(Milvus + MinIO)]
-    QA --> Ledger[Claim Ledger<br/>来源完整性 / 冲突 / 时效 / 置信度校验]
-    Ledger --> Out[统一响应：事实 + 关系 + 路径 + 证据 + 来源<br/>按 presentation 渲染]
-    Agent -->|专题 / 完整报告| Report[DueDiligenceReportWorkflow<br/>12 章节并行，ARQ 后台执行]
+    Chat[主聊天：企业尽调智能体<br/>deepseek-v4-flash] -->|自主选择| Tools
+    subgraph Tools[cdd_ 原子工具，只封装领域服务]
+        R[cdd_resolve_company<br/>名称 / 信用代码 / 股票代码 / 上下文 eid → 唯一 eid]
+        F[cdd_query_facts<br/>17 类白名单查询]
+        P[cdd_query_relations<br/>最多三跳关系路径]
+        E[cdd_search_evidence<br/>按企业过滤的文本证据]
+        G[cdd_query_global_stats<br/>数据覆盖 / 共同股东]
+        X[query_external_company_data<br/>外部数据补充]
+    end
+    R & F & G --> MY[(MySQL 只读)]
+    P --> NEO[(Neo4j)]
+    E --> MV[(Milvus + MinIO)]
+    Chat --> Ans[最终回答：逐句引用 ［F:fact_id］<br/>普通问答，或用户要求时的尽调报告]
+    Ans --> Gate{回答门禁<br/>引用存在 / 值一致 / 主体一致}
+    Gate -->|通过| Out[整段输出]
+    Gate -->|不通过| Rewrite[附原因重写，最多 2 次]
+    Rewrite --> Gate
+    Gate -->|仍不通过| Fallback[回退：代码列出本轮事实]
 ```
 
 **数据边界**
@@ -73,11 +75,11 @@ flowchart TB
 
 **数据规模**（2026-08-11 只读扫描）：924 家企业，13,171 条股东记录，7,365 条产品，3,409 条融资，999 条行政处罚，196,327 条许可，2,053,965 条专利关系。
 
-**当前实现与限制**（如实说明）
+**实现说明**
 
-- 主聊天中的智能体只看到一个工具 `investigate_company`（另有外部数据补数工具）。意图解析由关键词规则完成，LLM 实际上只负责转交问题，所以它更接近“工具内的确定性工作流”，还不是自主选择工具的 Agent。
-- 因此换一种问法就可能路由失败。例如“股东情况”不会触发股东查询，这正是下面 Q-02 基线中剩余失败的原因。
-- 下一步的 Agent 化方案：把大工具拆成实体解析 / 结构化查询 / 关系 / 证据 / 外部数据 / 报告几个小工具，由 LLM 输出 `InvestigationIntent`（关键词规则保留为对照和回退，并计数），以 Claim Ledger 作为最终回答的门禁，再用同一套 Q-02 题与确定性基线逐题对比。
+- 问答和报告共用同一个 Agent 和同一条门禁链路。报告只在用户明确要求时生成，按 12 个章节取数成文，缺数据的章节如实说明。
+- 门禁只校验带引用的句子；表格中的数字等未引用内容只告警、不拦截。模型调用不逐字推送，运行期间页面显示工具进度，门禁通过后整段显示回答。
+- 原来的确定性工作流（关键词意图规划、`investigate_company`、十二章节报告任务链路）已经移除。在同样的题集上，它是 Q-02 v4 29/36、Q-03 改写题 16/60，并且会在“点名企业不存在”时回答上下文企业的数据。
 
 ## Agent 评测体系
 
@@ -88,9 +90,9 @@ flowchart LR
     JOB --> RO[rollout × N<br/>每条单独提交，可续跑]
     RO --> RUN{runner}
     RUN -->|agent_run| AR[真实 AgentRun]
-    RUN -->|company_due_diligence| CS[企业尽调服务]
+    RUN -->|fixture| FX[固定回答]
     AR --> EVAL[按协议选择评分器]
-    CS --> EVAL
+    FX --> EVAL
     EVAL --> M[(指标 / Trace / 失败归因)]
     M --> SUM[实验摘要]
     SUM --> CMP[逐题对比<br/>McNemar]
@@ -121,9 +123,10 @@ flowchart LR
 | `agent_python_tasks_v1`（16 题，已人工确认），`default-chatbot` 每题 3 次 | pass@1 85.4%（41/48），pass^3 81.3%，答案值正确率 100%；失败集中在“没有只输出答案”的格式问题 | `pex_ac41bcb1a9633efa776f0eadfe04` |
 | 同题集换 `qwen3.7-flash` | 通过率不变（0 修复 / 0 退化），Agent 端到端 P50 增加 70% | `pex_b7fafad784abd613ba0ea709ab07` |
 | 并发压测，每组 32 个样本 | 并发 1 / 4 / 8 / 16 时吞吐为 5.9 / 19.7 / 27.2 / 35.2 题/分钟，pass@1 均为 87.5% | `pex_707919b432e935c3588f28c2a050` 等 4 组 |
-| 企业尽调 Q-02 v3（36 题），确定性工作流 | pass@1 80.6%（29/36）；实体识别 36/36，拒答 8/8；剩余 7 题失败都是因为关键词路由不认识“股东情况” | `pex_23894b696b5ae6ad943e2011531d` |
+| 企业尽调 Q-02 v4（36 题），企业尽调智能体 | 36/36、35/36；与当时的确定性工作流（29/36）逐题对比，McNemar p = 0.016 / 0.031，没有退化题 | `pex_5bcb52301a639c05448a343556a1`、`pex_5d82c8d68a93b81baa47e2d41f3f` |
+| 企业尽调 Q-03 改写鲁棒性（60 题） | 智能体 59/60 × 2；确定性工作流 16/60 | `pex_93e30d2a5c0c2b94cbce83816e8f`、`pex_b59fd01b0a684888008247807ba1`、`pex_68cb795fd3f4b54599d8e0e423d1` |
 
-这些数字都来自本机上的单次运行，只用于说明评测体系能做什么，不能外推为生产环境的准确率或容量。Q-02 v3 的参考答案由源表只读 SQL 独立生成，**尚未经人工抽查**。知识库问答的真实实验、LLM Judge 的人工校准、故障注入题的确认和线上抽样率还需要提供数据、标注或人工决策。
+这些数字都来自本机上的单次运行，只用于说明评测体系能做什么，不能外推为生产环境的准确率或容量。Q-02 / Q-03 的参考答案由源表只读 SQL 独立生成，**尚未经人工抽查**。知识库问答的真实实验、LLM Judge 的人工校准、故障注入题的确认和线上抽样率还需要提供数据、标注或人工决策。
 
 ## 快速开始
 

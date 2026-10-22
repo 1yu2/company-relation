@@ -10,7 +10,6 @@ import pytest
 
 from yuxi.evaluation import agent_runner
 from yuxi.evaluation.cdd_agent_adapter import build_cdd_agent_actual
-from yuxi.evaluation.experiment_service import _evaluator_versions
 
 COMPANY = {"eid": "eid-1", "name": "示例股份有限公司"}
 RESOLVE = {"status": "resolved", "company": COMPANY, "candidates": [], "sources": [{"source_id": "s-id"}]}
@@ -76,14 +75,6 @@ def test_failed_tool_calls_and_unknown_citations_are_ignored():
     actual = build_cdd_agent_actual("注册资本为100元［F:fact:cap］［F:fact:missing］。", calls, None)
 
     assert actual["facts"] == []
-
-
-@pytest.mark.unit
-def test_cdd_agent_protocol_uses_same_evaluator_version_as_deterministic_runner():
-    """评分器版本一致，新 Agent 实验才能与确定性基线逐题对比。"""
-    tasks = [SimpleNamespace(protocol=agent_runner.CDD_AGENT_PROTOCOL)]
-
-    assert _evaluator_versions("agent_run", tasks) == _evaluator_versions("company_due_diligence", tasks)
 
 
 @pytest.mark.unit

@@ -8,6 +8,10 @@ import pytest
 from yuxi.repositories.agent_repository import (
     AgentRepository,
     COMPANY_DUE_DILIGENCE_AGENT_SLUG,
+    COMPANY_DUE_DILIGENCE_MODEL,
+    COMPANY_DUE_DILIGENCE_SYSTEM_PROMPT,
+    COMPANY_DUE_DILIGENCE_TOOLS,
+    LEGACY_COMPANY_DUE_DILIGENCE_REACT_SLUG,
     DEEP_RESEARCH_AGENT_SLUG,
     DEFAULT_AGENT_BACKEND_ID,
     DEFAULT_SHARE_CONFIG,
@@ -79,7 +83,7 @@ async def test_ensure_deep_research_agents_is_idempotent(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ensure_company_due_diligence_agent_creates_one_global_instance(monkeypatch):
-    """企业尽调内置 Agent 应使用唯一 slug 和全局共享配置。"""
+    """企业尽调智能体使用唯一 slug、全局共享，并以 cdd_ 工具和回答门禁运行。"""
     db = CollectingDb()
     repo = AgentRepository(db)
 
@@ -91,12 +95,13 @@ async def test_ensure_company_due_diligence_agent_creates_one_global_instance(mo
     assert agent.backend_id == DEFAULT_AGENT_BACKEND_ID
     assert agent.is_subagent is False
     assert agent.share_config == DEFAULT_SHARE_CONFIG
-    assert agent.config_json["context"]["tools"] == ["investigate_company"]
+    assert agent.config_json["context"]["tools"] == COMPANY_DUE_DILIGENCE_TOOLS
+    assert agent.config_json["context"]["company_answer_gate"] is True
 
 
 @pytest.mark.asyncio
-async def test_ensure_company_due_diligence_agent_repairs_legacy_runtime_config(monkeypatch):
-    """历史企业尽调 Agent 缺少工具或全局权限时应在启动阶段自动修复。"""
+async def test_ensure_company_due_diligence_agent_migrates_deterministic_config(monkeypatch):
+    """旧配置只挂 investigate_company 时一次性覆盖为 Agent 配置；阶段 3 的独立 Agent 记录被删除。"""
     db = CollectingDb()
     repo = AgentRepository(db)
     agent = SimpleNamespace(
@@ -104,20 +109,47 @@ async def test_ensure_company_due_diligence_agent_repairs_legacy_runtime_config(
         backend_id=SUB_AGENT_BACKEND_ID,
         is_subagent=True,
         share_config={"access_level": "user", "department_ids": [], "user_uids": ["u1"]},
-        config_json={"context": {"model": "deepseek:deepseek-chat"}},
+        config_json={"context": {"model": "deepseek:deepseek-chat", "tools": ["investigate_company"]}},
+        description="旧描述",
         updated_by=None,
         updated_at=None,
     )
-    monkeypatch.setattr(repo, "get_by_slug", AsyncMock(return_value=agent))
+    legacy = SimpleNamespace(slug=LEGACY_COMPANY_DUE_DILIGENCE_REACT_SLUG)
+    slugs = {COMPANY_DUE_DILIGENCE_AGENT_SLUG: agent, LEGACY_COMPANY_DUE_DILIGENCE_REACT_SLUG: legacy}
+    monkeypatch.setattr(repo, "get_by_slug", AsyncMock(side_effect=slugs.get))
+    delete = AsyncMock()
+    monkeypatch.setattr(repo, "delete", delete)
 
     result = await repo.ensure_company_due_diligence_agent(created_by="system")
 
     assert result is agent
+    delete.assert_awaited_once_with(agent=legacy)
     assert agent.backend_id == DEFAULT_AGENT_BACKEND_ID
     assert agent.is_subagent is False
     assert agent.share_config == DEFAULT_SHARE_CONFIG
-    assert agent.config_json["context"]["model"] == "deepseek:deepseek-chat"
-    assert agent.config_json["context"]["tools"] == ["investigate_company"]
-    assert agent.config_json["context"]["system_prompt"].strip()
+    assert agent.config_json["context"]["tools"] == COMPANY_DUE_DILIGENCE_TOOLS
+    assert agent.config_json["context"]["model"] == COMPANY_DUE_DILIGENCE_MODEL
+    assert agent.config_json["context"]["system_prompt"] == COMPANY_DUE_DILIGENCE_SYSTEM_PROMPT
     db.commit.assert_awaited_once()
     db.refresh.assert_awaited_once_with(agent)
+
+
+@pytest.mark.asyncio
+async def test_ensure_company_due_diligence_agent_keeps_admin_changes(monkeypatch):
+    """迁移只针对旧确定性配置；管理员改过的 Agent 配置不会被覆盖。"""
+    db = CollectingDb()
+    repo = AgentRepository(db)
+    context = {"model": "provider:custom", "tools": ["cdd_resolve_company"], "system_prompt": "自定义"}
+    agent = SimpleNamespace(
+        slug=COMPANY_DUE_DILIGENCE_AGENT_SLUG,
+        backend_id=DEFAULT_AGENT_BACKEND_ID,
+        is_subagent=False,
+        share_config=DEFAULT_SHARE_CONFIG.copy(),
+        config_json={"context": dict(context)},
+    )
+    monkeypatch.setattr(repo, "get_by_slug", AsyncMock(side_effect={COMPANY_DUE_DILIGENCE_AGENT_SLUG: agent}.get))
+
+    await repo.ensure_company_due_diligence_agent()
+
+    assert agent.config_json["context"] == context
+    db.commit.assert_not_awaited()

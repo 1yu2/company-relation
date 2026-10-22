@@ -111,65 +111,8 @@ async def test_cancel_draft_experiment_is_terminal_and_rerun_is_idempotent(evalu
     assert repeated["status"] == "CANCELLED"
 
 
-async def test_domain_experiment_uses_real_dto_and_persists_quality(evaluation_session, monkeypatch):
-    """领域实验必须使用问答 DTO，持久化评分和真实步骤字段。"""
-    from yuxi.company_due_diligence.qa.service import company_question_service
-    from yuxi.company_due_diligence.qa.models import QueryStep
-
-    seen = []
-
-    async def query(request):
-        seen.append(request)
-        return SimpleNamespace(
-            steps=[QueryStep(source="mysql", operation="registered_capital", status="complete")],
-            model_dump=lambda **kwargs: {
-                "resolution_status": "resolved",
-                "company": {"eid": "test"},
-                "facts": [],
-                "sources": [],
-                "latency": {"total_ms": 2},
-            },
-        )
-
-    monkeypatch.setattr(company_question_service, "query", query)
-    service = PlatformEvaluationService()
-    dataset = await service.create_dataset(
-        db=evaluation_session, name="domain", description="", source_kind="company_due_diligence", created_by="test"
-    )
-    version = await service.create_version(
-        db=evaluation_session,
-        dataset_id=dataset["dataset_id"],
-        source={},
-        tasks=[
-            {
-                "task_key": "domain-one",
-                "protocol": "cdd_q02_review_v1",
-                "input": {"query": "注册资本是多少", "company_reference": {"eid": "test"}},
-                "expected": {"status": "resolved", "company": {"eid": "test"}, "review_status": "reviewed"},
-            }
-        ],
-    )
-    await service.publish_version(db=evaluation_session, version_id=version["version_id"])
-    with pytest.raises(ValueError, match="只能使用 company_due_diligence 或 agent_run runner"):
-        await service.create_experiment(
-            db=evaluation_session, data={"dataset_version_id": version["version_id"]}, created_by="test"
-        )
-    experiment = await service.create_experiment(
-        db=evaluation_session,
-        data={"dataset_version_id": version["version_id"], "runner": "company_due_diligence"},
-        created_by="test",
-    )
-    result = await service.run_experiment(db=evaluation_session, experiment_id=experiment["experiment_id"])
-    assert result["rollouts"][0]["status"] == "COMPLETED"
-    assert result["aggregate"]["pass@1"] == 1
-    assert seen[0].enable_external_fallback is False
-    assert seen[0].company_ref.eid == "test"
-    trace = await service.get_rollout_trace(db=evaluation_session, rollout_id=result["rollouts"][0]["rollout_id"])
-    assert trace["events"][0]["operation"] == "registered_capital"
-
-
 async def test_domain_dataset_accepts_cdd_agent_experiment(evaluation_session, fake_agent_snapshot):
-    """企业尽调数据集可以用 agent_run 跑企业尽调 Agent，评分版本与确定性 runner 相同，并记录转换版本。"""
+    """企业尽调数据集只能用 agent_run 跑企业尽调 Agent，评分版本为企业尽调评分器，并记录转换版本。"""
     service = PlatformEvaluationService()
     dataset = await service.create_dataset(
         db=evaluation_session, name="domain", description="", source_kind="company_due_diligence", created_by="test"
@@ -188,6 +131,14 @@ async def test_domain_dataset_accepts_cdd_agent_experiment(evaluation_session, f
         ],
     )
     await service.publish_version(db=evaluation_session, version_id=version["version_id"])
+    # 确定性问答 runner 已移除，fixture 没有对应的回答来源，企业尽调题只能由 Agent 回答。
+    for runner in ("company_due_diligence", "fixture"):
+        with pytest.raises(ValueError):
+            await service.create_experiment(
+                db=evaluation_session,
+                data={"dataset_version_id": version["version_id"], "runner": runner},
+                created_by="test",
+            )
 
     experiment = await service.create_experiment(
         db=evaluation_session,

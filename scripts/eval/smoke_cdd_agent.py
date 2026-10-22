@@ -6,7 +6,7 @@
   聊天中没有这个上下文，所以改写成企业全称。
 
 逐题串行执行，延迟不受并发影响。在 api 容器中运行（会调用模型，产生少量费用）：
-    docker exec -i api-dev uv run python - < scripts/eval/smoke_cdd_react_agent.py > smoke.json
+    docker exec -i api-dev uv run python - < scripts/eval/smoke_cdd_agent.py > smoke.json
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from yuxi.company_due_diligence.entity_resolution import entity_resolution_servi
 from yuxi.company_due_diligence.models import CompanyReference
 from yuxi.company_due_diligence.mysql import company_due_diligence_mysql
 
-AGENT_SLUG = "company-due-diligence-react"
+AGENT_SLUG = "company-due-diligence"
 BASE_URL = "http://localhost:5050/api"
 STAGE2_EIDS = [
     "0047ad44-ae81-4711-87e3-5662afa36c90",

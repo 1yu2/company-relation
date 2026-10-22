@@ -2,9 +2,7 @@
 
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from yuxi.company_due_diligence.agent.models import CompanyInvestigationRequest, CompanyInvestigationResponse
-from yuxi.company_due_diligence.agent.service import company_due_diligence_agent
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from yuxi.company_due_diligence.entity_resolution import entity_resolution_service
 from yuxi.company_due_diligence.evidence.indexer import EvidenceIndexUnavailableError
 from yuxi.company_due_diligence.evidence.models import (
@@ -26,15 +24,6 @@ from yuxi.company_due_diligence.models import (
     StructuredQueryResult,
 )
 from yuxi.company_due_diligence.mysql import MySQLHealth, company_due_diligence_mysql
-from yuxi.company_due_diligence.qa.models import CompanyQuestionRequest, CompanyQuestionResponse
-from yuxi.company_due_diligence.qa.service import company_question_service
-from yuxi.company_due_diligence.report.models import DueDiligenceReportRequest, ReportFormat, ReportSection
-from yuxi.company_due_diligence.report.service import (
-    ReportDispatchError,
-    ReportNotFoundError,
-    ReportValidationError,
-    due_diligence_report_service,
-)
 from yuxi.company_due_diligence.structured_query_service import structured_query_service
 from yuxi.services.task_service import tasker
 from yuxi.storage.postgres.models_business import User
@@ -86,124 +75,6 @@ async def query_company_structure(
     """执行受控企业结构化查询并返回统一来源契约。"""
     del current_user
     return await structured_query_service.query(request)
-
-
-@company_due_diligence_router.post("/query", response_model=CompanyQuestionResponse)
-async def query_company(
-    request: CompanyQuestionRequest,
-    current_user: User = Depends(get_admin_user),
-) -> CompanyQuestionResponse:
-    """执行简单企业问答或最多三跳关系查询。"""
-    del current_user
-    return await company_question_service.query(request)
-
-
-@company_due_diligence_router.post("/investigations", response_model=CompanyInvestigationResponse)
-async def investigate_company(
-    request: CompanyInvestigationRequest,
-    current_user: User = Depends(get_admin_user),
-) -> CompanyInvestigationResponse:
-    """执行统一企业调查，并按意图返回同步结果或异步报告任务。"""
-    del current_user
-    return await company_due_diligence_agent.investigate(request, tasker=tasker)
-
-
-@company_due_diligence_router.post("/reports", status_code=status.HTTP_202_ACCEPTED)
-async def create_due_diligence_report(
-    request: DueDiligenceReportRequest,
-    current_user: User = Depends(get_admin_user),
-) -> dict:
-    """解析唯一企业并提交完整尽调报告任务。"""
-    del current_user
-    try:
-        task = await due_diligence_report_service.create(request, tasker)
-    except ReportValidationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except ReportDispatchError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return {"report_id": task.id, "task_id": task.id, "status": "queued"}
-
-
-@company_due_diligence_router.get("/reports")
-async def list_due_diligence_reports(
-    limit: int = Query(default=50, ge=1, le=100),
-    current_user: User = Depends(get_admin_user),
-) -> dict:
-    """返回企业尽调报告任务摘要。"""
-    del current_user
-    reports = await due_diligence_report_service.list_reports(tasker, limit)
-    return {"reports": reports}
-
-
-@company_due_diligence_router.get("/reports/{report_id}")
-async def get_due_diligence_report(
-    report_id: str,
-    current_user: User = Depends(get_admin_user),
-) -> dict:
-    """返回报告任务状态和已发布报告记录。"""
-    del current_user
-    try:
-        return await due_diligence_report_service.get_report(report_id, tasker)
-    except ReportNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-
-@company_due_diligence_router.post("/reports/{report_id}/cancel", status_code=status.HTTP_202_ACCEPTED)
-async def cancel_due_diligence_report(
-    report_id: str,
-    current_user: User = Depends(get_admin_user),
-) -> dict:
-    """请求取消尚未进入终态的报告任务。"""
-    del current_user
-    try:
-        cancelled = await due_diligence_report_service.cancel(report_id, tasker)
-    except ReportNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if not cancelled:
-        raise HTTPException(status_code=409, detail="报告任务已进入终态，无法取消")
-    return {"report_id": report_id, "cancel_requested": True}
-
-
-@company_due_diligence_router.post(
-    "/reports/{report_id}/sections/{section}/retry",
-    status_code=status.HTTP_202_ACCEPTED,
-)
-async def retry_due_diligence_report_section(
-    report_id: str,
-    section: ReportSection,
-    current_user: User = Depends(get_admin_user),
-) -> dict:
-    """提交单个报告章节重试任务。"""
-    del current_user
-    try:
-        task = await due_diligence_report_service.retry_section(report_id, section, tasker)
-    except ReportNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"report_id": report_id, "task_id": task.id, "status": "queued"}
-
-
-@company_due_diligence_router.get("/reports/{report_id}/download")
-async def download_due_diligence_report(
-    report_id: str,
-    report_format: ReportFormat = Query(alias="format"),
-    current_user: User = Depends(get_admin_user),
-) -> Response:
-    """下载并校验 JSON 或 Markdown 报告文件。"""
-    del current_user
-    try:
-        content, artifact = await due_diligence_report_service.download(report_id, report_format)
-    except ReportNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    media_type = "application/json" if report_format == ReportFormat.JSON else "text/markdown; charset=utf-8"
-    suffix = "json" if report_format == ReportFormat.JSON else "md"
-    return Response(
-        content=content,
-        media_type=media_type,
-        headers={
-            "Content-Disposition": f'attachment; filename="company-due-diligence-{report_id}.{suffix}"',
-            "ETag": artifact.checksum,
-        },
-    )
 
 
 @company_due_diligence_router.post("/graph/projections", status_code=status.HTTP_202_ACCEPTED)
