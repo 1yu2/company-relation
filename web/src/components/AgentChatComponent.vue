@@ -1472,7 +1472,10 @@ const getThreadOngoingMessages = (threadId) => {
     .map(MessageProcessor.mergeMessageChunk)
     .filter(Boolean)
   return msgs.length > 0
-    ? MessageProcessor.convertToolResultToMessages(msgs).filter((msg) => msg.type !== 'tool')
+    ? MessageProcessor.convertToolResultToMessages(
+        msgs,
+        threadMessages.value[threadId] || []
+      ).filter((msg) => msg.type !== 'tool')
     : []
 }
 

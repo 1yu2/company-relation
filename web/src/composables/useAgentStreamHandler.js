@@ -77,6 +77,25 @@ const toolFinishedMessage = (chunk) => {
   return { ...output, type: 'tool', id }
 }
 
+// 模型调用标记 nostream 的智能体（如企业尽调）运行中没有 AI 消息块，工具卡片无从生成。
+// 由主图 tool-started 事件合成一条只含该工具调用的 AI 消息块作为进度占位；
+// 若真实 AI 消息已含同一 tool_call_id，convertToolResultToMessages 会丢弃此占位。
+const toolStartedMessage = (chunk) => {
+  const streamEvent = chunk?.event
+  if (!streamEvent || streamEvent.method !== 'tools' || streamEvent.namespace?.length) return null
+
+  const data = streamEvent.data
+  if (!data || data.event !== 'tool-started' || !data.tool_call_id) return null
+
+  return {
+    id: `tool-progress:${data.tool_call_id}`,
+    type: 'AIMessageChunk',
+    content: '',
+    tool_progress: true,
+    tool_calls: [{ id: data.tool_call_id, name: data.tool_name, args: data.input || {} }]
+  }
+}
+
 export function useAgentStreamHandler({
   getThreadState,
   processApprovalInStream,
@@ -155,7 +174,7 @@ export function useAgentStreamHandler({
         {
           // 工具结果需立即落地（不经平滑层），写入 msgChunks 后由 convertToolResultToMessages
           // 按 tool_call_id 关联到对应 AI 消息的 tool_call，驱动其完成态。
-          const toolMessage = toolFinishedMessage(chunk)
+          const toolMessage = toolFinishedMessage(chunk) || toolStartedMessage(chunk)
           if (toolMessage) {
             if (!threadState.onGoingConv.msgChunks[toolMessage.id]) {
               threadState.onGoingConv.msgChunks[toolMessage.id] = []
