@@ -9,7 +9,7 @@
 - 企业尽调新增身份解析、白名单事实、关系、证据、异步报告五个原子工具，与现有外部数据工具组成六项能力；保留事实和来源标识、失败按工具错误处理，暂不接入 Agent。
 - 企业尽调新增引用式回答门禁原型 `validate_answer_citations`：回答在句末用全角方括号引用工具结果 ID，门禁检查引用是否存在、引用事实的值是否出现在同一句（容忍千分位、百分比与小数、万元/亿元与元、`YYYY-MM-DD` 与中文日期；未引用但含数字的句子只告警）、主体是否属于目标企业，证据句确定性措辞只报告；附带用真实工具结果和模型回答做离线验证的脚本 `scripts/eval/validate_cdd_answer_gate.py`，暂不接入 Agent。
 - 企业尽调智能体（`company-due-diligence`）改为 Agent：只挂 `cdd_` 原子工具与外部数据工具，由模型自选查询；回答逐句引用工具结果，经 `CompanyAnswerGateMiddleware` 校验后整段输出，不通过带原因重写最多 2 次，仍不通过回退为事实清单（字段用中文名，持股比例显示为百分数）；运行中前端由 `tool-started`/`tool-finished` 事件展示工具进度卡片；`cdd_` 结果不再被卸载为文件预览。
-- 移除企业尽调确定性工作流：`investigate_company`、关键词意图规划、问答工作流、Claim Ledger、十二章节报告任务链路与 `/query`、`/investigations`、`/reports*` 接口、未挂载的前端组件和确定性评测 runner；报告改由智能体在用户要求时直接输出，全局统计改为 `cdd_query_global_stats` 工具，已有环境启动时一次性迁移旧配置。
+- 移除企业尽调确定性工作流：`investigate_company`、关键词意图规划、问答工作流、Claim Ledger、十二章节报告任务链路与 `/query`、`/investigations`、`/reports*` 接口、未挂载的前端组件和确定性评测 runner；报告改由智能体在用户要求时直接输出，全局统计改为 `cdd_query_global_stats` 工具，已有环境启动时一次性迁移旧配置，阶段 3 独立 Agent 的会话改绑到企业尽调智能体（否则打开这些会话会报“智能体不存在”）。
 - 企业尽调 Agent 提示词：问到工商或核心经营信息时必须原样列出经营范围并引用，表格每一行在最后一个单元格内带上引用，`list_all` 只在用户原话要求全部时使用；门禁重写说明提示删除推断句上的引用。
 - 企业尽调 Agent 接入平台评测：`cdd_q02_review_v1` 题可用 `agent_run` runner 运行，runner 把 Run 转成企业尽调评分字段（只计最终回答引用的事实，门禁回退计为无事实；未引用事实且点名企业未找到时，身份按未找到计），评分器与确定性 runner 同版本，可逐题对比；依赖当前企业的题在问题前注入上下文 eid，`cdd_resolve_company` 支持按 eid 确认企业。
 - 新增企业尽调改写鲁棒性题集 Q-03（`scripts/eval/datasets/cdd_q03_paraphrase_v1.json`，60 题）：Q-02 的 5 个意图各用多种问法提问，参考答案按任务的 `intent` 沿用 Q-02 口径生成（`build_cdd_q03_dataset.py`；Q-02 参考答案生成器支持显式意图，无意图时仍按关键词）。
