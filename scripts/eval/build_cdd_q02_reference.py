@@ -115,13 +115,15 @@ async def build_reference(conn, task_input: dict) -> tuple[dict | None, list[str
     company = await fetch_enterprise(conn, eid)
     notes: list[str] = []
     facts: list[dict] = []
-    if topic == "structured_fact" and "注册资本" in query:
+    # 改写题（Q-03）不一定含“注册资本”“股东”等词，按任务显式标注的意图取参考口径；Q-02 没有该字段，沿用关键词规则。
+    intent = task_input.get("intent") or legacy_intent(topic, query)
+    if intent == "profile_basics":
         facts += profile_facts(company, ("registered_capital", "legal_representative", "business_status"))
-    elif topic == "structured_fact" and "股东" in query:
+    elif intent == "current_holders":
         holders, holder_notes = await fetch_current_holders(conn, eid, list_all="全部" in query)
         facts += shareholder_facts(holders, with_capital=True)
         notes += holder_notes
-    elif topic == "routing_context":
+    elif intent == "core_info_and_holders":
         facts += profile_facts(
             company,
             ("registered_capital", "legal_representative", "business_status", "established_date", "business_scope"),
@@ -134,6 +136,17 @@ async def build_reference(conn, task_input: dict) -> tuple[dict | None, list[str
 
     sources = sorted({fact["source_id"] for fact in facts})
     return {"status": "resolved", "facts": facts, "source_refs": [{"source_id": item} for item in sources]}, notes
+
+
+def legacy_intent(topic: str, query: str) -> str | None:
+    """Q-02 题没有 intent 字段时，按原关键词规则推断意图，保证 Q-02 参考答案可复现。"""
+    if topic == "structured_fact" and "注册资本" in query:
+        return "profile_basics"
+    if topic == "structured_fact" and "股东" in query:
+        return "current_holders"
+    if topic == "routing_context":
+        return "core_info_and_holders"
+    return None
 
 
 async def fetch_enterprise(conn, eid: str) -> dict:

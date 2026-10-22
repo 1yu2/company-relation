@@ -10,6 +10,7 @@
 | --- | --- | --- | --- |
 | `agent_python_tasks_v1.json` | `agent_final_answer_v1` | 16 | 人工确认（2026-10-20） |
 | `agent_fault_tasks_v1.json` | `agent_fault_recovery_v1` | 8 | 待人工确认（故障注入：工具报错后恢复、超时、数据源不可用） |
+| `cdd_q03_paraphrase_v1.json` | `cdd_q02_review_v1` | 60 | 问法经用户确认（2026-10-22），参考答案由 `build_cdd_q03_dataset.py` 按 Q-02 口径从源表生成 |
 
 ## 导入步骤
 
