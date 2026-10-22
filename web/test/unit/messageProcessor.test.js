@@ -49,3 +49,33 @@ for (const status of ['error', 'success']) {
     assert.equal(messages[0].tool_calls[0].tool_call_result, response)
   })
 }
+
+test('工具进度占位在真实 AI 消息已含同一工具调用时被丢弃', () => {
+  const progress = (id) => ({
+    type: 'ai',
+    tool_progress: true,
+    tool_calls: [{ id, name: 'cdd_resolve_company', args: {} }]
+  })
+  const messages = MessageProcessor.convertToolResultToMessages([
+    { type: 'ai', content: '', tool_calls: [{ id: 'call-1', function: { name: 'search' } }] },
+    progress('call-1'),
+    progress('call-2'),
+    { type: 'tool', tool_call_id: 'call-2', status: 'success', content: 'ok' }
+  ])
+  assert.deepEqual(
+    messages.filter((message) => message.type === 'ai').map((message) => message.tool_calls[0].id),
+    ['call-1', 'call-2']
+  )
+  assert.equal(messages[1].tool_calls[0].status, 'success')
+})
+
+test('审批恢复后历史中已有的工具调用不再生成进度占位', () => {
+  const history = [{ type: 'ai', tool_calls: [{ id: 'call-1', name: 'execute', args: {} }] }]
+  const messages = MessageProcessor.convertToolResultToMessages(
+    [
+      { type: 'ai', tool_progress: true, tool_calls: [{ id: 'call-1', name: 'execute', args: {} }] }
+    ],
+    history
+  )
+  assert.deepEqual(messages, [])
+})

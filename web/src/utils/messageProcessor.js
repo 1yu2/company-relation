@@ -5,10 +5,12 @@ export class MessageProcessor {
   /**
    * 将工具结果与消息合并
    * @param {Array} msgs - 消息数组
+   * @param {Array} historyMsgs - 已展示的历史消息，仅用于丢弃重复的工具进度占位
    * @returns {Array} 合并后的消息数组
    */
-  static convertToolResultToMessages(msgs) {
+  static convertToolResultToMessages(msgs, historyMsgs = []) {
     const toolResponseMap = new Map()
+    const modelToolCallIds = new Set()
 
     // 构建工具响应映射
     for (const item of msgs) {
@@ -21,8 +23,18 @@ export class MessageProcessor {
       }
     }
 
+    // 工具进度占位（见 useAgentStreamHandler）在真实 AI 消息（含审批恢复前的历史）已含该工具调用时丢弃
+    for (const item of [...historyMsgs, ...msgs]) {
+      if (item.type === 'ai' && !item.tool_progress) {
+        item.tool_calls?.forEach((toolCall) => modelToolCallIds.add(toolCall.id))
+      }
+    }
+    const visibleMsgs = msgs.filter(
+      (item) => !item.tool_progress || !modelToolCallIds.has(item.tool_calls[0].id)
+    )
+
     // 合并工具调用和响应
-    const convertedMsgs = msgs.map((item) => {
+    const convertedMsgs = visibleMsgs.map((item) => {
       if (item.type === 'ai' && item.tool_calls && item.tool_calls.length > 0) {
         return {
           ...item,

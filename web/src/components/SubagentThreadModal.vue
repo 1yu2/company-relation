@@ -162,7 +162,9 @@ const streamedMessages = computed(() => {
     .map(MessageProcessor.mergeMessageChunk)
     .filter(Boolean)
   return msgs.length > 0
-    ? MessageProcessor.convertToolResultToMessages(msgs).filter((msg) => msg.type !== 'tool')
+    ? MessageProcessor.convertToolResultToMessages(msgs, messages.value).filter(
+        (msg) => msg.type !== 'tool'
+      )
     : []
 })
 const hasStreamedMessages = computed(() => streamedMessages.value.length > 0)
