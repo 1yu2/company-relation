@@ -7,6 +7,14 @@ import os
 import uuid
 
 import pytest
+from sqlalchemy import select
+
+from yuxi.storage.postgres.manager import pg_manager
+from yuxi.storage.postgres.models_evaluation import (
+    PlatformEvaluationDataset,
+    PlatformEvaluationDatasetVersion,
+    PlatformEvaluationExperiment,
+)
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
@@ -74,6 +82,114 @@ async def test_admin_can_run_fixture_and_use_cursor(test_client, admin_headers):
     first_page = await test_client.get("/api/platform-evaluations/experiments?limit=1", headers=admin_headers)
     assert first_page.status_code == 200
     assert isinstance(first_page.json()["data"]["items"], list)
+
+
+@pytest.fixture
+async def eval_db():
+    """绑定到当前测试事件循环的直连会话，在写接口返回后立刻查库，不经过下一次请求的鉴权耗时。"""
+    if pg_manager.async_engine:
+        await pg_manager.async_engine.dispose()
+    pg_manager._initialized = False
+    pg_manager.initialize()
+    async with pg_manager.get_async_session_context() as session:
+        yield session
+
+
+@pytest.mark.skipif(os.getenv("LITE_MODE", "").lower() in {"true", "1"}, reason="评测路由在 LITE_MODE 不注册")
+async def test_write_is_committed_before_response(test_client, admin_headers, eval_db):
+    """写接口返回前必须已提交：响应一到，库里就能读到刚创建/发布的资源，紧接着启动实验不会 404。
+
+    提交若放在依赖退出时，会晚于响应发送，竞态窗口只有几毫秒，所以多轮重复并在响应后直接查库。
+    """
+    for round_no in range(20):
+        suffix = f"{uuid.uuid4().hex[:10]}-{round_no}"
+        dataset = await test_client.post(
+            "/api/platform-evaluations/datasets",
+            json={"name": f"api-commit-{suffix}", "source_kind": "fixture"},
+            headers=admin_headers,
+        )
+        assert dataset.status_code == 200, dataset.text
+        dataset_id = dataset.json()["data"]["dataset_id"]
+        assert await eval_db.scalar(
+            select(PlatformEvaluationDataset.dataset_id).where(PlatformEvaluationDataset.dataset_id == dataset_id)
+        ), f"第 {round_no} 轮：数据集在响应后尚未提交"
+
+        version = await test_client.post(
+            f"/api/platform-evaluations/datasets/{dataset_id}/versions",
+            json={
+                "source": {"type": "inline"},
+                "tasks": [
+                    {
+                        "task_key": f"commit-{suffix}",
+                        "input": {"query": "hello"},
+                        "expected": {"final_answer": {"value": "fixture-ok: hello"}},
+                    }
+                ],
+            },
+            headers=admin_headers,
+        )
+        assert version.status_code == 200, version.text
+        version_id = version.json()["data"]["version_id"]
+        assert (
+            await eval_db.scalar(
+                select(PlatformEvaluationDatasetVersion.status).where(
+                    PlatformEvaluationDatasetVersion.version_id == version_id
+                )
+            )
+            == "draft"
+        ), f"第 {round_no} 轮：数据集版本在响应后尚未提交"
+
+        publish = await test_client.post(
+            f"/api/platform-evaluations/versions/{version_id}/publish", headers=admin_headers
+        )
+        assert publish.status_code == 200, publish.text
+        assert (
+            await eval_db.scalar(
+                select(PlatformEvaluationDatasetVersion.status).where(
+                    PlatformEvaluationDatasetVersion.version_id == version_id
+                )
+            )
+            == "published"
+        ), f"第 {round_no} 轮：发布状态在响应后尚未提交"
+
+        experiment = await test_client.post(
+            "/api/platform-evaluations/experiments", json={"dataset_version_id": version_id}, headers=admin_headers
+        )
+        assert experiment.status_code == 200, experiment.text
+        experiment_id = experiment.json()["data"]["experiment_id"]
+        assert (
+            await eval_db.scalar(
+                select(PlatformEvaluationExperiment.status).where(
+                    PlatformEvaluationExperiment.experiment_id == experiment_id
+                )
+            )
+            == "DRAFT"
+        ), f"第 {round_no} 轮：实验在响应后尚未提交"
+
+        cancel = await test_client.post(
+            f"/api/platform-evaluations/experiments/{experiment_id}/cancel", headers=admin_headers
+        )
+        assert cancel.status_code == 200, cancel.text
+        assert (
+            await eval_db.scalar(
+                select(PlatformEvaluationExperiment.status).where(
+                    PlatformEvaluationExperiment.experiment_id == experiment_id
+                )
+            )
+            == "CANCELLED"
+        ), f"第 {round_no} 轮：取消状态在响应后尚未提交"
+
+        # 用户实际遇到的症状：创建后立刻启动返回 404。
+        rerun = await test_client.post(
+            "/api/platform-evaluations/experiments",
+            json={"dataset_version_id": version_id},
+            headers=admin_headers,
+        )
+        run = await test_client.post(
+            f"/api/platform-evaluations/experiments/{rerun.json()['data']['experiment_id']}/run",
+            headers=admin_headers,
+        )
+        assert run.status_code == 200, run.text
 
 
 @pytest.mark.skipif(os.getenv("LITE_MODE", "").lower() in {"true", "1"}, reason="评测路由在 LITE_MODE 不注册")
