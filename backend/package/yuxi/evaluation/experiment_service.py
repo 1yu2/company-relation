@@ -15,7 +15,13 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from yuxi.evaluation.agent_final_answer import METRIC_VERSION as AGENT_FINAL_ANSWER_METRIC_VERSION
 from yuxi.evaluation.agent_final_answer import evaluate_agent_final_answer
-from yuxi.evaluation.agent_runner import AgentRunnerError, cancel_agent_runs_for_rollouts, run_agent_task
+from yuxi.evaluation.agent_runner import (
+    CDD_AGENT_PROTOCOL,
+    AgentRunnerError,
+    cancel_agent_runs_for_rollouts,
+    run_agent_task,
+)
+from yuxi.evaluation.cdd_agent_adapter import ADAPTER_VERSION as CDD_AGENT_ADAPTER_VERSION
 from yuxi.evaluation.company_due_diligence import METRIC_VERSION as CDD_METRIC_VERSION
 from yuxi.evaluation.company_due_diligence import evaluate_company_due_diligence
 from yuxi.evaluation.fault_recovery import METRIC_VERSION as FAULT_RECOVERY_METRIC_VERSION
@@ -59,6 +65,8 @@ PROTOCOL_EVALUATORS = {
     "agent_fault_recovery_v1": (evaluate_fault_recovery, FAULT_RECOVERY_METRIC_VERSION),
     "agent_rag_answer_v1": (evaluate_rag_answer, RAG_ANSWER_METRIC_VERSION),
     "agent_open_answer_v1": (evaluate_open_answer, LLM_JUDGE_METRIC_VERSION),
+    # 企业尽调 Agent：runner 先把 Run 转成企业尽调字段，评分沿用确定性 runner 的评分器和版本，便于逐题对比。
+    CDD_AGENT_PROTOCOL: (lambda task, actual, events: evaluate_company_due_diligence(task, actual), CDD_METRIC_VERSION),
 }
 ALLOWED_SOURCE_KINDS = {"agent", "tool_mcp", "rag", "graph", "fixture", "company_due_diligence"}
 
@@ -264,6 +272,8 @@ class PlatformEvaluationService:
                 requested_model_spec=config_snapshot.get("model_spec"),
                 creator_uid=str(created_by),
             )
+            if any(task.protocol == CDD_AGENT_PROTOCOL for task in tasks):
+                captured["cdd_agent_adapter"] = CDD_AGENT_ADAPTER_VERSION
         config_snapshot["captured"] = captured
         experiment = await repo.create_experiment(
             {
