@@ -12,6 +12,7 @@ from sqlalchemy.orm import declarative_base
 # Import platform evaluation models so they are registered on BusinessBase.metadata
 # before the existing create_all lifecycle runs.
 from yuxi.storage.postgres import models_evaluation as _models_evaluation  # noqa: F401
+from yuxi.storage.postgres.migrations import lock_startup_ddl
 from yuxi.storage.postgres.models_business import AGENT_RUN_TERMINAL_STATUSES
 from yuxi.storage.postgres.models_business import Base as BusinessBase
 from yuxi.storage.postgres.models_knowledge import Base as KnowledgeBase
@@ -104,6 +105,7 @@ class PostgresManager(metaclass=SingletonMeta):
         """创建所有表（知识库和业务表）"""
         self._check_initialized()
         async with self.async_engine.begin() as conn:
+            await lock_startup_ddl(conn)
             await conn.run_sync(KnowledgeBase.metadata.create_all)
             await conn.run_sync(BusinessBase.metadata.create_all)
         logger.info("PostgreSQL tables created/checked (knowledge + business)")
@@ -112,6 +114,7 @@ class PostgresManager(metaclass=SingletonMeta):
         """创建所有业务数据表"""
         self._check_initialized()
         async with self.async_engine.begin() as conn:
+            await lock_startup_ddl(conn)
             await conn.run_sync(BusinessBase.metadata.create_all)
         logger.info("PostgreSQL business tables created/checked")
 
@@ -474,6 +477,7 @@ class PostgresManager(metaclass=SingletonMeta):
         ]
 
         async with self.async_engine.begin() as conn:
+            await lock_startup_ddl(conn)
             for stmt in stmts:
                 await conn.execute(text(stmt))
 
@@ -874,6 +878,7 @@ class PostgresManager(metaclass=SingletonMeta):
             "CREATE INDEX IF NOT EXISTS ix_agent_run_requests_dispatched_run_id ON agent_run_requests(dispatched_run_id)",  # noqa: E501
         ]
         async with self.async_engine.begin() as conn:
+            await lock_startup_ddl(conn)
             # 历史未绑定用户的 API Key 会在下方迁移语句里被静默删除，先计数告警
             # 便于运维凭据失效时回溯；DELETE 之后无法再查询这些 Key。
             try:

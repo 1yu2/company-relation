@@ -9,7 +9,7 @@ class _RecordingConnection:
     def __init__(self):
         self.statements: list[str] = []
 
-    async def execute(self, statement):
+    async def execute(self, statement, params=None):
         self.statements.append(str(statement))
 
 

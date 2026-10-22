@@ -19,7 +19,7 @@
 
 - 修复企业尽调长任务跨进程恢复边界：报告、Neo4j 图投影和文本证据索引统一保存可恢复请求参数并由 ARQ worker 按任务 ID 原子认领；启动时补投递 pending，活跃任务不被误判，过期任务按最多一次策略恢复，失败或取消不发布半成品版本。
 
-- 明确数据库迁移基线：当前部署没有上一版本升级路径，PostgreSQL 版本表和 advisory lock 用于当前基线及后续新增 schema 变更；不执行不存在的历史升级验证。
+- 明确数据库迁移基线：当前部署没有上一版本升级路径，PostgreSQL 版本表和 advisory lock 用于当前基线及后续新增 schema 变更；不执行不存在的历史升级验证。建表和运行时 schema 演进事务也在同一 advisory lock 内执行，修复 api 与 worker 同时启动时并发 ALTER 锁升级导致的 `deadlock detected` 启动失败，补充双进程真实 PostgreSQL 回归测试。
 
 - 区分 API 存活与发布就绪：保留轻量公开 `/api/system/health`，新增 `/api/system/ready` 检查 PostgreSQL、Redis 和带 TTL 的 worker heartbeat；知识库、图谱和企业 MySQL 等可选能力不阻塞 LITE 就绪。
 
