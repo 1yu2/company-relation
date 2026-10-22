@@ -2,6 +2,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from types import SimpleNamespace
 
+from yuxi.evaluation.company_due_diligence import METRIC_VERSION as CDD_METRIC_VERSION
 from yuxi.evaluation.experiment_service import PlatformEvaluationService
 from yuxi.storage.postgres.models_business import Base
 from yuxi.storage.postgres.models_evaluation import (
@@ -149,7 +150,7 @@ async def test_domain_experiment_uses_real_dto_and_persists_quality(evaluation_s
         ],
     )
     await service.publish_version(db=evaluation_session, version_id=version["version_id"])
-    with pytest.raises(ValueError, match="只能使用 company_due_diligence runner"):
+    with pytest.raises(ValueError, match="只能使用 company_due_diligence 或 agent_run runner"):
         await service.create_experiment(
             db=evaluation_session, data={"dataset_version_id": version["version_id"]}, created_by="test"
         )
@@ -165,6 +166,37 @@ async def test_domain_experiment_uses_real_dto_and_persists_quality(evaluation_s
     assert seen[0].company_ref.eid == "test"
     trace = await service.get_rollout_trace(db=evaluation_session, rollout_id=result["rollouts"][0]["rollout_id"])
     assert trace["events"][0]["operation"] == "registered_capital"
+
+
+async def test_domain_dataset_accepts_cdd_agent_experiment(evaluation_session, fake_agent_snapshot):
+    """企业尽调数据集可以用 agent_run 跑企业尽调 Agent，评分版本与确定性 runner 相同，并记录转换版本。"""
+    service = PlatformEvaluationService()
+    dataset = await service.create_dataset(
+        db=evaluation_session, name="domain", description="", source_kind="company_due_diligence", created_by="test"
+    )
+    version = await service.create_version(
+        db=evaluation_session,
+        dataset_id=dataset["dataset_id"],
+        source={},
+        tasks=[
+            {
+                "task_key": "domain-one",
+                "protocol": "cdd_q02_review_v1",
+                "input": {"query": "注册资本是多少", "company_reference": {"eid": "test"}},
+                "expected": {"status": "resolved", "company": {"eid": "test"}, "review_status": "reviewed"},
+            }
+        ],
+    )
+    await service.publish_version(db=evaluation_session, version_id=version["version_id"])
+
+    experiment = await service.create_experiment(
+        db=evaluation_session,
+        data={"dataset_version_id": version["version_id"], "runner": "agent_run", "agent_slug": "cdd-agent"},
+        created_by="test",
+    )
+
+    assert experiment["evaluator_version"] == CDD_METRIC_VERSION
+    assert experiment["config_snapshot"]["captured"]["cdd_agent_adapter"] == "cdd-agent-adapter-v1"
 
 
 async def test_unreviewed_domain_version_cannot_publish(evaluation_session):
