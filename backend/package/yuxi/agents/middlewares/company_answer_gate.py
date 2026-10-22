@@ -47,6 +47,7 @@ class CompanyAnswerGateMiddleware(AgentMiddleware):
                 {
                     "answer": answer.text,
                     "violations": [v.model_dump() for v in result.violations],
+                    "warnings": [w.model_dump() for w in result.warnings],
                     "usage": answer.usage_metadata,
                 }
             )
