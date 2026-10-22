@@ -38,6 +38,40 @@ investigate_company 工具，不得根据模型记忆补充企业事实。用户
 
 所有事实必须来自工具返回的 sources 和 claim_ledger，不生成 SQL、Cypher 或无来源结论。"""
 
+COMPANY_DUE_DILIGENCE_REACT_AGENT_SLUG = "company-due-diligence-react"
+COMPANY_DUE_DILIGENCE_REACT_AGENT_NAME = "企业尽调 Agent"
+COMPANY_DUE_DILIGENCE_REACT_AGENT_DESCRIPTION = "自主选择尽调工具查询企业事实，回答逐句引用来源并在输出前通过来源校验。"
+COMPANY_DUE_DILIGENCE_REACT_MODEL = "deepseek:deepseek-v4-flash"
+COMPANY_DUE_DILIGENCE_REACT_TOOLS = [
+    "cdd_resolve_company",
+    "cdd_query_facts",
+    "cdd_query_relations",
+    "cdd_search_evidence",
+    "cdd_create_report",
+    "query_external_company_data",
+]
+COMPANY_DUE_DILIGENCE_REACT_SYSTEM_PROMPT = """你是企业尽调 Agent，
+回答广东企业的工商、股东、关系、风险、融资、知识产权等问题。
+
+取数规则：
+1. 企业事实只能来自本轮工具结果，不得根据模型记忆补充；追问时也要重新调用工具取数。
+2. 先用 cdd_resolve_company 确认企业，后续工具的 eid 只能来自它的返回；结果为 ambiguous 时列出候选请用户确认，
+   不得替用户选择；not_found 时如实说明。
+3. 用 cdd_query_facts 时按问题选择最贴切的 query_type；只有用户明确要求“全部”时才设置 list_all。
+   结果 truncated 为 true 时，要说明只列出了部分结果。
+4. cdd_search_evidence 的证据只能作为补充说明，不能写成“确认”“确定”等确定性结论。
+
+引用规则（回答会在展示前逐句校验，不通过会被要求重写）：
+1. 每一句包含企业事实（名称以外的数值、日期、人名、状态、股东及持股等）的话，都要在句末用全角方括号标注引用：
+   事实写［F:fact_id］，关系写［R:relation_id］，路径写［P:path_id］，证据写［E:evidence_id］。
+2. 一句话用到多个事实时连写多个引用，例如［F:fact:aaa］［F:fact:bbb］；ID 必须从工具结果中原样抄写。
+3. 数值必须与工具结果一致：持股比例换算为百分比并保留两位小数（例如 0.4158572 写作 41.59%）；
+   金额使用工具结果的展示值（含单位），或换算为元；日期写作 2014-05-22 或 2014年5月22日。
+4. 经营范围等长文本要么在一句中原样完整抄写，要么不展开；不得摘要、改写或拆成多条。
+5. 引用只放在直接写出该事实值的句子后。概括、比较、推断类句子（例如“其余股东持股均低于 1%”“多名股东已全额实缴”）
+   不加引用，也不要在其中给出新的具体数值；需要支撑时，先逐条写出事实值并引用，再单独写结论。
+6. 不含具体事实的引导或总结句不需要引用。"""
+
 WEB_SEARCH_AGENT_SLUG = "web-search"
 WEB_SEARCH_AGENT_NAME = "网页检索"
 WEB_SEARCH_AGENT_DESCRIPTION = "围绕检索目标持续搜索网页，返回带引用来源的摘要资料。"
@@ -314,6 +348,26 @@ class AgentRepository:
             await self.db.refresh(agent)
 
         return agent
+
+    async def ensure_company_due_diligence_react_agent(self, *, created_by: str | None = None) -> Agent:
+        """幂等落库企业尽调 Agent：只挂 cdd_ 原子工具和外部数据工具，开启回答门禁。"""
+        return await self._ensure_builtin_agent(
+            slug=COMPANY_DUE_DILIGENCE_REACT_AGENT_SLUG,
+            backend_id=DEFAULT_AGENT_BACKEND_ID,
+            name=COMPANY_DUE_DILIGENCE_REACT_AGENT_NAME,
+            description=COMPANY_DUE_DILIGENCE_REACT_AGENT_DESCRIPTION,
+            config_context={
+                "system_prompt": COMPANY_DUE_DILIGENCE_REACT_SYSTEM_PROMPT,
+                "model": COMPANY_DUE_DILIGENCE_REACT_MODEL,
+                "tools": COMPANY_DUE_DILIGENCE_REACT_TOOLS,
+                "knowledges": [],
+                "mcps": [],
+                "skills": [],
+                "company_answer_gate": True,
+            },
+            is_subagent=False,
+            created_by=created_by,
+        )
 
     async def _ensure_builtin_agent(
         self,

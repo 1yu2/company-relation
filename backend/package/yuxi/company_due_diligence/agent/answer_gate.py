@@ -55,17 +55,17 @@ class AnswerGateResult(BaseModel):
         return self.cited_sentence_count / total if total else None
 
 
-def validate_answer_citations(answer: str, tool_results: list[dict], company_eid: str) -> AnswerGateResult:
+def validate_answer_citations(answer: str, tool_results: list[dict], company_eids: set[str]) -> AnswerGateResult:
     """按句检查引用；未引用的句子只计入覆盖率，不拦截。"""
     index = _index_tool_results(tool_results)
-    allowed_subjects = {company_eid} | {
+    allowed_subjects = company_eids | {
         other
         for relation in index["R"].values()
         for subject, other in (
             (relation["source_entity_id"], relation["target_entity_id"]),
             (relation["target_entity_id"], relation["source_entity_id"]),
         )
-        if subject == company_eid
+        if subject in company_eids
     }
     violations: list[GateViolation] = []
     warnings: list[GateViolation] = []
@@ -105,7 +105,7 @@ def validate_answer_citations(answer: str, tool_results: list[dict], company_eid
                         code="citation_subject_mismatch",
                         sentence_index=position,
                         citation=token,
-                        message=f"事实主体 {target['subject_id']} 不属于目标企业 {company_eid} 及其关联主体",
+                        message=f"事实主体 {target['subject_id']} 不属于目标企业及其关联主体",
                     )
                 )
             spans_sentences = bool(_SENTENCE_END.search(str(target["normalized_value"]).rstrip("。！？!?\n")))
@@ -169,6 +169,10 @@ def _split_sentences(answer: str) -> list[str]:
 def _value_in_sentence(fact: dict, text: str, *, min_digits: int = 0) -> bool:
     """事实的展示值或规范值原样出现，或句中某个数按其单位和小数位与规范值一致。"""
     compact = re.sub(r"(?<=\d),(?=\d{3})|\s", "", text)
+    if isinstance(fact["normalized_value"], dict):
+        # 专利、商标等条目事实的值是 {item_id, name}：比对名称等文本字段，不要求写出内部 ID。
+        names = [v for k, v in fact["normalized_value"].items() if not k.endswith("id") and isinstance(v, str)]
+        return any(len(name) >= 2 and re.sub(r"\s", "", name) in compact for name in names)
     literals = {
         re.sub(r"\s", "", str(v)) for v in (fact.get("display_value"), fact["normalized_value"]) if v is not None
     }

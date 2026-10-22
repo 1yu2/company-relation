@@ -187,7 +187,7 @@ def _strip_citations(answer: str) -> str:
 
 
 def _gate(answer: str, tool_results: list[dict], eid: str) -> dict:
-    result = validate_answer_citations(answer, tool_results, eid)
+    result = validate_answer_citations(answer, tool_results, {eid})
     return {**result.model_dump(), "citation_coverage": result.citation_coverage}
 
 

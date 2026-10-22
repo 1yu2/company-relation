@@ -42,13 +42,13 @@ TOOL_RESULTS = [
 
 
 def _codes(answer: str) -> list[str]:
-    return [v.code for v in validate_answer_citations(answer, TOOL_RESULTS, EID).violations]
+    return [v.code for v in validate_answer_citations(answer, TOOL_RESULTS, {EID}).violations]
 
 
 def test_correct_citations_pass_with_multiple_citations_in_one_sentence():
     """同一句多个引用各自核对；正确回答不应被拦。"""
     result = validate_answer_citations(
-        "注册资本为30299.5606万元人民币，法定代表人为包晓军［F:fact:cap］［F:fact:rep］。", TOOL_RESULTS, EID
+        "注册资本为30299.5606万元人民币，法定代表人为包晓军［F:fact:cap］［F:fact:rep］。", TOOL_RESULTS, {EID}
     )
 
     assert result.passed
@@ -70,7 +70,7 @@ def test_value_tolerates_thousands_separator_percent_and_wan_yuan():
     assert _codes("第一大股东持股比例为0.4159［F:fact:ratio］。") == []
     # 恰好落在 5 上时按四舍五入（1.25% 写作 1.3%），而不是银行家舍入。
     half = [{"facts": [{"fact_id": "fact:h", "subject_id": EID, "normalized_value": "0.0125"}]}]
-    assert validate_answer_citations("持股1.3%［F:fact:h］。", half, EID).passed
+    assert validate_answer_citations("持股1.3%［F:fact:h］。", half, {EID}).passed
 
 
 def test_date_tolerates_chinese_format_but_not_wrong_day():
@@ -82,8 +82,8 @@ def test_date_tolerates_chinese_format_but_not_wrong_day():
         "成立于2014年5月22日［F:fact:date］。",
         "成立于2014年05月22日［F:fact:date］。",
     ):
-        assert validate_answer_citations(answer, results, EID).passed, answer
-    assert not validate_answer_citations("成立于2014年5月23日［F:fact:date］。", results, EID).passed
+        assert validate_answer_citations(answer, results, {EID}).passed, answer
+    assert not validate_answer_citations("成立于2014年5月23日［F:fact:date］。", results, {EID}).passed
 
 
 def test_wrong_value_or_unit_is_blocked():
@@ -98,7 +98,18 @@ def test_citation_ids_are_not_read_as_values():
     """引用块中的十六进制 ID 不能被当成句中的数值。"""
     results = [{"facts": [{"fact_id": "fact:302995606", "subject_id": EID, "normalized_value": "302995606"}]}]
 
-    assert not validate_answer_citations("注册资本未披露［F:fact:302995606］。", results, EID).passed
+    assert not validate_answer_citations("注册资本未披露［F:fact:302995606］。", results, {EID}).passed
+
+
+def test_item_fact_matches_by_name_not_internal_id():
+    """专利等条目事实的值是 {item_id, name}：写出名称即可，名称写错仍拦。"""
+    item = {"item_id": "patent:c33d", "name": "一种改性的环氧树脂及其制备方法"}
+    results = [{"facts": [{"fact_id": "fact:p", "subject_id": EID, "normalized_value": item}]}]
+
+    assert validate_answer_citations(
+        "已登记专利《一种改性的环氧树脂及其制备方法》［F:fact:p］。", results, {EID}
+    ).passed
+    assert not validate_answer_citations("已登记专利《一种高耐热环氧树脂》［F:fact:p］。", results, {EID}).passed
 
 
 def test_fact_of_unrelated_subject_is_blocked():
@@ -108,7 +119,7 @@ def test_fact_of_unrelated_subject_is_blocked():
 
 def test_citation_after_sentence_punctuation_belongs_to_previous_sentence():
     """引用写在句号之后时归回前一句，而不是成为孤立的一句。"""
-    result = validate_answer_citations("法定代表人为包晓军。［F:fact:rep］\n以下为股东情况。", TOOL_RESULTS, EID)
+    result = validate_answer_citations("法定代表人为包晓军。［F:fact:rep］\n以下为股东情况。", TOOL_RESULTS, {EID})
 
     assert result.passed
     assert (result.sentence_count, result.cited_sentence_count) == (2, 1)
@@ -119,8 +130,8 @@ def test_long_value_containing_full_stop_matches_across_split_sentences():
     scope = "一般项目：软件开发。（依法自主开展经营活动）许可项目：建设工程施工。"
     results = [{"facts": [{"fact_id": "fact:scope", "subject_id": EID, "normalized_value": scope}]}]
 
-    assert validate_answer_citations(f"法定代表人为包晓军。经营范围为{scope}［F:fact:scope］", results, EID).passed
-    assert not validate_answer_citations("经营范围包括软件开发等［F:fact:scope］。", results, EID).passed
+    assert validate_answer_citations(f"法定代表人为包晓军。经营范围为{scope}［F:fact:scope］", results, {EID}).passed
+    assert not validate_answer_citations("经营范围包括软件开发等［F:fact:scope］。", results, {EID}).passed
     # 普通短值仍只在本句比对，不能借用前一句。
     assert _codes("法定代表人为包晓军。法定代表人为李四［F:fact:rep］。") == ["citation_value_mismatch"]
 
@@ -128,7 +139,7 @@ def test_long_value_containing_full_stop_matches_across_split_sentences():
 def test_uncited_fact_sentence_is_counted_not_blocked():
     """没有引用的句子不拦截，只在含本次事实值时计入覆盖率分母。"""
     result = validate_answer_citations(
-        "法定代表人为包晓军。以下为第1部分。注册资本为30299.5606万元［F:fact:cap］。", TOOL_RESULTS, EID
+        "法定代表人为包晓军。以下为第1部分。注册资本为30299.5606万元［F:fact:cap］。", TOOL_RESULTS, {EID}
     )
 
     assert result.passed
@@ -138,7 +149,7 @@ def test_uncited_fact_sentence_is_counted_not_blocked():
 
 def test_evidence_only_definite_wording_is_warning_only():
     """G4：只引用证据却用确定性措辞，只报告不拦截。"""
-    result = validate_answer_citations("公告确认公司已完成融资［E:evidence:e1］。", TOOL_RESULTS, EID)
+    result = validate_answer_citations("公告确认公司已完成融资［E:evidence:e1］。", TOOL_RESULTS, {EID})
 
     assert result.passed
     assert [w.code for w in result.warnings] == ["evidence_definite_wording"]

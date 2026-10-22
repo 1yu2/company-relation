@@ -20,6 +20,7 @@ from yuxi.agents.middlewares import (
     create_summary_middleware,
     save_attachments_to_fs,
 )
+from yuxi.agents.middlewares.company_answer_gate import CompanyAnswerGateMiddleware
 from yuxi.agents.middlewares.skills import SkillsMiddleware
 from yuxi.agents.middlewares.subagent_task import create_subagent_task_middleware
 from yuxi.agents.tool_approval import create_tool_approval_middleware, normalize_tool_approval_mode
@@ -81,6 +82,9 @@ async def _build_middlewares(context):
     )
     if approval_middleware:
         middlewares.append(approval_middleware)
+    # 门禁放在最内层：每次重写都直接调用模型，外层中间件只看到通过校验或回退后的回答。
+    if getattr(context, "company_answer_gate", False):
+        middlewares.append(CompanyAnswerGateMiddleware())
     return middlewares
 
 
