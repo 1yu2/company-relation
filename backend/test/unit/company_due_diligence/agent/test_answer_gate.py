@@ -68,6 +68,8 @@ def test_value_tolerates_thousands_separator_percent_and_wan_yuan():
     assert _codes("注册资本为 30299.5606 万元［F:fact:cap］。") == []
     assert _codes("第一大股东持股41.59%［F:fact:ratio］。") == []
     assert _codes("第一大股东持股比例为0.4159［F:fact:ratio］。") == []
+    assert _codes("注册资本约3.03亿元［F:fact:cap］。") == []
+    assert _codes("注册资本为3.029956亿元［F:fact:cap］。") == []
     # 恰好落在 5 上时按四舍五入（1.25% 写作 1.3%），而不是银行家舍入。
     half = [{"facts": [{"fact_id": "fact:h", "subject_id": EID, "normalized_value": "0.0125"}]}]
     assert validate_answer_citations("持股1.3%［F:fact:h］。", half, {EID}).passed
@@ -89,7 +91,7 @@ def test_date_tolerates_chinese_format_but_not_wrong_day():
 def test_wrong_value_or_unit_is_blocked():
     """G2：数值写错、单位写错（万元写成元）或换了人名都拦。"""
     assert _codes("注册资本为30299.5606元［F:fact:cap］。") == ["citation_value_mismatch"]
-    assert _codes("注册资本为3.03亿元［F:fact:cap］。") == ["citation_value_mismatch"]
+    assert _codes("注册资本为3.13亿元［F:fact:cap］。") == ["citation_value_mismatch"]
     assert _codes("第一大股东持股45.59%［F:fact:ratio］。") == ["citation_value_mismatch"]
     assert _codes("法定代表人为李四［F:fact:rep］。") == ["citation_value_mismatch"]
 
@@ -145,6 +147,16 @@ def test_uncited_fact_sentence_is_counted_not_blocked():
     assert result.passed
     assert (result.cited_sentence_count, result.uncited_fact_sentence_count) == (1, 1)
     assert result.citation_coverage == 0.5
+
+
+def test_uncited_numbers_are_warned_not_blocked():
+    """表格行等未引用但含数字的句子只告警；一位数字（如“第1部分”）不告警。"""
+    result = validate_answer_citations(
+        "| 王敏 | 40.61% | 300万 |\n以下为第1部分。\n法定代表人为包晓军［F:fact:rep］。", TOOL_RESULTS, {EID}
+    )
+
+    assert result.passed
+    assert [(w.code, w.sentence_index) for w in result.warnings] == [("uncited_number", 0)]
 
 
 def test_evidence_only_definite_wording_is_warning_only():

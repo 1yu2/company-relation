@@ -5,10 +5,12 @@
 
 - G1 ``citation_unknown``：引用 ID 不在本次工具结果中，或引用格式无法解析。
 - G2 ``citation_value_mismatch``：被引用事实的值没有出现在同一句中。只容忍千分位、
-  百分比与小数、万元与元、日期 ``YYYY-MM-DD`` 与 ``YYYY年M月D日`` 四种格式差异；数值按句中写法的小数位四舍五入后比较。
+  百分比与小数、万元/亿元与元、日期 ``YYYY-MM-DD`` 与 ``YYYY年M月D日`` 几种格式差异；
+  数值按句中写法的小数位四舍五入后比较。
 - G3 ``citation_subject_mismatch``：被引用事实的主体既不是目标企业，也不是与目标企业
   直接相连的关联主体（如股东）。
 - G4 只报告：只引用了证据（E）的句子使用确定性措辞。
+- 只报告：未引用的句子含有两位以上的数字（如表格行、概括句），这些数字没有经过 G2 校验。
 """
 
 from __future__ import annotations
@@ -23,8 +25,8 @@ _CITATION_TOKEN = re.compile(r"^([FRPE]):(\S+)$")
 _SENTENCE_END = re.compile(r"(?<=[。！？!?\n])")
 _LEADING_CITATIONS = re.compile(r"^\s*(?:［[^］]*］\s*)+")
 # 千分位只接受英文逗号三位分组，避免把“10，20”这类列举当成一个数。
-_NUMBER = re.compile(r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(%|％|万)?")
-_SCALES = {"%": Decimal("0.01"), "％": Decimal("0.01"), "万": Decimal(10000)}
+_NUMBER = re.compile(r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(%|％|万|亿)?")
+_SCALES = {"%": Decimal("0.01"), "％": Decimal("0.01"), "万": Decimal(10000), "亿": Decimal(100000000)}
 _ISO_DATE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 _DEFINITE_WORDING = ("确认", "确定", "证实", "毫无疑问")
 
@@ -79,6 +81,15 @@ def validate_answer_citations(answer: str, tool_results: list[dict], company_eid
         if not tokens:
             if any(_value_in_sentence(fact, text, min_digits=2) for fact in index["F"].values()):
                 uncited_fact += 1
+            if any(sum(ch.isdigit() for ch in number) >= 2 for number, _ in _NUMBER.findall(text)):
+                warnings.append(
+                    GateViolation(
+                        code="uncited_number",
+                        sentence_index=position,
+                        citation="",
+                        message="未引用的句子含有数字，未经值一致校验",
+                    )
+                )
             preceding += text
             continue
         cited += 1
