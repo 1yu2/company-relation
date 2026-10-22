@@ -14,6 +14,8 @@ from yuxi.repositories.agent_repository import COMPANY_DUE_DILIGENCE_AGENT_SLUG
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e, pytest.mark.slow]
 
 RUN_TIMEOUT_SECONDS = int(os.getenv("E2E_RUN_TIMEOUT_SECONDS", "240"))
+# 可选：临时覆盖模型（例如 alibaba-cn:qwen3.7-flash），不改 Agent 配置；为空时使用 Agent 配置的模型。
+MODEL_SPEC = os.getenv("E2E_CDD_MODEL") or None
 QUESTION = "广东纳睿雷达科技股份有限公司的注册资本是多少？第一大股东是谁，持股比例是多少？"
 
 
@@ -28,7 +30,12 @@ async def test_company_due_diligence_agent_answers_with_gated_citations(e2e_clie
     thread_id = thread.json()["id"]
     run = await e2e_client.post(
         "/api/agent/runs",
-        json={"query": QUESTION, "agent_slug": COMPANY_DUE_DILIGENCE_AGENT_SLUG, "thread_id": thread_id},
+        json={
+            "query": QUESTION,
+            "agent_slug": COMPANY_DUE_DILIGENCE_AGENT_SLUG,
+            "thread_id": thread_id,
+            "model_spec": MODEL_SPEC,
+        },
         headers=e2e_headers,
     )
     assert run.status_code == 200, run.text

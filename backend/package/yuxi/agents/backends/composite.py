@@ -32,6 +32,7 @@ _TOOL_RESULT_EVICTION_EXEMPT_TOOLS = frozenset(
         "cdd_query_facts",
         "cdd_query_relations",
         "cdd_search_evidence",
+        "cdd_query_global_stats",
     }
 )
 
