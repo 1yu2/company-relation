@@ -247,8 +247,12 @@ class PlatformEvaluationService:
             raise ValueError("agent_run runner 需要 agent_slug")
         tasks = await repo.list_tasks(version.version_id)
         domain_tasks = any(task.protocol == "cdd_q02_review_v1" for task in tasks)
-        if (source_kind == "company_due_diligence" or domain_tasks) and runner != "company_due_diligence":
-            raise ValueError("企业尽调评测只能使用 company_due_diligence runner")
+        # 企业尽调题可由确定性工作流或企业尽调 Agent 回答；fixture 没有对应的回答来源。
+        if (source_kind == "company_due_diligence" or domain_tasks) and runner not in {
+            "company_due_diligence",
+            "agent_run",
+        }:
+            raise ValueError("企业尽调评测只能使用 company_due_diligence 或 agent_run runner")
         unknown_protocols = {task.protocol for task in tasks} - PROTOCOL_EVALUATORS.keys()
         if runner != "company_due_diligence" and unknown_protocols:
             raise ValueError(f"没有对应 evaluator 的任务协议: {', '.join(sorted(unknown_protocols))}")
