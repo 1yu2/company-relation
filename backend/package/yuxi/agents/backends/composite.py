@@ -23,7 +23,17 @@ from yuxi.utils.paths import VIRTUAL_PATH_CONVERSATION_HISTORY, VIRTUAL_PATH_LAR
 from .sandbox import ProvisionerSandboxBackend
 from .skills_backend import SelectedSkillsReadonlyBackend
 
-_TOOL_RESULT_EVICTION_EXEMPT_TOOLS = frozenset({"read_file", "open_kb_document"})
+# 企业尽调结果需要整段留在上下文中，供回答逐句引用 fact_id 并由回答门禁校验，不能只给预览。
+_TOOL_RESULT_EVICTION_EXEMPT_TOOLS = frozenset(
+    {
+        "read_file",
+        "open_kb_document",
+        "cdd_resolve_company",
+        "cdd_query_facts",
+        "cdd_query_relations",
+        "cdd_search_evidence",
+    }
+)
 
 
 def _coerce_glob_result(result) -> GlobResult:

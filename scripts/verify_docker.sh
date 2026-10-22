@@ -35,6 +35,8 @@ api uv run --group test pytest --import-mode=importlib \
   test/unit/backends/test_execute_status.py \
   test/unit/toolkits/test_kbs_tools.py \
   test/unit/toolkits/test_cdd_atomic_tools.py \
+  test/unit/middlewares/test_company_answer_gate_middleware.py \
+  test/unit/repositories/test_agent_repository_deep_research.py \
   test/unit/services/test_run_submission_service.py \
   test/unit/services/test_agent_run_service.py \
   test/unit/backends/test_sandbox_backends.py \
@@ -52,6 +54,8 @@ api uv run --group dev ruff format --check \
   package/yuxi/agents/toolkits/kbs/tools.py \
   package/yuxi/agents/toolkits/company_due_diligence/atomic_tools.py \
   package/yuxi/company_due_diligence/agent/answer_gate.py \
+  package/yuxi/agents/middlewares/company_answer_gate.py \
+  test/unit/middlewares/test_company_answer_gate_middleware.py \
   test/unit/company_due_diligence/agent/test_answer_gate.py \
   package/yuxi/agents/toolkits/company_due_diligence/tools.py \
   package/yuxi/agents/toolkits/company_due_diligence/__init__.py \
