@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -28,6 +29,7 @@ FACTS = {
     "relations": [],
 }
 GOOD = "法定代表人为包晓军［F:fact:rep］。"
+TOOLS = [SimpleNamespace(name="cdd_query_facts"), SimpleNamespace(name="write_todos"), SimpleNamespace(name="execute")]
 BAD = "法定代表人为李四［F:fact:rep］。"
 
 
@@ -52,8 +54,8 @@ async def _run(messages: list, *answers: AIMessage) -> tuple[ModelResponse, list
         return ModelResponse(result=[next(scripted)], structured_response=None)
 
     model = ChatOpenAI(model="test-model", api_key="test-key", base_url="https://example.com/v1")
-    response = await CompanyAnswerGateMiddleware().awrap_model_call(
-        ModelRequest(model=model, messages=messages), handler
+    response = await CompanyAnswerGateMiddleware(allowed_tools=["cdd_query_facts"]).awrap_model_call(
+        ModelRequest(model=model, messages=messages, tools=TOOLS), handler
     )
     return response, requests
 
@@ -64,6 +66,8 @@ async def test_passing_answer_is_returned_once_without_streaming():
 
     assert response.result[-1].content == GOOD
     assert len(requests) == 1 and TAG_NOSTREAM in requests[0].model.tags
+    # 只把配置的工具和任务清单交给模型，平台默认的 execute 等通用工具被过滤。
+    assert [tool.name for tool in requests[0].tools] == ["cdd_query_facts", "write_todos"]
     gate = response.result[-1].response_metadata["answer_gate"]
     assert (gate["passed"], gate["rewrites"], gate["fallback"]) == (True, 0, False)
 
