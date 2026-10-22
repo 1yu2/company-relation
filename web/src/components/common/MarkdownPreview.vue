@@ -804,6 +804,19 @@ const showCopiedFeedback = (btn) => {
     overflow-y: hidden;
   }
 
+  .cite-ref {
+    margin-left: 1px;
+    color: var(--main-700);
+    font-size: 10px;
+    cursor: help;
+    user-select: none;
+  }
+
+  .cite-sep {
+    color: var(--main-700);
+    font-size: 10px;
+  }
+
   .frontmatter-card {
     margin: 0 0 20px;
     padding: 12px 14px;
