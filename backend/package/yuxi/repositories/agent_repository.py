@@ -7,7 +7,7 @@ from typing import Any, Literal
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yuxi.storage.postgres.models_business import Agent, User
+from yuxi.storage.postgres.models_business import Agent, Conversation, User
 from yuxi.utils.datetime_utils import utc_now_naive
 from yuxi.utils.share_config import SHARE_ACCESS_LEVELS, normalize_share_config
 
@@ -314,8 +314,15 @@ class AgentRepository:
         """幂等落库企业尽调智能体，并一次性迁移旧的确定性工作流配置。
 
         旧配置只挂 investigate_company；检测到它时覆盖为 Agent 配置（cdd_ 工具 + 回答门禁），
-        之后不再覆盖管理员的修改。阶段 3 的独立 Agent 记录在这里删除。
+        之后不再覆盖管理员的修改。阶段 3 的独立 Agent 已并入本 Agent：它的会话改绑到这里，再删除记录；
+        改绑每次都执行（幂等），已经删过记录的环境也能修复失去 Agent 的会话。
         """
+        await self.db.execute(
+            update(Conversation)
+            .where(Conversation.agent_id == LEGACY_COMPANY_DUE_DILIGENCE_REACT_SLUG)
+            .values(agent_id=COMPANY_DUE_DILIGENCE_AGENT_SLUG)
+        )
+        await self.db.commit()
         legacy = await self.get_by_slug(LEGACY_COMPANY_DUE_DILIGENCE_REACT_SLUG)
         if legacy is not None:
             await self.delete(agent=legacy)

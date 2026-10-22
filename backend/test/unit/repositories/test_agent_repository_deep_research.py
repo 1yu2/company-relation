@@ -26,6 +26,7 @@ class CollectingDb:
         self.added: list = []
         self.commit = AsyncMock()
         self.refresh = AsyncMock()
+        self.execute = AsyncMock()
 
     def add(self, item):
         self.added.append(item)
@@ -124,13 +125,16 @@ async def test_ensure_company_due_diligence_agent_migrates_deterministic_config(
 
     assert result is agent
     delete.assert_awaited_once_with(agent=legacy)
+    # 阶段 3 独立 Agent 的会话改绑到企业尽调智能体，否则打开这些会话会报“智能体不存在”。
+    rebind = str(db.execute.await_args_list[0].args[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "UPDATE conversations SET agent_id='company-due-diligence'" in rebind
+    assert "agent_id = 'company-due-diligence-react'" in rebind
     assert agent.backend_id == DEFAULT_AGENT_BACKEND_ID
     assert agent.is_subagent is False
     assert agent.share_config == DEFAULT_SHARE_CONFIG
     assert agent.config_json["context"]["tools"] == COMPANY_DUE_DILIGENCE_TOOLS
     assert agent.config_json["context"]["model"] == COMPANY_DUE_DILIGENCE_MODEL
     assert agent.config_json["context"]["system_prompt"] == COMPANY_DUE_DILIGENCE_SYSTEM_PROMPT
-    db.commit.assert_awaited_once()
     db.refresh.assert_awaited_once_with(agent)
 
 
@@ -152,4 +156,4 @@ async def test_ensure_company_due_diligence_agent_keeps_admin_changes(monkeypatc
     await repo.ensure_company_due_diligence_agent()
 
     assert agent.config_json["context"] == context
-    db.commit.assert_not_awaited()
+    db.refresh.assert_not_awaited()
