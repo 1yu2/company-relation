@@ -169,6 +169,51 @@ const ensureLanguages = async (highlighter, languages) => {
   )
 }
 
+// 企业尽调回答的来源引用：句末全角方括号内的 F/R/P/E:ID（可多个、可连写）。
+const CITATION_BLOCK_RE = /［[FRPE]:[^］\s]+(?:[\s,，、;；]+[FRPE]:[^］\s]+)*］/g
+const CITATION_ID_RE = /[FRPE]:[^］\s,，、;；]+/g
+
+// 把引用块渲染成角标编号：同一条回答中相同 ID 复用编号，悬停显示原始 ID，避免长 ID 挤占正文和表格。
+// “［”不是 markdown-it 的行内终止符，会被文本规则整段吃掉，所以在解析后拆分文本 token。
+export const markdownItCitations = (md) => {
+  md.core.ruler.after('inline', 'cdd_citation', (state) => {
+    const numbers = new Map()
+    for (const block of state.tokens) {
+      if (block.type !== 'inline' || !block.children) continue
+      block.children = block.children.flatMap((token) => {
+        if (token.type !== 'text' || !token.content.includes('［')) return [token]
+        const parts = []
+        let last = 0
+        for (const match of token.content.matchAll(CITATION_BLOCK_RE)) {
+          if (match.index > last) parts.push(textToken(state, token.content.slice(last, match.index)))
+          const afterCitation = parts.at(-1)?.type === 'cdd_citation' && last === match.index
+          match[0].match(CITATION_ID_RE).forEach((id, index) => {
+            if (!numbers.has(id)) numbers.set(id, numbers.size + 1)
+            const citation = new state.Token('cdd_citation', 'sup', 0)
+            // 紧挨着的角标之间用逗号分隔；中间隔着正文时不加。
+            citation.meta = { id, number: numbers.get(id), separated: index > 0 || afterCitation }
+            parts.push(citation)
+          })
+          last = match.index + match[0].length
+        }
+        if (!parts.length) return [token]
+        if (last < token.content.length) parts.push(textToken(state, token.content.slice(last)))
+        return parts
+      })
+    }
+  })
+  md.renderer.rules.cdd_citation = (tokens, idx) => {
+    const { id, number, separated } = tokens[idx].meta
+    return `${separated ? '<sup class="cite-sep">,</sup>' : ''}<sup class="cite-ref" title="${escapeHtml(id)}">${number}</sup>`
+  }
+}
+
+const textToken = (state, content) => {
+  const token = new state.Token('text', '', 0)
+  token.content = content
+  return token
+}
+
 const createRenderer = ({ themeName, highlighter }) =>
   new MarkdownIt({
     html: true,
@@ -187,6 +232,7 @@ const createRenderer = ({ themeName, highlighter }) =>
     .use(markdownKatexPlugin, { throwOnError: false, errorColor: '#cc0000', trust: false })
     .use(taskLists, { enabled: false, label: false, labelAfter: false })
     .use(markdownItFrontmatterCard)
+    .use(markdownItCitations)
 
 const getRenderer = async (theme, needsHighlight) => {
   const themeName = normalizeTheme(theme)
