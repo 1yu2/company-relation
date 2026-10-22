@@ -1,6 +1,6 @@
 """引用式回答门禁单元测试；事实取值形态与 cdd_query_facts 真实返回一致。"""
 
-from yuxi.company_due_diligence.agent.answer_gate import validate_answer_citations
+from yuxi.company_due_diligence.answer_gate import validate_answer_citations
 
 EID = "eid-a"
 TOOL_RESULTS = [

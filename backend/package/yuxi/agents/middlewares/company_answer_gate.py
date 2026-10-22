@@ -16,7 +16,7 @@ from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResp
 from langchain.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.constants import TAG_NOSTREAM
 
-from yuxi.company_due_diligence.agent.answer_gate import validate_answer_citations
+from yuxi.company_due_diligence.answer_gate import validate_answer_citations
 
 FALLBACK_NOTICE = "未能生成通过来源校验的回答。以下是本轮工具返回的事实，未经模型组织："
 # 兜底事实清单的字段中文名，覆盖结构化查询与 AkShare 产出的全部事实类型；

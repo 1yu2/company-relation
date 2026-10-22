@@ -57,7 +57,7 @@ EXPERIMENT_LOCK_TTL_SECONDS = 30
 AGENT_FAILURE_REASONS = {"timeout", "agent_run_failed", "agent_run_interrupted"}
 # 锁在最后一次心跳续期后 TTL 秒过期；恢复作业多等一段余量，确保不会在旧锁过期前启动而被跳过。
 RECOVERY_DEFER_MARGIN_SECONDS = 10
-# fixture/agent_run 实验按任务协议选择结果 evaluator；企业尽调 runner 固定使用自己的 evaluator（本轮冻结）。
+# fixture/agent_run 实验都按任务协议选择结果 evaluator。
 # 值为 (evaluator, metric_version)；metric_version 写入实验快照，对比实验时据此判断评分口径是否一致。
 PROTOCOL_EVALUATORS = {
     "agent_tool_final_v1": (evaluate_task, METRIC_VERSION),
@@ -65,7 +65,7 @@ PROTOCOL_EVALUATORS = {
     "agent_fault_recovery_v1": (evaluate_fault_recovery, FAULT_RECOVERY_METRIC_VERSION),
     "agent_rag_answer_v1": (evaluate_rag_answer, RAG_ANSWER_METRIC_VERSION),
     "agent_open_answer_v1": (evaluate_open_answer, LLM_JUDGE_METRIC_VERSION),
-    # 企业尽调 Agent：runner 先把 Run 转成企业尽调字段，评分沿用确定性 runner 的评分器和版本，便于逐题对比。
+    # 企业尽调 Agent：runner 先把 Run 转成企业尽调字段，再用企业尽调评分器评分。
     CDD_AGENT_PROTOCOL: (lambda task, actual, events: evaluate_company_due_diligence(task, actual), CDD_METRIC_VERSION),
 }
 ALLOWED_SOURCE_KINDS = {"agent", "tool_mcp", "rag", "graph", "fixture", "company_due_diligence"}
@@ -241,30 +241,22 @@ class PlatformEvaluationService:
         runner = str(data.get("runner") or "fixture")
         if source_kind != dataset.source_kind:
             raise ValueError("实验来源必须与数据集来源一致")
-        if runner not in {"fixture", "company_due_diligence", "agent_run"}:
+        if runner not in {"fixture", "agent_run"}:
             raise ValueError(f"不支持的评测 runner: {runner}")
         if runner == "agent_run" and not data.get("agent_slug"):
             raise ValueError("agent_run runner 需要 agent_slug")
         tasks = await repo.list_tasks(version.version_id)
         domain_tasks = any(task.protocol == "cdd_q02_review_v1" for task in tasks)
-        # 企业尽调题可由确定性工作流或企业尽调 Agent 回答；fixture 没有对应的回答来源。
-        if (source_kind == "company_due_diligence" or domain_tasks) and runner not in {
-            "company_due_diligence",
-            "agent_run",
-        }:
-            raise ValueError("企业尽调评测只能使用 company_due_diligence 或 agent_run runner")
+        # 企业尽调题由企业尽调 Agent 回答；fixture 没有对应的回答来源。
+        if (source_kind == "company_due_diligence" or domain_tasks) and runner != "agent_run":
+            raise ValueError("企业尽调评测只能使用 agent_run runner")
         unknown_protocols = {task.protocol for task in tasks} - PROTOCOL_EVALUATORS.keys()
-        if runner != "company_due_diligence" and unknown_protocols:
+        if unknown_protocols:
             raise ValueError(f"没有对应 evaluator 的任务协议: {', '.join(sorted(unknown_protocols))}")
-        if runner == "company_due_diligence":
-            if source_kind != "company_due_diligence":
-                raise ValueError("企业尽调 runner 需要企业尽调来源数据集")
-            if any((task.input or {}).get("topic") == "report" for task in tasks):
-                raise ValueError("当前只读企业问答 runner 不支持报告题，请选择问答题版本")
         config_snapshot = redact_value(dict(data.get("config_snapshot") or {}))
         if "pricing" in config_snapshot:
             config_snapshot["pricing"] = validate_pricing(config_snapshot["pricing"])
-        evaluator_versions = _evaluator_versions(runner, tasks)
+        evaluator_versions = _evaluator_versions(tasks)
         # 服务端采集的事实统一放在 captured 下，调用方传入的同名字段不会覆盖它。
         captured = capture_common_snapshot(version=version, tasks=tasks, evaluator_versions=evaluator_versions)
         if runner == "agent_run":
@@ -387,7 +379,7 @@ class PlatformEvaluationService:
         tasks = await repo.list_tasks(experiment.dataset_version_id)
         # 创建实验之后评分器升级过：继续执行会让新版本的分数挂在旧快照下，对比时按快照判断口径会混比新旧分数。
         snapshot_versions = (experiment.config_snapshot.get("captured") or {}).get("evaluators")
-        current_versions = _evaluator_versions(experiment.runner, tasks)
+        current_versions = _evaluator_versions(tasks)
         if snapshot_versions is not None and snapshot_versions != current_versions:
             raise ValueError(
                 f"评分器版本与创建实验时不同（创建时 {snapshot_versions}，当前 {current_versions}），请重新创建实验"
@@ -534,8 +526,6 @@ class PlatformEvaluationService:
         try:
             if experiment.runner == "fixture":
                 runner = _run_fixture
-            elif experiment.runner == "company_due_diligence":
-                runner = _run_company_due_diligence
             elif experiment.runner == "agent_run":
                 runner = partial(run_agent_task, experiment)
             else:
@@ -544,11 +534,7 @@ class PlatformEvaluationService:
             if await _rollout_cancelled(repo, rollout_id):
                 await db.commit()
                 return
-            metric_values = (
-                evaluate_company_due_diligence(_task_dict(task), actual)
-                if experiment.runner == "company_due_diligence"
-                else PROTOCOL_EVALUATORS[task.protocol][0](_task_dict(task), actual, events)
-            )
+            metric_values = PROTOCOL_EVALUATORS[task.protocol][0](_task_dict(task), actual, events)
             # LLM Judge 类 evaluator 需要调用模型，是协程；确定性 evaluator 直接返回结果。
             if inspect.isawaitable(metric_values):
                 metric_values = await metric_values
@@ -760,7 +746,7 @@ async def _record_runner_failure(
     if reason_code in AGENT_FAILURE_REASONS:
         metric = {
             "metric_name": "task_pass",
-            "metric_version": _evaluator_version(experiment, task),
+            "metric_version": _evaluator_version(task),
             "value": 0.0,
             "status": "failed",
             "reason_code": reason_code,
@@ -772,9 +758,7 @@ async def _record_runner_failure(
     )
 
 
-def _evaluator_version(experiment, task: PlatformEvaluationTask) -> str:
-    if experiment.runner == "company_due_diligence":
-        return CDD_METRIC_VERSION
+def _evaluator_version(task: PlatformEvaluationTask) -> str:
     return PROTOCOL_EVALUATORS[task.protocol][1]
 
 
@@ -784,10 +768,8 @@ async def _rollout_cancelled(repo: PlatformEvaluationRepository, rollout_id: str
     return rollout is not None and rollout.status == "CANCELLED"
 
 
-def _evaluator_versions(runner: str, tasks: list[PlatformEvaluationTask]) -> dict[str, str]:
+def _evaluator_versions(tasks: list[PlatformEvaluationTask]) -> dict[str, str]:
     """本实验各协议实际使用的评分器版本；创建实验时写入快照，执行前用它核对评分器是否升级过。"""
-    if runner == "company_due_diligence":
-        return {task.protocol: CDD_METRIC_VERSION for task in tasks}
     return {task.protocol: PROTOCOL_EVALUATORS[task.protocol][1] for task in tasks}
 
 
@@ -884,38 +866,6 @@ def _task_dict(task: PlatformEvaluationTask) -> dict[str, Any]:
         "expected": task.expected or {},
         "protocol": task.protocol,
     }
-
-
-async def _run_company_due_diligence(
-    task: PlatformEvaluationTask, rollout_id: str
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """执行只读企业尽调查询，返回业务响应和最小轨迹。"""
-    from yuxi.company_due_diligence.qa.models import CompanyQuestionRequest
-    from yuxi.company_due_diligence.qa.service import company_question_service
-
-    input_data = task.input or {}
-    response = await company_question_service.query(
-        CompanyQuestionRequest(
-            company_ref=input_data.get("company_reference") or None,
-            question=str(input_data.get("query") or ""),
-            enable_external_fallback=False,
-            **{key: input_data[key] for key in ("start_date", "as_of", "top_k", "hop_limit") if key in input_data},
-        )
-    )
-    events = [
-        {
-            "event_id": hash_id("pev_", f"{rollout_id}:{index}", length=32),
-            "sequence": index,
-            "component": "company_due_diligence",
-            "operation": step.operation,
-            "parent_id": None,
-            "input_summary": {"source": step.source},
-            "output_summary": {"status": step.status},
-            "reason_code": None,
-        }
-        for index, step in enumerate(response.steps, start=1)
-    ]
-    return response.model_dump(mode="json"), events
 
 
 async def _run_fixture(task: PlatformEvaluationTask, rollout_id: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:

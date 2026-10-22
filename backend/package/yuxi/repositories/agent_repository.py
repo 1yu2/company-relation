@@ -27,30 +27,20 @@ GENERAL_PURPOSE_AGENT_DESCRIPTION = (
 COMPANY_DUE_DILIGENCE_AGENT_SLUG = "company-due-diligence"
 COMPANY_DUE_DILIGENCE_AGENT_NAME = "企业尽调智能体"
 COMPANY_DUE_DILIGENCE_AGENT_DESCRIPTION = (
-    "面向企业事实、股东、关系、风险和尽调报告的全局共享智能体，支持直接使用自然语言提问。"
+    "自主选择尽调工具查询企业事实、股东、关系、风险，按需生成尽调报告；回答逐句引用来源并在输出前通过来源校验。"
 )
-COMPANY_DUE_DILIGENCE_SYSTEM_PROMPT = """你是平台级企业尽调智能体。
-
-处理企业基本信息、股东、企业关系、风险、融资、知识产权、新闻或尽调报告问题时，必须调用
-investigate_company 工具，不得根据模型记忆补充企业事实。用户可以直接输入自然语言，不要求先提供 eid
-或选择企业；工具会自动解析问题中的企业名称、股票代码和信用代码。工具返回 needs_context 时，向用户
-展示候选或说明需要补充的企业范围；返回 global_scope 时，直接基于工具提供的全局统计作答。
-
-所有事实必须来自工具返回的 sources 和 claim_ledger，不生成 SQL、Cypher 或无来源结论。"""
-
-COMPANY_DUE_DILIGENCE_REACT_AGENT_SLUG = "company-due-diligence-react"
-COMPANY_DUE_DILIGENCE_REACT_AGENT_NAME = "企业尽调 Agent"
-COMPANY_DUE_DILIGENCE_REACT_AGENT_DESCRIPTION = "自主选择尽调工具查询企业事实，回答逐句引用来源并在输出前通过来源校验。"
-COMPANY_DUE_DILIGENCE_REACT_MODEL = "deepseek:deepseek-v4-flash"
-COMPANY_DUE_DILIGENCE_REACT_TOOLS = [
+COMPANY_DUE_DILIGENCE_MODEL = "deepseek:deepseek-v4-flash"
+COMPANY_DUE_DILIGENCE_TOOLS = [
     "cdd_resolve_company",
     "cdd_query_facts",
     "cdd_query_relations",
     "cdd_search_evidence",
-    "cdd_create_report",
+    "cdd_query_global_stats",
     "query_external_company_data",
 ]
-COMPANY_DUE_DILIGENCE_REACT_SYSTEM_PROMPT = """你是企业尽调 Agent，
+# 阶段 3 的独立 Agent 已并入 company-due-diligence；ensure 时删除遗留记录。
+LEGACY_COMPANY_DUE_DILIGENCE_REACT_SLUG = "company-due-diligence-react"
+COMPANY_DUE_DILIGENCE_SYSTEM_PROMPT = """你是企业尽调 Agent，
 回答广东企业的工商、股东、关系、风险、融资、知识产权等问题。
 
 取数规则：
@@ -62,6 +52,19 @@ COMPANY_DUE_DILIGENCE_REACT_SYSTEM_PROMPT = """你是企业尽调 Agent，
 3. 用 cdd_query_facts 时按问题选择最贴切的 query_type。list_all 只在用户原话明确要求“全部”“所有”“完整名单”时设置；
    “股东情况”“股东有哪些”等问法不算，使用默认的前 10 条。结果 truncated 为 true 时，要说明只列出了部分结果。
 4. cdd_search_evidence 的证据只能作为补充说明，不能写成“确认”“确定”等确定性结论。
+5. 不针对单一企业的统计问题（数据覆盖了多少企业、哪些股东同时持有多家企业）用 cdd_query_global_stats。
+
+报告模式（仅在用户明确要求“尽调报告”“完整报告”或某个专题报告时使用，普通提问照常回答，不要输出报告）：
+1. 完整报告按以下章节依次取数并成文，每章一个二级标题：
+   企业身份（cdd_resolve_company、enterprise_profile）；工商与业务概览（enterprise_profile、registered_capital、
+   legal_representative、business_status）；股权结构与出资（current_shareholders、historical_shareholders、
+   shareholder_contributions）；关联关系（cdd_query_relations）；产品与业务线索（products）；融资历程（financing_history）；
+   财务指标（financial_metric_series）；合规、处罚、异常与许可（administrative_penalties、environmental_penalties、
+   abnormal_operations、licenses）；知识产权（patent_summary、trademark_summary、copyright_summary）；
+   新闻与重大事件（cdd_search_evidence）；关键风险与待核验事项；数据质量声明。
+2. 某章没有数据、结果被截断或来源不可用时，在该章如实写明，不能省略该章，也不能用推测补齐。
+3. 专题报告只写用户点名的章节；“关键风险”只汇总前面章节已引用的事实，不引入新数值。
+4. 报告中的事实同样遵守下面的引用规则。
 
 引用规则（回答会在展示前逐句校验，不通过会被要求重写）：
 1. 每一句包含企业事实（名称以外的数值、日期、人名、状态、股东及持股等）的话，都要在句末用全角方括号标注引用：
@@ -308,7 +311,23 @@ class AgentRepository:
         )
 
     async def ensure_company_due_diligence_agent(self, *, created_by: str | None = None) -> Agent:
-        """幂等落库并修复唯一的全局共享企业尽调智能体。"""
+        """幂等落库企业尽调智能体，并一次性迁移旧的确定性工作流配置。
+
+        旧配置只挂 investigate_company；检测到它时覆盖为 Agent 配置（cdd_ 工具 + 回答门禁），
+        之后不再覆盖管理员的修改。阶段 3 的独立 Agent 记录在这里删除。
+        """
+        legacy = await self.get_by_slug(LEGACY_COMPANY_DUE_DILIGENCE_REACT_SLUG)
+        if legacy is not None:
+            await self.delete(agent=legacy)
+        context = {
+            "system_prompt": COMPANY_DUE_DILIGENCE_SYSTEM_PROMPT,
+            "model": COMPANY_DUE_DILIGENCE_MODEL,
+            "tools": COMPANY_DUE_DILIGENCE_TOOLS,
+            "knowledges": [],
+            "mcps": [],
+            "skills": [],
+            "company_answer_gate": True,
+        }
         agent = await self.get_by_slug(COMPANY_DUE_DILIGENCE_AGENT_SLUG)
         if agent is None:
             return await self._ensure_builtin_agent(
@@ -316,24 +335,17 @@ class AgentRepository:
                 backend_id=DEFAULT_AGENT_BACKEND_ID,
                 name=COMPANY_DUE_DILIGENCE_AGENT_NAME,
                 description=COMPANY_DUE_DILIGENCE_AGENT_DESCRIPTION,
-                config_context={
-                    "system_prompt": COMPANY_DUE_DILIGENCE_SYSTEM_PROMPT,
-                    "tools": ["investigate_company"],
-                },
+                config_context=context,
                 is_subagent=False,
                 created_by=created_by,
             )
 
         config_json = dict(agent.config_json or {})
-        context = dict(config_json.get("context") or {})
-        tools = [item for item in context.get("tools") or [] if isinstance(item, str)]
         changed = False
-
-        if "investigate_company" not in tools:
-            context["tools"] = [*tools, "investigate_company"]
-            changed = True
-        if not context.get("system_prompt"):
-            context["system_prompt"] = COMPANY_DUE_DILIGENCE_SYSTEM_PROMPT
+        if "investigate_company" in ((config_json.get("context") or {}).get("tools") or []):
+            config_json["context"] = context
+            agent.config_json = config_json
+            agent.description = COMPANY_DUE_DILIGENCE_AGENT_DESCRIPTION
             changed = True
         if agent.share_config != DEFAULT_SHARE_CONFIG:
             agent.share_config = DEFAULT_SHARE_CONFIG.copy()
@@ -344,34 +356,12 @@ class AgentRepository:
             changed = True
 
         if changed:
-            config_json["context"] = context
-            agent.config_json = config_json
             agent.updated_by = created_by
             agent.updated_at = utc_now_naive()
             await self.db.commit()
             await self.db.refresh(agent)
 
         return agent
-
-    async def ensure_company_due_diligence_react_agent(self, *, created_by: str | None = None) -> Agent:
-        """幂等落库企业尽调 Agent：只挂 cdd_ 原子工具和外部数据工具，开启回答门禁。"""
-        return await self._ensure_builtin_agent(
-            slug=COMPANY_DUE_DILIGENCE_REACT_AGENT_SLUG,
-            backend_id=DEFAULT_AGENT_BACKEND_ID,
-            name=COMPANY_DUE_DILIGENCE_REACT_AGENT_NAME,
-            description=COMPANY_DUE_DILIGENCE_REACT_AGENT_DESCRIPTION,
-            config_context={
-                "system_prompt": COMPANY_DUE_DILIGENCE_REACT_SYSTEM_PROMPT,
-                "model": COMPANY_DUE_DILIGENCE_REACT_MODEL,
-                "tools": COMPANY_DUE_DILIGENCE_REACT_TOOLS,
-                "knowledges": [],
-                "mcps": [],
-                "skills": [],
-                "company_answer_gate": True,
-            },
-            is_subagent=False,
-            created_by=created_by,
-        )
 
     async def _ensure_builtin_agent(
         self,

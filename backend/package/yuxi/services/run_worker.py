@@ -674,14 +674,6 @@ async def _load_input_message(message_id: int | None) -> Message | None:
         return result.scalar_one_or_none()
 
 
-async def process_due_diligence_report(ctx, task_id: str) -> None:
-    """由 ARQ 独立执行已持久化的企业尽调报告。"""
-    del ctx
-    from yuxi.company_due_diligence.report.service import due_diligence_report_service
-
-    await due_diligence_report_service.execute_task(task_id)
-
-
 async def process_due_diligence_graph_projection(ctx, task_id: str) -> None:
     """由 ARQ 独立执行持久化 Neo4j 投影任务。"""
     del ctx
@@ -749,9 +741,7 @@ async def _worker_startup(ctx):
     await recover_pending_dispatches()
     from yuxi.company_due_diligence.evidence.service import evidence_index_service
     from yuxi.company_due_diligence.graph.service import graph_projection_service
-    from yuxi.company_due_diligence.report.service import due_diligence_report_service
 
-    await due_diligence_report_service.recover_pending_tasks()
     await graph_projection_service.recover_pending_tasks()
     await evidence_index_service.recover_pending_tasks()
     from yuxi.evaluation.experiment_service import PlatformEvaluationService
@@ -771,7 +761,6 @@ async def _worker_shutdown(ctx):
 class WorkerSettings:
     functions = [
         process_agent_run,
-        func(process_due_diligence_report, timeout=6 * 60 * 60, max_tries=1),
         func(process_due_diligence_graph_projection, timeout=6 * 60 * 60, max_tries=1),
         func(process_due_diligence_evidence_index, timeout=6 * 60 * 60, max_tries=1),
         func(process_platform_evaluation_experiment, timeout=6 * 60 * 60, max_tries=1),

@@ -15,7 +15,7 @@
 
 This repository adds two things on top of the Yuxi agent platform:
 
-1. **Company due-diligence agent** — answers questions about Guangdong companies (registration, shareholders, relations, risks, financing, IP) in the main chat and produces topical or full due-diligence reports, using an existing MySQL database as a **read-only source of truth**. Every claim must trace back to a source; the LLM never invents company facts.
+1. **Company due-diligence agent** — an agent in the main chat that chooses its own due-diligence tools to answer questions about Guangdong companies (registration, shareholders, relations, risks, financing, IP) and, when asked, writes topical or full due-diligence reports, using an existing MySQL database as a **read-only source of truth**. Answers cite tool results sentence by sentence and pass a citation gate before they are shown; the LLM never invents company facts.
 2. **Agent evaluation system** — a reproducible evaluation loop built into the platform. It runs through the real AgentRun pipeline and supports paired per-task comparison and a regression gate, so changes to an agent (including the due-diligence agent) can be shown to actually help.
 
 Chat, multi-tenancy, model providers, Skills / MCP / sub-agents, the sandbox and knowledge bases come from Yuxi and are only summarized here; see the [documentation site](https://1yu2.github.io/company-relation/).
@@ -38,34 +38,37 @@ flowchart LR
     R -->|SSE| U
 ```
 
-Chat requests are persisted as AgentRuns and executed by the ARQ worker; run events stream back to the browser over Redis Streams and SSE. Reports, the Neo4j projection, the evidence index and evaluation experiments are background tasks persisted in PostgreSQL and recovered after restarts.
+Chat requests are persisted as AgentRuns and executed by the ARQ worker; run events stream back to the browser over Redis Streams and SSE. The Neo4j projection, the evidence index and evaluation experiments are background tasks persisted in PostgreSQL and recovered after restarts.
 
 ## Due-diligence architecture
 
 ```mermaid
 flowchart TB
-    Chat[Main chat: due-diligence agent] -->|tool investigate_company| Agent
-    REST[REST /api/company-due-diligence/investigations] --> Agent
-    Agent[CompanyDueDiligenceAgent] --> Plan[InvestigationPlanner<br/>deterministic intent: topics / time / depth / presentation]
-    Plan --> Resolve[EntityResolutionService<br/>name, alias, credit code, stock code to one eid]
-    Resolve -->|resolved| QA[CompanyQuestionService / QAWorkflow]
-    Resolve -->|ambiguous / not_found| Reject[candidates or refusal]
-    QA --> SQ[StructuredQueryService<br/>17 whitelisted query types]
-    QA --> GP[GraphPathQueryService<br/>up to 3-hop relation paths]
-    QA --> EV[EvidenceQueryService<br/>evidence filtered by company / type / date]
-    QA -.optional.-> EXT[External data<br/>AkShare]
-    SQ --> MY[(MySQL read-only)]
-    GP --> NEO[(Neo4j)]
-    EV --> MV[(Milvus + MinIO)]
-    QA --> Ledger[Claim Ledger<br/>source integrity / conflicts / freshness / confidence]
-    Ledger --> Out[Unified response: facts, relations, paths, evidence, sources<br/>rendered by presentation]
-    Agent -->|topical / full report| Report[DueDiligenceReportWorkflow<br/>12 sections in parallel, ARQ background task]
+    Chat[Main chat: due-diligence agent<br/>deepseek-v4-flash] -->|chooses| Tools
+    subgraph Tools[cdd_ atomic tools over the domain services]
+        R[cdd_resolve_company<br/>name / credit code / stock code / context eid to one eid]
+        F[cdd_query_facts<br/>17 whitelisted query types]
+        P[cdd_query_relations<br/>up to 3-hop paths]
+        E[cdd_search_evidence<br/>company-scoped text evidence]
+        G[cdd_query_global_stats<br/>coverage / shared shareholders]
+        X[query_external_company_data<br/>external data]
+    end
+    R & F & G --> MY[(MySQL read-only)]
+    P --> NEO[(Neo4j)]
+    E --> MV[(Milvus + MinIO)]
+    Chat --> Ans[Final answer citing fact ids per sentence<br/>Q&A, or a report when the user asks for one]
+    Ans --> Gate{Answer gate<br/>id exists / value matches / subject matches}
+    Gate -->|pass| Out[Shown as a whole]
+    Gate -->|fail| Rewrite[Rewrite with reasons, up to 2 times]
+    Rewrite --> Gate
+    Gate -->|still failing| Fallback[Fallback: list this turn's facts]
 ```
 
 - MySQL is the only source of truth: read-only connections, a two-layer SQL guard and whitelisted business queries only. The Neo4j projection and the Milvus evidence index are rebuilt offline from MySQL.
 - Amounts, ratios, dates and pagination are handled by deterministic code (for example, registered and paid-in capital are converted from "万元人民币" to base currency units).
 - Missing, stale, conflicting or low-confidence results are returned explicitly; failed validation refuses to produce a definitive answer.
-- **Current limitation**: the chat agent sees a single `investigate_company` tool and intent is parsed by keyword rules, so it is closer to a deterministic workflow inside a tool than an agent that chooses its own tools; rephrased questions (e.g. "股东情况") can be mis-routed. The planned next step splits the tool into smaller tools, has the LLM produce `InvestigationIntent` (keeping the rules as a counted fallback), gates final answers with the Claim Ledger, and compares against the deterministic baseline on the same Q-02 tasks.
+- Q&A and reports share one agent and one gate. Reports are produced only when the user asks for one, section by section; sections without data say so explicitly.
+- The previous deterministic workflow (keyword intent planner, `investigate_company`, the 12-section report task pipeline) has been removed. On the same datasets it scored 29/36 on Q-02 v4 and 16/60 on the Q-03 paraphrase set, and answered with the context company's data when the named company did not exist.
 
 ## Agent evaluation
 
@@ -76,9 +79,9 @@ flowchart LR
     JOB --> RO[Rollouts<br/>committed one by one, resumable]
     RO --> RUN{runner}
     RUN -->|agent_run| AR[Real AgentRun]
-    RUN -->|company_due_diligence| CS[Due-diligence service]
+    RUN -->|fixture| FX[Fixed answer]
     AR --> EVAL[Evaluator by protocol]
-    CS --> EVAL
+    FX --> EVAL
     EVAL --> M[(Metrics / trace / failure attribution)]
     M --> SUM[Experiment summary]
     SUM --> CMP[Paired comparison<br/>McNemar]

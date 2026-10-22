@@ -152,7 +152,7 @@ async def test_normalize_agent_context_config_expands_null_and_filters_explicit_
                     "category": "buildin",
                 },
                 {
-                    "slug": "investigate_company",
+                    "slug": "cdd_query_facts",
                     "name": "企业尽调智能体",
                     "description": "",
                     "category": "company_due_diligence",
@@ -199,7 +199,7 @@ async def test_normalize_agent_context_config_expands_null_and_filters_explicit_
         context_schema=ChatBotContext,
     )
 
-    assert normalized["tools"] == ["ask_user_question", "investigate_company"]
+    assert normalized["tools"] == ["ask_user_question", "cdd_query_facts"]
     assert normalized["knowledges"] == ["kb-b"]
     assert normalized["mcps"] == ["mcp-a", "mcp-b"]
     assert normalized["skills"] == []

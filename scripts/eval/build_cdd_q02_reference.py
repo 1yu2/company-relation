@@ -1,4 +1,4 @@
-"""从 MySQL 源表独立生成 Q-02 参考答案，并用它给当前确定性工作流预评分。
+"""从 MySQL 源表独立生成 Q-02 参考答案（Q-03 的 build_cdd_q03_dataset.py 也复用 build_reference）。
 
 参考答案只用只读 SQL 直接计算，不经过 StructuredQueryService 的选取和映射逻辑；
 只复用两类与“答案是什么”无关的约定：稳定 ID（build_source_id / build_stable_id）和值规范化格式。
@@ -36,9 +36,6 @@ from yuxi.company_due_diligence.normalization import (
     normalize_optional_text,
     normalize_percentage,
 )
-from yuxi.company_due_diligence.qa.models import CompanyQuestionRequest
-from yuxi.company_due_diligence.qa.service import company_question_service
-from yuxi.evaluation.company_due_diligence import evaluate_company_due_diligence
 
 DEFAULT_TOP_N = 10
 AMOUNT_PATTERN = re.compile(r"([+-]?\d+(?:\.\d+)?)(万|亿)?元?(人民币|美元|港元)?")
@@ -72,9 +69,6 @@ async def main(tasks_path: str, output_path: str) -> None:
             results.append({"task_id": task["task_id"], "input": task["input"], "expected": expected, "notes": notes})
     await engine.dispose()
 
-    for item in results:
-        if item["expected"] is not None:
-            item["baseline"] = await score_current_workflow(item)
     with open(output_path, "w") as file:
         json.dump(results, file, ensure_ascii=False, indent=2, default=str)
     print_summary(results)
@@ -229,49 +223,13 @@ def fact(subject_id: str, fact_type: str, value: str, unit: str | None, source_i
     }
 
 
-async def score_current_workflow(item: dict) -> dict:
-    """用当前确定性工作流回答，再分别按严格口径和“必需事实子集”口径评分。"""
-    task_input = item["input"]
-    response = await company_question_service.query(
-        CompanyQuestionRequest(
-            company_ref=task_input.get("company_reference") or None,
-            question=task_input["query"],
-            enable_external_fallback=False,
-        )
-    )
-    actual = response.model_dump(mode="json")
-    metrics = evaluate_company_due_diligence({"input": task_input, "expected": item["expected"]}, actual)
-    actual_by_id = {fact["fact_id"]: fact for fact in actual.get("facts", [])}
-    expected_facts = item["expected"]["facts"]
-    expected_ids = {f["fact_id"] for f in expected_facts}
-    keys = ("normalized_value", "unit", "source_id")
-    wrong = [
-        {"expected": f, "actual": {k: actual_by_id[f["fact_id"]].get(k) for k in keys}}
-        for f in expected_facts
-        if f["fact_id"] in actual_by_id and any(actual_by_id[f["fact_id"]].get(k) != f[k] for k in keys)
-    ]
-    return {
-        "metrics": {m["metric_name"]: m["status"] for m in metrics},
-        "actual_status": actual.get("resolution_status"),
-        "missing_facts": [f for f in expected_facts if f["fact_id"] not in actual_by_id],
-        "wrong_facts": wrong,
-        "extra_fact_types": sorted({f["fact_type"] for f in actual["facts"] if f["fact_id"] not in expected_ids}),
-    }
-
-
 def print_summary(results: list[dict]) -> None:
     for item in results:
         head = f"{item['task_id'][-6:]} {item['input']['topic']:<18}"
         if item["expected"] is None:
             print(head, "SKIPPED", "; ".join(item["notes"]))
             continue
-        base = item["baseline"]
-        print(
-            head,
-            "task_pass=" + base["metrics"]["task_pass"],
-            f"missing={len(base['missing_facts'])} wrong={len(base['wrong_facts'])} extra={base['extra_fact_types']}",
-            "| " + "; ".join(item["notes"]),
-        )
+        print(head, f"facts={len(item['expected']['facts'])}", "| " + "; ".join(item["notes"]))
 
 
 if __name__ == "__main__":

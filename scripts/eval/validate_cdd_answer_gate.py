@@ -21,7 +21,7 @@ import sys
 from decimal import Decimal
 
 from yuxi.agents.toolkits.company_due_diligence.atomic_tools import cdd_query_facts, cdd_resolve_company
-from yuxi.company_due_diligence.agent.answer_gate import validate_answer_citations
+from yuxi.company_due_diligence.answer_gate import validate_answer_citations
 from yuxi.company_due_diligence.entity_resolution import entity_resolution_service
 from yuxi.company_due_diligence.models import CompanyReference
 from yuxi.company_due_diligence.mysql import company_due_diligence_mysql

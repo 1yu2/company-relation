@@ -5,8 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import deque
-from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING
+from datetime import UTC, datetime
 
 from yuxi.company_due_diligence.external.cache import ExternalProviderCache
 from yuxi.company_due_diligence.external.errors import ExternalProviderError
@@ -22,39 +21,14 @@ from yuxi.company_due_diligence.external.models import (
 )
 from yuxi.company_due_diligence.external.provider import ExternalCompanyDataProvider
 from yuxi.company_due_diligence.external.registry import ExternalProviderRegistry, external_provider_registry
-from yuxi.company_due_diligence.models import CoverageStatus, Evidence, Fact, Source, StructuredQueryType
+from yuxi.company_due_diligence.models import CoverageStatus, Evidence, Fact, Source
 from yuxi.utils.logging_config import logger
-
-if TYPE_CHECKING:
-    from yuxi.company_due_diligence.qa.models import QueryPlan
-
-# 主题映射：内部 StructuredQueryType -> 外部主题
-_INTERNAL_TOPIC_MAP: dict[StructuredQueryType, str] = {
-    StructuredQueryType.ENTERPRISE_PROFILE: "profile",
-    StructuredQueryType.FINANCIAL_METRIC_SERIES: "financials",
-    StructuredQueryType.FINANCING_HISTORY: "financing",
-    StructuredQueryType.CURRENT_SHAREHOLDERS: "shareholders",
-    StructuredQueryType.HISTORICAL_SHAREHOLDERS: "shareholders",
-    StructuredQueryType.ADMINISTRATIVE_PENALTIES: "compliance",
-    StructuredQueryType.ENVIRONMENTAL_PENALTIES: "compliance",
-    StructuredQueryType.ABNORMAL_OPERATIONS: "compliance",
-    StructuredQueryType.LICENSES: "compliance",
-}
-
-# 允许触发外部查询的覆盖状态
-_FALLBACK_ELIGIBLE_STATUSES = {
-    CoverageStatus.PARTIAL,
-    CoverageStatus.MISSING,
-    CoverageStatus.STALE,
-    CoverageStatus.CONFLICT,
-    CoverageStatus.UNSUPPORTED,
-}
 
 _DEFAULT_AUDIT_LIMIT = 200
 
 
 class ExternalCompanyDataService:
-    """按主题缺口检测、调用 Provider、统一去重与冲突识别。"""
+    """按主题调用 Provider，统一去重与冲突识别。"""
 
     def __init__(
         self,
@@ -172,31 +146,6 @@ class ExternalCompanyDataService:
         """按时间倒序返回最近的脱敏查询审计。"""
         normalized_limit = _positive_integer(limit, "limit")
         return list(reversed(self._audit_log))[:normalized_limit]
-
-    def detect_topic_gaps(
-        self,
-        plan: QueryPlan,
-        structured_results: list,
-        *,
-        stale_threshold_days: int | None = 180,
-    ) -> dict[str, CoverageStatus]:
-        """根据内部查询结果计算每个外部主题的覆盖状态。"""
-
-        gaps: dict[str, CoverageStatus] = {}
-        for query_type in plan.structured_queries:
-            external_topic = _INTERNAL_TOPIC_MAP.get(query_type)
-            if external_topic is None:
-                continue
-            status = self._coverage_for_query_type(
-                query_type, structured_results, stale_threshold_days=stale_threshold_days
-            )
-            current = gaps.get(external_topic)
-            gaps[external_topic] = status if current is None else _merge_gap_status(current, status)
-        return gaps
-
-    def should_fallback(self, status: CoverageStatus) -> bool:
-        """判断该状态是否允许触发外部补数。"""
-        return status in _FALLBACK_ELIGIBLE_STATUSES
 
     async def _query_provider(
         self,
@@ -421,40 +370,6 @@ class ExternalCompanyDataService:
             retrieved_at=datetime.now(UTC),
         )
 
-    def _coverage_for_query_type(
-        self,
-        query_type: StructuredQueryType,
-        structured_results: list,
-        stale_threshold_days: int | None,
-    ) -> CoverageStatus:
-        """根据内部结构化结果判断覆盖状态。"""
-        result = next((r for r in structured_results if r.query_type == query_type), None)
-        if result is None:
-            return CoverageStatus.UNSUPPORTED
-
-        dq = result.data_quality
-        if dq.conflicts:
-            return CoverageStatus.CONFLICT
-        if dq.source_status.value == "unavailable":
-            return CoverageStatus.MISSING
-
-        has_data = bool(result.facts or result.relations)
-        if not has_data:
-            return CoverageStatus.MISSING
-
-        # 判断过期：来源业务日期早于阈值
-        if stale_threshold_days and result.sources:
-            dates = [s.business_date for s in result.sources if isinstance(s.business_date, date)]
-            if dates and (date.today() - max(dates)).days > stale_threshold_days:
-                return CoverageStatus.STALE
-
-        # 字段缺失视为 partial
-        if dq.missing_fields:
-            return CoverageStatus.PARTIAL
-
-        return CoverageStatus.COMPLETE
-
-
 def _merge_coverage_status(first: CoverageStatus, second: CoverageStatus) -> CoverageStatus:
     """合并同一主题的 Provider 覆盖状态。"""
     if CoverageStatus.CONFLICT in {first, second}:
@@ -462,22 +377,6 @@ def _merge_coverage_status(first: CoverageStatus, second: CoverageStatus) -> Cov
     if CoverageStatus.COMPLETE in {first, second}:
         return CoverageStatus.COMPLETE
     for status in (CoverageStatus.PARTIAL, CoverageStatus.STALE, CoverageStatus.MISSING, CoverageStatus.UNSUPPORTED):
-        if status in {first, second}:
-            return status
-    return second
-
-
-def _merge_gap_status(first: CoverageStatus, second: CoverageStatus) -> CoverageStatus:
-    """合并同主题的内部查询缺口，保留更需要补数的状态。"""
-    if CoverageStatus.CONFLICT in {first, second}:
-        return CoverageStatus.CONFLICT
-    for status in (
-        CoverageStatus.MISSING,
-        CoverageStatus.PARTIAL,
-        CoverageStatus.STALE,
-        CoverageStatus.UNSUPPORTED,
-        CoverageStatus.COMPLETE,
-    ):
         if status in {first, second}:
             return status
     return second

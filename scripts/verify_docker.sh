@@ -35,6 +35,8 @@ api uv run --group test pytest --import-mode=importlib \
   test/unit/backends/test_execute_status.py \
   test/unit/toolkits/test_kbs_tools.py \
   test/unit/toolkits/test_cdd_atomic_tools.py \
+  test/unit/toolkits/test_company_due_diligence_tool.py \
+  test/unit/routers/test_company_due_diligence_router.py \
   test/unit/middlewares/test_company_answer_gate_middleware.py \
   test/unit/repositories/test_agent_repository_deep_research.py \
   test/unit/services/test_run_submission_service.py \
@@ -49,16 +51,19 @@ api uv run --group dev ruff format --check \
   package/yuxi/company_due_diligence/repositories/shareholder.py \
   package/yuxi/company_due_diligence/structured_query_service.py \
   package/yuxi/company_due_diligence/entity_mentions.py \
-  package/yuxi/company_due_diligence/qa/graph.py \
-  package/yuxi/company_due_diligence/qa/service.py \
   package/yuxi/agents/toolkits/kbs/tools.py \
   package/yuxi/agents/toolkits/company_due_diligence/atomic_tools.py \
-  package/yuxi/company_due_diligence/agent/answer_gate.py \
+  package/yuxi/company_due_diligence/answer_gate.py \
+  package/yuxi/company_due_diligence/global_stats.py \
+  package/yuxi/company_due_diligence/external/config.py \
+  test/unit/toolkits/test_company_due_diligence_tool.py \
+  test/unit/repositories/test_agent_repository_deep_research.py \
+  test/e2e/company_due_diligence/test_company_due_diligence_agent_e2e.py \
   package/yuxi/agents/middlewares/company_answer_gate.py \
   package/yuxi/evaluation/cdd_agent_adapter.py \
   test/unit/evaluation/test_cdd_agent_adapter.py \
   test/unit/middlewares/test_company_answer_gate_middleware.py \
-  test/unit/company_due_diligence/agent/test_answer_gate.py \
+  test/unit/company_due_diligence/test_answer_gate.py \
   package/yuxi/agents/toolkits/company_due_diligence/tools.py \
   package/yuxi/agents/toolkits/company_due_diligence/__init__.py \
   test/e2e/test_cdd_atomic_tools_smoke.py \
@@ -66,8 +71,6 @@ api uv run --group dev ruff format --check \
   test/unit/company_due_diligence/test_entity_mentions.py \
   test/unit/company_due_diligence/test_structured_query_service.py \
   test/unit/company_due_diligence/test_structured_repositories.py \
-  test/unit/company_due_diligence/qa/test_qa_service.py \
-  test/unit/company_due_diligence/qa/test_qa_workflow.py \
   test/unit/toolkits/test_kbs_tools.py \
   test/unit/toolkits/test_cdd_atomic_tools.py \
   package/yuxi/agents/backends/composite.py \

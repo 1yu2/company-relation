@@ -1,4 +1,4 @@
-"""企业尽调全局范围的固定白名单统计服务。"""
+"""企业尽调全局范围的固定白名单统计：由 Agent 通过 cdd_query_global_stats 选择统计项，不接受自由查询。"""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ import hashlib
 import time
 from datetime import UTC, datetime
 from enum import StrEnum
+
+from pydantic import BaseModel, Field
 
 from yuxi.company_due_diligence.models import (
     DataQuality,
@@ -19,8 +21,28 @@ from yuxi.company_due_diligence.mysql import (
     MySQLUnavailableError,
     company_due_diligence_mysql,
 )
-from yuxi.company_due_diligence.qa.models import GlobalQuestionItem, GlobalQuestionResult
 from yuxi.company_due_diligence.repositories.enterprise import EnterpriseRepository
+
+
+class GlobalQuestionItem(BaseModel):
+    """描述一个全局白名单统计结果及其来源。"""
+
+    key: str
+    label: str
+    value: int | float | str
+    metadata: dict[str, str | int | float | list[str]] = Field(default_factory=dict)
+    source_ids: list[str] = Field(default_factory=list)
+
+
+class GlobalQuestionResult(BaseModel):
+    """描述不依赖单一企业的固定统计结果。"""
+
+    operation: str
+    data_version: str
+    denominator: int = Field(ge=0)
+    items: list[GlobalQuestionItem] = Field(default_factory=list)
+    metrics: dict[str, int | float] = Field(default_factory=dict)
+    skipped_reasons: list[str] = Field(default_factory=list)
 
 
 class GlobalQuestionOperation(StrEnum):
@@ -38,14 +60,12 @@ class GlobalQuestionResponse:
         *,
         operation: GlobalQuestionOperation,
         result: GlobalQuestionResult,
-        answer: str,
         sources: list[Source],
         data_quality: DataQuality,
         latency: LatencyBreakdown,
     ) -> None:
         self.operation = operation
         self.result = result
-        self.answer = answer
         self.sources = sources
         self.data_quality = data_quality
         self.latency = latency
@@ -57,12 +77,8 @@ class GlobalQuestionService:
     def __init__(self, mysql: CompanyDueDiligenceMySQL | None = None) -> None:
         self._mysql = mysql or company_due_diligence_mysql
 
-    async def query(self, question: str, *, top_k: int = 10) -> GlobalQuestionResponse | None:
-        """识别全局问题并返回固定统计；非全局问题返回 None。"""
-        operation = classify_global_question(question)
-        if operation is None:
-            return None
-
+    async def query(self, operation: GlobalQuestionOperation, *, top_k: int = 10) -> GlobalQuestionResponse:
+        """执行一项预定义统计；主库不可用时返回来源不可用，不伪装成空结果。"""
         started_at = time.perf_counter()
         queried_at = datetime.now(UTC)
         try:
@@ -85,7 +101,6 @@ class GlobalQuestionService:
                     denominator=0,
                     skipped_reasons=["企业事实主库当前不可用"],
                 ),
-                answer="企业事实主库当前不可用，无法生成全局统计。",
                 sources=[],
                 data_quality=DataQuality(
                     source_status=SourceStatus.UNAVAILABLE,
@@ -93,16 +108,6 @@ class GlobalQuestionService:
                 ),
                 latency=LatencyBreakdown(mysql_ms=elapsed_ms, total_ms=elapsed_ms),
             )
-
-
-def classify_global_question(question: str) -> GlobalQuestionOperation | None:
-    """按固定关键词判断是否属于全局统计问题。"""
-    normalized = "".join(str(question).split())
-    if any(keyword in normalized for keyword in ("共同股东", "共有股东", "哪些企业有共同股东")):
-        return GlobalQuestionOperation.SHARED_SHAREHOLDERS
-    if any(keyword in normalized for keyword in ("数据覆盖哪些企业", "当前覆盖哪些企业", "覆盖哪些企业", "企业总数")):
-        return GlobalQuestionOperation.CATALOG_COVERAGE
-    return None
 
 
 def _coverage_response(coverage: dict, companies: list[dict], queried_at: datetime, elapsed_ms: float):
@@ -140,12 +145,9 @@ def _coverage_response(coverage: dict, companies: list[dict], queried_at: dateti
         metrics=metrics,
         skipped_reasons=[f"仅展示前 {len(items)} 家企业，完整分母为 {total} 家"] if len(items) < total else [],
     )
-    visible = "、".join(item.label for item in items) or "暂无企业记录"
-    answer = f"当前数据目录共有 {total} 家企业。示例企业：{visible}。"
     return GlobalQuestionResponse(
         operation=GlobalQuestionOperation.CATALOG_COVERAGE,
         result=result,
-        answer=answer,
         sources=sources,
         data_quality=DataQuality(source_status=SourceStatus.AVAILABLE),
         latency=LatencyBreakdown(mysql_ms=elapsed_ms, total_ms=elapsed_ms),
@@ -191,14 +193,9 @@ def _shared_shareholder_response(groups: list[dict], coverage: dict, queried_at:
         metrics={"shared_shareholder_group_count": len(items)},
         skipped_reasons=[],
     )
-    if items:
-        answer = "发现以下共同股东关系：" + "；".join(f"{item.label}关联 {item.value} 家企业" for item in items) + "。"
-    else:
-        answer = "当前数据目录中没有发现由当前股东记录支持的共同股东关系。"
     return GlobalQuestionResponse(
         operation=GlobalQuestionOperation.SHARED_SHAREHOLDERS,
         result=result,
-        answer=answer,
         sources=sources,
         data_quality=DataQuality(source_status=SourceStatus.AVAILABLE),
         latency=LatencyBreakdown(mysql_ms=elapsed_ms, total_ms=elapsed_ms),
