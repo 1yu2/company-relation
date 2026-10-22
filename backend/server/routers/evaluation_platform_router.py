@@ -16,6 +16,9 @@ from yuxi.storage.postgres.models_business import User
 
 evaluation_platform_router = APIRouter(prefix="/platform-evaluations", tags=["platform-evaluations"])
 
+# 写接口的会话用 function 作用域：get_db 退出时才提交，默认 request 作用域的退出晚于响应发送，
+# 客户端紧接着的请求（如创建后立刻启动实验）会读不到刚写入的数据。function 作用域在发送响应前提交。
+
 
 class DatasetCreateRequest(BaseModel):
     """创建平台评测数据集请求。"""
@@ -83,7 +86,7 @@ def _raise_for_domain_error(exc: Exception) -> None:
 async def create_dataset(
     payload: DatasetCreateRequest,
     current_user: User = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """创建平台评测数据集草稿。"""
     try:
@@ -136,7 +139,7 @@ async def create_dataset_version(
     dataset_id: str,
     payload: DatasetVersionCreateRequest,
     current_user: User = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """为数据集创建不可变草稿版本。"""
     try:
@@ -178,7 +181,7 @@ async def get_dataset_version(
 async def publish_dataset_version(
     version_id: str,
     current_user: User = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """发布不可变数据集版本。"""
     try:
@@ -191,7 +194,7 @@ async def publish_dataset_version(
 async def retire_dataset_version(
     version_id: str,
     current_user: User = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """停用已发布的数据集版本，此后不能再基于它创建实验。"""
     try:
@@ -204,7 +207,7 @@ async def retire_dataset_version(
 async def create_experiment(
     payload: ExperimentCreateRequest,
     current_user: User = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """创建平台评测实验。"""
     try:
@@ -272,7 +275,7 @@ async def get_experiment(
 async def run_experiment(
     experiment_id: str,
     current_user: User = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """由管理员触发实验：写入排队状态并投递 worker 后台执行，立即返回当前摘要。"""
     try:
@@ -349,7 +352,7 @@ async def get_failures(
 async def cancel_experiment(
     experiment_id: str,
     current_user: User = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """管理员内部取消入口；页面首轮不暴露此操作。"""
     try:
@@ -373,7 +376,7 @@ async def list_online_findings(
 async def promote_online_findings(
     payload: OnlineFindingPromoteRequest,
     current_user: User = Depends(get_admin_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """把失败池样本生成为草稿版本；题目标记 pending_review，人工补写期望并复核后才能发布。"""
     try:
