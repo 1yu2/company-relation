@@ -46,6 +46,17 @@ def test_only_cited_facts_count_and_all_sources_are_kept():
 
 
 @pytest.mark.unit
+def test_refusal_keeps_not_found_even_if_context_company_resolved_later():
+    """点名企业未找到后，Agent 再确认上下文企业只为说明；没有引用事实时回答对象仍是未找到的企业。"""
+    not_found = {"status": "not_found", "company": None, "candidates": [], "sources": []}
+    calls = [_call("cdd_resolve_company", not_found), _call("cdd_resolve_company", RESOLVE)]
+
+    actual = build_cdd_agent_actual("未找到该企业；当前会话关联的是示例股份有限公司。", calls, {"fallback": False})
+
+    assert (actual["resolution_status"], actual["company"], actual["facts"]) == ("not_found", None, [])
+
+
+@pytest.mark.unit
 def test_fallback_answer_counts_as_no_facts():
     """门禁回退列出的事实清单不是确定性回答，评分时按没有事实处理。"""
     calls = [_call("cdd_resolve_company", RESOLVE), _call("cdd_query_facts", FACTS)]

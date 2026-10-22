@@ -3,7 +3,9 @@
 与确定性 runner 的 ``_run_company_due_diligence`` 处于同一位置：只负责产出 ``actual``，评分仍由
 ``evaluate_company_due_diligence`` 完成，评分器版本不变，所以新旧实验可以逐题对比。
 
-- ``resolution_status`` / ``company``：本次 Run 最后一次 ``cdd_resolve_company`` 的结果；
+- ``resolution_status`` / ``company``：回答引用了事实时取最后一次解析成功的结果；没有引用事实时，若有
+  未找到或有歧义的解析就取它。Agent 常在“点名企业未找到”后再确认上下文企业以便说明，最后一次解析
+  并不代表回答的对象（v1 按最后一次解析取值，会把正确的拒答判成身份不一致）；
 - ``facts`` / ``evidence``：只计入最终回答用 ［F:…］/［E:…］ 引用了的结果（衡量“答了什么”，而不是“查到了什么”）；
 - ``sources``：本次 Run 中 ``cdd_`` 工具返回的全部来源；
 - 门禁回退时最终回答不是确定性回答，``facts`` / ``evidence`` 记为空，评分按事实缺失判失败。
@@ -15,7 +17,7 @@ import json
 import re
 from typing import Any
 
-ADAPTER_VERSION = "cdd-agent-adapter-v1"
+ADAPTER_VERSION = "cdd-agent-adapter-v2"
 _CITATION = re.compile(r"［([^］]*)］")
 _CITATION_TOKEN = re.compile(r"^([FE]):(\S+)$")
 
@@ -29,7 +31,7 @@ def build_cdd_agent_actual(
         for call in tool_calls
         if call["name"].startswith("cdd_") and call["status"] == "success"
     ]
-    resolution = next((output for name, output in reversed(results) if name == "cdd_resolve_company"), None)
+    resolutions = [output for name, output in results if name == "cdd_resolve_company"]
     fallback = bool(answer_gate and answer_gate.get("fallback"))
     cited = {"F": [], "E": []}
     for block in _CITATION.findall("" if fallback else final_answer):
@@ -39,10 +41,13 @@ def build_cdd_agent_actual(
     facts = {fact["fact_id"]: fact for _, output in results for fact in output.get("facts", [])}
     evidence = {item["evidence_id"]: item for _, output in results for item in output.get("evidence", [])}
     sources = {source["source_id"]: source for _, output in results for source in output.get("sources", [])}
+    cited_facts = [facts[fact_id] for fact_id in dict.fromkeys(cited["F"]) if fact_id in facts]
+    unresolved = [output for output in resolutions if output["status"] != "resolved"]
+    resolution = (unresolved if unresolved and not cited_facts else resolutions or [None])[-1]
     return {
         "resolution_status": resolution["status"] if resolution else None,
         "company": resolution.get("company") if resolution else None,
-        "facts": [facts[fact_id] for fact_id in dict.fromkeys(cited["F"]) if fact_id in facts],
+        "facts": cited_facts,
         "evidence": [evidence[item_id] for item_id in dict.fromkeys(cited["E"]) if item_id in evidence],
         "sources": list(sources.values()),
         "answer_gate": answer_gate,
