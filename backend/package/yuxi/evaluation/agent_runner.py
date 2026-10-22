@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import select
 
 from yuxi.agents.backends.sandbox.provider import get_sandbox_provider
+from yuxi.evaluation.cdd_agent_adapter import build_cdd_agent_actual
 from yuxi.repositories.agent_run_repository import TERMINAL_RUN_STATUSES
 from yuxi.services.agent_run_service import (
     AgentRunWaitTimeout,
@@ -25,6 +26,7 @@ from yuxi.utils.logging_config import logger
 
 EVALUATION_RUN_SOURCE = "agent_evaluation"
 EVALUATION_RUN_CHANNEL = "platform_eval"
+CDD_AGENT_PROTOCOL = "cdd_q02_review_v1"
 
 
 class AgentRunnerError(RuntimeError):
@@ -43,6 +45,10 @@ async def run_agent_task(experiment, task, rollout_id: str) -> tuple[dict[str, A
     captured_agent = (config.get("captured") or {}).get("agent")
     model_spec = captured_agent["model_spec"] if captured_agent else config.get("model_spec")
     query = str((task.input or {}).get("query") or "")
+    # 依赖“当前企业”的题（如“这家公司……”）在确定性 runner 中直接拿到 eid；Agent 只能从对话中获得，
+    # 这里模拟从企业页面发起提问，把上下文 eid 写在问题前。
+    if context_eid := ((task.input or {}).get("company_reference") or {}).get("eid"):
+        query = f"（当前会话关联企业 eid：{context_eid}）\n{query}"
     # 续跑会在同一 rollout 上重新执行：每次执行使用独立请求和线程，避免复用中断前的 Run 或对话上下文。
     execution_id = hash_id("peval_", f"{rollout_id}:{uuid.uuid4().hex}", length=32)
     async with pg_manager.get_async_session_context() as db:
@@ -79,7 +85,10 @@ async def run_agent_task(experiment, task, rollout_id: str) -> tuple[dict[str, A
 
     run_id = submitted["run_id"]
     try:
-        return await _wait_and_collect(run_id, user.uid, query, rollout_id)
+        actual, events = await _wait_and_collect(run_id, user.uid, query, rollout_id)
+        if task.protocol == CDD_AGENT_PROTOCOL:
+            actual |= build_cdd_agent_actual(actual["final_answer"], actual["tool_calls"], actual["answer_gate"])
+        return actual, events
     finally:
         # 每次执行都是新线程、新沙盒；评测线程不会再被使用，结束即释放，避免沙盒容器和 Docker 网络在空闲回收前堆积。
         try:
@@ -136,6 +145,8 @@ async def _wait_and_collect(
         "langfuse_trace_id": result.get("langfuse_trace_id"),
         "tool_calls": tool_calls,
         "usage": _usage_summary(usages),
+        # 企业尽调 Agent 的回答门禁过程（重写、回退、告警）记在最终消息上；其他 Agent 为 None。
+        "answer_gate": (usages[-1].get("response_metadata") or {}).get("answer_gate") if usages else None,
         "latency": _latency(run.created_at, run.started_at, run.finished_at),
     }
     return actual, _trace_events(rollout_id, query, tool_calls, actual["final_answer"])

@@ -96,10 +96,12 @@ async def tool_message(tool, args):
     return await tool.ainvoke({"type": "tool_call", "id": "cdd-test", "name": tool.name, "args": args})
 
 
-@pytest.mark.parametrize("identifier", ["name", "credit_code", "stock_code"])
+@pytest.mark.parametrize("identifier", ["name", "credit_code", "stock_code", "eid"])
 async def test_resolve_preserves_identity_sources(domain, identifier):
-    """三个唯一标识入口均保留服务返回的身份和来源。"""
-    value = {"name": "示例股份有限公司", "credit_code": "credit-1", "stock_code": "000001.SZ"}[identifier]
+    """四个唯一标识入口（含对话上下文 eid）均保留服务返回的身份和来源。"""
+    value = {"name": "示例股份有限公司", "credit_code": "credit-1", "stock_code": "000001.SZ", "eid": "eid-1"}[
+        identifier
+    ]
     direct = await domain.resolver.resolve(CompanyReference(**{identifier: value}))
     result = await tools.cdd_resolve_company.ainvoke({identifier: value})
     assert result["status"] == "resolved"

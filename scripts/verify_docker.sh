@@ -55,6 +55,8 @@ api uv run --group dev ruff format --check \
   package/yuxi/agents/toolkits/company_due_diligence/atomic_tools.py \
   package/yuxi/company_due_diligence/agent/answer_gate.py \
   package/yuxi/agents/middlewares/company_answer_gate.py \
+  package/yuxi/evaluation/cdd_agent_adapter.py \
+  test/unit/evaluation/test_cdd_agent_adapter.py \
   test/unit/middlewares/test_company_answer_gate_middleware.py \
   test/unit/company_due_diligence/agent/test_answer_gate.py \
   package/yuxi/agents/toolkits/company_due_diligence/tools.py \

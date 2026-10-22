@@ -57,17 +57,20 @@ class CddToolInput(BaseModel):
 
 
 class ResolveCompanyInput(CddToolInput):
-    """企业名称、信用代码、股票代码三选一。"""
+    """企业名称、信用代码、股票代码、上下文 eid 四选一。"""
 
     name: str | None = Field(default=None, min_length=1, max_length=256, description="企业全称或待确认名称")
     credit_code: str | None = Field(default=None, min_length=1, max_length=32, description="统一社会信用代码")
     stock_code: str | None = Field(default=None, min_length=1, max_length=32, description="股票代码")
+    eid: str | None = Field(
+        default=None, min_length=1, max_length=64, description="对话上下文或用户提供的企业 eid，用于确认其对应的企业"
+    )
 
     @model_validator(mode="after")
     def require_one_identifier(self):
         """拒绝缺少身份线索或同时提供多个标识。"""
-        if sum(value is not None for value in (self.name, self.credit_code, self.stock_code)) != 1:
-            raise ToolException("参数错误：name、credit_code、stock_code 必须三选一")
+        if sum(value is not None for value in (self.name, self.credit_code, self.stock_code, self.eid)) != 1:
+            raise ToolException("参数错误：name、credit_code、stock_code、eid 必须四选一")
         return self
 
 
@@ -147,11 +150,11 @@ class CreateReportInput(CddToolInput):
 
 @tool(category="company_due_diligence", display_name="解析企业身份", args_schema=ResolveCompanyInput)
 async def cdd_resolve_company(
-    name: str | None = None, credit_code: str | None = None, stock_code: str | None = None
+    name: str | None = None, credit_code: str | None = None, stock_code: str | None = None, eid: str | None = None
 ) -> dict:
     """解析唯一企业身份；歧义只给候选，由用户确认，不擅自选择。"""
     result = await entity_resolution_service.resolve(
-        CompanyReference(name=name, credit_code=credit_code, stock_code=stock_code)
+        CompanyReference(name=name, credit_code=credit_code, stock_code=stock_code, eid=eid)
     )
     if result.status == ResolutionStatus.SOURCE_UNAVAILABLE:
         raise ToolException("source_unavailable：企业身份来源不可用")
