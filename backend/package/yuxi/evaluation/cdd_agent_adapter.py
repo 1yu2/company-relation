@@ -5,7 +5,9 @@
 
 - ``resolution_status`` / ``company``：回答引用了事实时取最后一次解析成功的结果；没有引用事实时，若有
   未找到或有歧义的解析就取它。Agent 常在“点名企业未找到”后再确认上下文企业以便说明，最后一次解析
-  并不代表回答的对象（v1 按最后一次解析取值，会把正确的拒答判成身份不一致）；
+  并不代表回答的对象（v1 按最后一次解析取值，会把正确的拒答判成身份不一致）；本轮没有调用
+  ``cdd_resolve_company`` 时，取最后一次成功的 ``cdd_query_facts`` 所用 eid：该工具查询前会校验 eid 能唯一
+  解析，成功本身就证明企业已确认，不应因为模型省略了“先确认企业”这一步而判身份不一致（v4）；
 - ``facts`` / ``evidence``：只计入最终回答用 ［F:…］/［E:…］ 引用了的结果（衡量“答了什么”，而不是“查到了什么”）；
 - ``sources``：本次 Run 中 ``cdd_`` 工具返回的全部来源；
 - 门禁回退时最终回答不是确定性回答，``facts`` / ``evidence`` 记为空，评分按事实缺失判失败。
@@ -20,7 +22,7 @@ from typing import Any
 from yuxi.company_due_diligence.answer_gate import lookup_result
 
 # v3：引用 ID 与门禁使用同一识别规则（省略 fact: 等前缀但唯一对应时视为同一引用）。
-ADAPTER_VERSION = "cdd-agent-adapter-v3"
+ADAPTER_VERSION = "cdd-agent-adapter-v4"
 _CITATION = re.compile(r"［([^］]*)］")
 _CITATION_TOKEN = re.compile(r"^([FE]):(\S+)$")
 
@@ -49,6 +51,9 @@ def build_cdd_agent_actual(
     )
     unresolved = [output for output in resolutions if output["status"] != "resolved"]
     resolution = (unresolved if unresolved and not cited_facts else resolutions or [None])[-1]
+    if resolution is None:
+        queried = [output["eid"] for name, output in results if name == "cdd_query_facts"]
+        resolution = {"status": "resolved", "company": {"eid": queried[-1]}} if queried else None
     return {
         "resolution_status": resolution["status"] if resolution else None,
         "company": resolution.get("company") if resolution else None,
