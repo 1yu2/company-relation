@@ -12,6 +12,7 @@
 | `agent_fault_tasks_v1.json` | `agent_fault_recovery_v1` | 8 | 待人工确认（故障注入：工具报错后恢复、超时、数据源不可用） |
 | `cdd_q03_paraphrase_v1.json` | `cdd_q02_review_v1` | 60 | 问法经用户确认（2026-10-22），参考答案由 `build_cdd_q03_dataset.py` 按 Q-02 口径从源表生成 |
 | `agent_open_answer_v1.json` | `agent_open_answer_v1` | 6 | AI 编写参考答案与评分要点，由 AI 评分（LLM Judge，qwen3.7-flash）判定，不经人工 |
+| `rag_kb_tongji_v1.json` | `agent_rag_answer_v1` | 8 | 由 `build_rag_kb_dataset.py` 从知识库 `kb_4gfsntopll` 抽片段、AI 出题，关键词须原样出现在片段中；不经人工 |
 
 ## 导入步骤
 

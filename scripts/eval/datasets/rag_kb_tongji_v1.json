@@ -1,0 +1,182 @@
+{
+  "dataset": {
+    "name": "知识库问答 kb_4gfsntopll",
+    "source_kind": "rag",
+    "description": "由 AI 依据知识库片段出题，评检索（Hit@K / MRR / nDCG）与答案要点。"
+  },
+  "source": {
+    "origin": "scripts/eval/build_rag_kb_dataset.py",
+    "kb_id": "kb_4gfsntopll",
+    "review": "AI 出题，不经人工"
+  },
+  "tasks": [
+    {
+      "task_key": "rag-001",
+      "protocol": "agent_rag_answer_v1",
+      "input": {
+        "query": "请根据知识库「统计月报」回答：根据目录显示，负责汇总“1—2月金融业情况”数据的市属机构名称是什么？"
+      },
+      "expected": {
+        "relevant_chunk_ids": [
+          "file_dd306a_chunk_0"
+        ],
+        "answer_must_contain": [
+          "市地方金融管理局"
+        ],
+        "k": 5
+      },
+      "tags": [
+        "rag",
+        "kb_4gfsntopll"
+      ]
+    },
+    {
+      "task_key": "rag-002",
+      "protocol": "agent_rag_answer_v1",
+      "input": {
+        "query": "请根据知识库「统计月报」回答：根据原文，明确指出我国经济由高速增长阶段转向高质量发展阶段，以及强调高质量发展是全面建设社会主义现代化国家首要任务的分别是哪两份报告？"
+      },
+      "expected": {
+        "relevant_chunk_ids": [
+          "file_74e3b4_chunk_28"
+        ],
+        "answer_must_contain": [
+          "党的十九大报告",
+          "党的二十大报告"
+        ],
+        "k": 5
+      },
+      "tags": [
+        "rag",
+        "kb_4gfsntopll"
+      ]
+    },
+    {
+      "task_key": "rag-003",
+      "protocol": "agent_rag_answer_v1",
+      "input": {
+        "query": "请根据知识库「统计月报」回答：根据该片段，表格中“快餐服务”对应的第一个数值是多少？"
+      },
+      "expected": {
+        "relevant_chunk_ids": [
+          "file_dd306a_chunk_55"
+        ],
+        "answer_must_contain": [
+          "快餐服务",
+          "16.66"
+        ],
+        "k": 5
+      },
+      "tags": [
+        "rag",
+        "kb_4gfsntopll"
+      ]
+    },
+    {
+      "task_key": "rag-004",
+      "protocol": "agent_rag_answer_v1",
+      "input": {
+        "query": "请根据知识库「统计月报」回答：支出法GDP等于哪三个部分之和？"
+      },
+      "expected": {
+        "relevant_chunk_ids": [
+          "file_74e3b4_chunk_84"
+        ],
+        "answer_must_contain": [
+          "最终消费支出",
+          "资本形成总额",
+          "货物和服务净出口"
+        ],
+        "k": 5
+      },
+      "tags": [
+        "rag",
+        "kb_4gfsntopll"
+      ]
+    },
+    {
+      "task_key": "rag-005",
+      "protocol": "agent_rag_answer_v1",
+      "input": {
+        "query": "请根据知识库「统计月报」回答：排名第50的企业全称是什么？"
+      },
+      "expected": {
+        "relevant_chunk_ids": [
+          "file_dd306a_chunk_111"
+        ],
+        "answer_must_contain": [
+          "50",
+          "深圳市华盛实业股份有限公司"
+        ],
+        "k": 5
+      },
+      "tags": [
+        "rag",
+        "kb_4gfsntopll"
+      ]
+    },
+    {
+      "task_key": "rag-006",
+      "protocol": "agent_rag_answer_v1",
+      "input": {
+        "query": "请根据知识库「统计月报」回答：根据片段，石油和天然气开采这类行业的增加值率一般超过多少？请概括其典型特征。"
+      },
+      "expected": {
+        "relevant_chunk_ids": [
+          "file_74e3b4_chunk_137"
+        ],
+        "answer_must_contain": [
+          "石油和天然气开采",
+          "80%"
+        ],
+        "k": 5
+      },
+      "tags": [
+        "rag",
+        "kb_4gfsntopll"
+      ]
+    },
+    {
+      "task_key": "rag-007",
+      "protocol": "agent_rag_answer_v1",
+      "input": {
+        "query": "请根据知识库「统计月报」回答：根据片段，'化妆品类'对应的第一个数值是多少？"
+      },
+      "expected": {
+        "relevant_chunk_ids": [
+          "file_dd306a_chunk_167"
+        ],
+        "answer_must_contain": [
+          "化妆品类",
+          "12.8"
+        ],
+        "k": 5
+      },
+      "tags": [
+        "rag",
+        "kb_4gfsntopll"
+      ]
+    },
+    {
+      "task_key": "rag-008",
+      "protocol": "agent_rag_answer_v1",
+      "input": {
+        "query": "请根据知识库「统计月报」回答：依据片段内容，该行业的代码是多少？请写出行业说明中涵盖的一项具体服务。"
+      },
+      "expected": {
+        "relevant_chunk_ids": [
+          "file_74e3b4_chunk_195"
+        ],
+        "answer_must_contain": [
+          "748749",
+          "工程管理服务"
+        ],
+        "k": 5
+      },
+      "tags": [
+        "rag",
+        "kb_4gfsntopll"
+      ]
+    }
+  ]
+}
