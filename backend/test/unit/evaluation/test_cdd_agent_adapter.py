@@ -56,6 +56,16 @@ def test_refusal_keeps_not_found_even_if_context_company_resolved_later():
 
 
 @pytest.mark.unit
+def test_citation_without_type_prefix_counts_like_the_gate():
+    """门禁接受省略 fact: 前缀的引用时，评测也要计入同一事实，否则通过门禁的回答会被判缺事实。"""
+    calls = [_call("cdd_resolve_company", RESOLVE), _call("cdd_query_facts", FACTS)]
+
+    actual = build_cdd_agent_actual("注册资本为100元［F:cap］。", calls, {"fallback": False})
+
+    assert [fact["fact_id"] for fact in actual["facts"]] == ["fact:cap"]
+
+
+@pytest.mark.unit
 def test_fallback_answer_counts_as_no_facts():
     """门禁回退列出的事实清单不是确定性回答，评分时按没有事实处理。"""
     calls = [_call("cdd_resolve_company", RESOLVE), _call("cdd_query_facts", FACTS)]
