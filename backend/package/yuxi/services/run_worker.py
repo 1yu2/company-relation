@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from dataclasses import dataclass, field
 
@@ -737,6 +738,11 @@ async def _worker_startup(ctx):
 
         await ensure_options_in_db(session)
     sys_config.start_runtime_sync()
+    # Agent 在 worker 中执行，query_kb 依赖已加载的知识库元数据（与 API 启动一致）。
+    if os.environ.get("LITE_MODE", "").lower() not in ("true", "1"):
+        from yuxi.knowledge.runtime import knowledge_base
+
+        await knowledge_base.initialize()
     await _start_worker_heartbeat()
     await recover_pending_dispatches()
     from yuxi.company_due_diligence.evidence.service import evidence_index_service

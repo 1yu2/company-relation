@@ -540,6 +540,9 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         del self, db
         calls.append("resume_platform_experiments")
 
+    async def fake_initialize_knowledge_base():
+        calls.append("initialize_knowledge_base")
+
     monkeypatch.setattr(run_worker.pg_manager, "initialize", fake_initialize)
     monkeypatch.setattr(run_worker.pg_manager, "create_business_tables", fake_create_business_tables)
     monkeypatch.setattr(run_worker.pg_manager, "run_versioned_migrations", fake_run_versioned_migrations)
@@ -553,6 +556,10 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
     from yuxi.company_due_diligence.evidence.service import evidence_index_service
     from yuxi.company_due_diligence.graph.service import graph_projection_service
 
+    from yuxi.knowledge.runtime import knowledge_base
+
+    monkeypatch.delenv("LITE_MODE", raising=False)
+    monkeypatch.setattr(knowledge_base, "initialize", fake_initialize_knowledge_base)
     monkeypatch.setattr(options, "ensure_options_in_db", fake_ensure_options_in_db)
     monkeypatch.setattr(graph_projection_service, "recover_pending_tasks", fake_recover_graph)
     monkeypatch.setattr(evidence_index_service, "recover_pending_tasks", fake_recover_evidence)
@@ -571,6 +578,7 @@ async def test_worker_startup_ensures_builtin_mcp_servers(monkeypatch: pytest.Mo
         "init_builtin_skills",
         "ensure_options_in_db",
         "start_runtime_sync",
+        "initialize_knowledge_base",
         "recover_pending_dispatches",
         "recover_graph",
         "recover_evidence",
