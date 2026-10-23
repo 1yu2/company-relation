@@ -6,6 +6,7 @@
 
 ## v0.7.2 (current)
 
+- AI 评分（LLM Judge）直接计入 task_pass，不再等待人工校准；评分模型改为 qwen3.7-flash；新增 AI 编写的开放式问答题集 `agent_open_answer_v1.json`（6 题）。
 - 线上抽样评估默认开启，抽样率 10%（`PLATFORM_EVAL_ONLINE_SAMPLE_RATE` 可覆盖，设为 0 关闭）：只跑确定性规则，不调用模型。
 - 企业尽调新增身份解析、白名单事实、关系、证据、异步报告五个原子工具，与现有外部数据工具组成六项能力；保留事实和来源标识、失败按工具错误处理，暂不接入 Agent。
 - 企业尽调新增引用式回答门禁原型 `validate_answer_citations`：回答在句末用全角方括号引用工具结果 ID，门禁检查引用是否存在、引用事实的值是否出现在同一句（容忍千分位、百分比与小数、万元/亿元与元、`YYYY-MM-DD` 与中文日期；未引用但含数字的句子只告警）、主体是否属于目标企业，证据句确定性措辞只报告；附带用真实工具结果和模型回答做离线验证的脚本 `scripts/eval/validate_cdd_answer_gate.py`，暂不接入 Agent。

@@ -1,10 +1,10 @@
-"""`agent_open_answer_v1` 协议：开放式回答由版本化 rubric + LLM Judge 判定，人工校准达标前不进入 task_pass。
+"""`agent_open_answer_v1` 协议：开放式回答由版本化 rubric + LLM Judge 判定，结果计入 task_pass。
 
 版本：评分版本号包含 rubric 文本和 Judge 模型的校验和，改任何一项版本号都会变，
 实验对比会因为“评分口径不同”被拒绝，不会把新旧 Judge 的结果混在一起比较。
-校准：用人工标注的校准集计算 Judge 与人工的一致率和 Cohen's κ（calibration_report）。
-JUDGE_CALIBRATED 为 False 时，judge_correct 照常记录并展示，但 task_pass 记为 not_measured（judge_not_calibrated）；
-是否达标、阈值多少由人决定，确认后再把开关改为 True。
+校准：calibration_report 可用标注集计算 Judge 的一致率和 Cohen's κ。用户决定（2026-10-23）评测不引入人工，
+由 AI 评分直接计入 task_pass（JUDGE_CALIBRATED=True）；改回 False 时只记录 judge_correct，task_pass 记为
+not_measured（judge_not_calibrated）。
 Judge 输出无法解析（格式错误、拒答）时记为 not_measured，不默认判为通过或失败；调用模型失败或超过 JUDGE_TIMEOUT_SECONDS
 直接抛出，按评测侧错误（runner_error）处理，不评分，也不计入 Agent 失败。
 """
@@ -22,8 +22,8 @@ from yuxi.evaluation.agent_final_answer import evaluate_agent_final_answer
 from yuxi.models import select_model
 
 RUBRIC_VERSION = "open-answer-v1"
-JUDGE_MODEL_SPEC = "deepseek:deepseek-v4-flash"
-JUDGE_CALIBRATED = False
+JUDGE_MODEL_SPEC = "alibaba-cn:qwen3.7-flash"
+JUDGE_CALIBRATED = True
 # 实验的 timeout_seconds 只约束被测 Agent；评分阶段单独限时，避免慢 Judge 长时间占住并发槽和数据库连接。
 JUDGE_TIMEOUT_SECONDS = 60
 RUBRIC = """你是一名严格的评测员。请根据参考答案和评分要点，判断回答是否正确回答了问题。

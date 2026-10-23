@@ -1098,7 +1098,7 @@ async def test_async_judge_evaluator_is_awaited_and_persisted(evaluation_session
     metrics = {item["metric_name"]: item for item in result["metrics"]}
     assert metrics["judge_correct"]["status"] == "passed"
     assert metrics["judge_correct"]["metric_version"] == llm_judge.METRIC_VERSION
-    assert metrics["task_pass"]["reason_code"] == "judge_not_calibrated"
+    assert metrics["task_pass"]["status"] == "passed"
     assert experiment["config_snapshot"]["captured"]["evaluators"] == {"agent_open_answer_v1": llm_judge.METRIC_VERSION}
 
 
