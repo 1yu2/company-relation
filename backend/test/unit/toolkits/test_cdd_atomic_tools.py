@@ -148,7 +148,7 @@ async def test_facts_match_direct_service_across_pages(domain, list_all, expecte
                 page=page,
             )
         )
-        direct_facts.update({f.fact_id: f.model_dump(mode="json") for f in direct.facts})
+        direct_facts.update({f.fact_id: _slim(f.model_dump(mode="json")) for f in direct.facts})
         direct_sources.update(s.source_id for s in direct.sources)
     assert {f["fact_id"]: f for f in result["facts"]} == direct_facts
     assert {s["source_id"] for s in result["sources"]} == direct_sources
@@ -159,11 +159,22 @@ async def test_facts_match_direct_service_across_pages(domain, list_all, expecte
     assert "latency" not in result and "data_quality" not in result
 
 
+def _slim(fact: dict) -> dict:
+    """领域服务事实去掉置信度、空值和重复展示值后，应与工具输出逐字段一致。"""
+    data = {k: v for k, v in fact.items() if k != "confidence" and v is not None}
+    if data.get("display_value") == data["normalized_value"]:
+        del data["display_value"]
+    return data
+
+
 async def test_profile_keeps_values_and_source_ids(domain):
     """工商字段的归一化值完全沿用白名单服务，不在工具中重新计算。"""
     direct = await domain.structured.query(StructuredQueryRequest(eid="eid-1", query_type="enterprise_profile"))
     result = await tools.cdd_query_facts.ainvoke({"eid": "eid-1", "query_type": "enterprise_profile"})
-    assert result["facts"] == [f.model_dump(mode="json") for f in direct.facts]
+    assert result["facts"] == [_slim(f.model_dump(mode="json")) for f in direct.facts]
+    # 工具结果会整段留在上下文：置信度、空值、与规范值相同的展示值和来源系统名不再重复发送给模型。
+    assert all("confidence" not in f and None not in f.values() for f in result["facts"])
+    assert all("source_system" not in s for s in result["sources"])
     assert {s["source_id"] for s in result["sources"]} == {s.source_id for s in direct.sources}
     assert not result["truncated"]
 

@@ -97,7 +97,7 @@ def validate_answer_citations(answer: str, tool_results: list[dict], company_eid
         prefixes = set()
         for token in tokens:
             match = _CITATION_TOKEN.match(token)
-            target = _lookup(index[match.group(1)], match.group(2)) if match else None
+            target = lookup_result(index[match.group(1)], match.group(2)) if match else None
             if target is None:
                 violations.append(
                     GateViolation(
@@ -152,7 +152,7 @@ def validate_answer_citations(answer: str, tool_results: list[dict], company_eid
     )
 
 
-def _lookup(results: dict[str, dict], result_id: str) -> dict | None:
+def lookup_result(results: dict[str, dict], result_id: str) -> dict | None:
     """按 ID 取结果；模型省略“fact:”等类型前缀时，只有唯一匹配才认，ID 本身仍须逐字正确。"""
     if result_id in results:
         return results[result_id]

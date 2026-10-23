@@ -60,13 +60,14 @@ FACT_TYPE_LABELS = {
 class CompanyAnswerGateMiddleware(AgentMiddleware):
     """只挂在企业尽调 Agent 上；工具调用响应原样放行，只校验最终回答。
 
-    交给模型的工具只保留 Agent 配置的工具和任务清单：平台默认挂载的文件系统、沙盒执行等通用工具
-    对尽调没有用，暴露出来后有的模型会去调用（例如 execute 需要人工审批，运行因此中断）。
+    交给模型的工具只保留 Agent 配置的工具：平台默认挂载的文件系统、沙盒执行、任务清单等通用工具
+    对尽调没有用，暴露出来后有的模型会去调用（例如 execute 需要人工审批，运行因此中断；
+    write_todos 每调用一次就把全部工具结果重新发送一遍，报告成本成倍增加）。
     """
 
     def __init__(self, allowed_tools: list[str], max_rewrites: int = 2):
         super().__init__()
-        self.allowed_tools = {*allowed_tools, "write_todos"}
+        self.allowed_tools = set(allowed_tools)
         self.max_rewrites = max_rewrites
 
     async def awrap_model_call(

@@ -66,8 +66,8 @@ async def test_passing_answer_is_returned_once_without_streaming():
 
     assert response.result[-1].content == GOOD
     assert len(requests) == 1 and TAG_NOSTREAM in requests[0].model.tags
-    # 只把配置的工具和任务清单交给模型，平台默认的 execute 等通用工具被过滤。
-    assert [tool.name for tool in requests[0].tools] == ["cdd_query_facts", "write_todos"]
+    # 只把配置的工具交给模型，平台默认的 execute、write_todos 等通用工具被过滤。
+    assert [tool.name for tool in requests[0].tools] == ["cdd_query_facts"]
     gate = response.result[-1].response_metadata["answer_gate"]
     assert (gate["passed"], gate["rewrites"], gate["fallback"]) == (True, 0, False)
 

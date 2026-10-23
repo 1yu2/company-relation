@@ -189,16 +189,23 @@ async def cdd_query_facts(
     return {
         "eid": eid,
         "query_type": result.query_type.value,
-        "facts": list({f.fact_id: f.model_dump(mode="json") for r in results for f in r.facts}.values()),
+        # 结果整段留在上下文里供引用，每次模型调用都会重发：只保留回答、门禁和评测用得到的字段。
+        "facts": list({f.fact_id: _fact(f) for r in results for f in r.facts}.values()),
         "entities": list(
             {
-                e.entity_id: e.model_dump(mode="json", include={"entity_id", "entity_type", "name", "source_ids"})
+                e.entity_id: e.model_dump(mode="json", include={"entity_id", "entity_type", "name"})
                 for r in results
                 for e in r.entities
             }.values()
         ),
         "relations": list(
-            {edge.relation_id: edge.model_dump(mode="json") for r in results for edge in r.relations}.values()
+            {
+                edge.relation_id: edge.model_dump(
+                    mode="json", include={"relation_id", "source_entity_id", "target_entity_id", "relation_type"}
+                )
+                for r in results
+                for edge in r.relations
+            }.values()
         ),
         "sources": _sources([s for r in results for s in r.sources]),
         "truncated": result.pagination.truncated,
@@ -291,6 +298,14 @@ def _require_available(quality) -> None:
 
 
 def _sources(sources) -> list[dict]:
-    """精简并去重来源，保留回查必需的稳定键和业务日期。"""
-    fields = {"source_id", "source_system", "table", "record_key", "business_date", "source_url"}
-    return list({s.source_id: s.model_dump(mode="json", include=fields) for s in sources}.values())
+    """精简并去重来源，保留回查必需的表、记录键和业务日期；省略空值。"""
+    fields = {"source_id", "table", "record_key", "business_date", "source_url"}
+    return list({s.source_id: s.model_dump(mode="json", include=fields, exclude_none=True) for s in sources}.values())
+
+
+def _fact(fact) -> dict:
+    """事实去掉空值和置信度；展示值与规范值相同时只保留规范值。"""
+    data = fact.model_dump(mode="json", exclude={"confidence"}, exclude_none=True)
+    if data.get("display_value") == data["normalized_value"]:
+        del data["display_value"]
+    return data

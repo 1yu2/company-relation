@@ -17,7 +17,10 @@ import json
 import re
 from typing import Any
 
-ADAPTER_VERSION = "cdd-agent-adapter-v2"
+from yuxi.company_due_diligence.answer_gate import lookup_result
+
+# v3：引用 ID 与门禁使用同一识别规则（省略 fact: 等前缀但唯一对应时视为同一引用）。
+ADAPTER_VERSION = "cdd-agent-adapter-v3"
 _CITATION = re.compile(r"［([^］]*)］")
 _CITATION_TOKEN = re.compile(r"^([FE]):(\S+)$")
 
@@ -41,14 +44,18 @@ def build_cdd_agent_actual(
     facts = {fact["fact_id"]: fact for _, output in results for fact in output.get("facts", [])}
     evidence = {item["evidence_id"]: item for _, output in results for item in output.get("evidence", [])}
     sources = {source["source_id"]: source for _, output in results for source in output.get("sources", [])}
-    cited_facts = [facts[fact_id] for fact_id in dict.fromkeys(cited["F"]) if fact_id in facts]
+    cited_facts = list(
+        {fact["fact_id"]: fact for fact_id in cited["F"] if (fact := lookup_result(facts, fact_id))}.values()
+    )
     unresolved = [output for output in resolutions if output["status"] != "resolved"]
     resolution = (unresolved if unresolved and not cited_facts else resolutions or [None])[-1]
     return {
         "resolution_status": resolution["status"] if resolution else None,
         "company": resolution.get("company") if resolution else None,
         "facts": cited_facts,
-        "evidence": [evidence[item_id] for item_id in dict.fromkeys(cited["E"]) if item_id in evidence],
+        "evidence": list(
+            {item["evidence_id"]: item for item_id in cited["E"] if (item := lookup_result(evidence, item_id))}.values()
+        ),
         "sources": list(sources.values()),
         "answer_gate": answer_gate,
     }

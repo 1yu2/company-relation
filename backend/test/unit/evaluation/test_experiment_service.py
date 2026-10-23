@@ -147,7 +147,7 @@ async def test_domain_dataset_accepts_cdd_agent_experiment(evaluation_session, f
     )
 
     assert experiment["evaluator_version"] == CDD_METRIC_VERSION
-    assert experiment["config_snapshot"]["captured"]["cdd_agent_adapter"] == "cdd-agent-adapter-v2"
+    assert experiment["config_snapshot"]["captured"]["cdd_agent_adapter"] == "cdd-agent-adapter-v3"
 
 
 async def test_unreviewed_domain_version_cannot_publish(evaluation_session):
