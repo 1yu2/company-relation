@@ -24,6 +24,8 @@ from yuxi.utils.datetime_utils import utc_now_naive
 from yuxi.utils.hash_utils import hash_id
 
 SAMPLE_RATE_ENV = "PLATFORM_EVAL_ONLINE_SAMPLE_RATE"
+# 默认抽样 10% 的线上 Run：只跑确定性规则、不调用模型，没有额外费用；设为 0 可关闭。
+DEFAULT_SAMPLE_RATE = 0.1
 SAMPLED_SOURCE = "chat"
 # interrupted 是等待人工审批或回答（human_approval_required 等），Run 尚未结束，不是失败，不抽样。
 SAMPLED_STATUSES = ("completed", "failed")
@@ -39,7 +41,7 @@ async def sample_online_runs(
 
     定时任务使用默认回看窗口；一次性回补历史数据时可以传入更长的 lookback。
     """
-    rate = float(os.getenv(SAMPLE_RATE_ENV) or 0) if sample_rate is None else sample_rate
+    rate = float(os.getenv(SAMPLE_RATE_ENV) or DEFAULT_SAMPLE_RATE) if sample_rate is None else sample_rate
     if not 0 <= rate <= 1:
         raise ValueError(f"{SAMPLE_RATE_ENV} 必须在 0 到 1 之间: {rate}")
     now = now or utc_now_naive()
