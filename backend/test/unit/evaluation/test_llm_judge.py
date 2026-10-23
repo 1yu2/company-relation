@@ -52,6 +52,7 @@ async def _evaluate(answer: str, tool_calls: list[dict] | None = None) -> dict[s
 
 
 async def test_uncalibrated_judge_is_recorded_but_not_counted(monkeypatch):
+    monkeypatch.setattr(llm_judge, "JUDGE_CALIBRATED", False)
     prompts = _fake_judge(monkeypatch, '{"verdict": "pass", "reason": "ok"}')
 
     metrics = await _evaluate("GIL 是全局解释器锁……")
@@ -82,6 +83,11 @@ async def test_calibrated_judge_decides_task_pass(monkeypatch, content, status, 
     assert (metrics["task_pass"]["status"], metrics["task_pass"]["reason_code"]) == (status, reason_code)
 
 
+def test_ai_judge_counts_by_default():
+    """用户决定评测不引入人工：AI 评分默认直接计入 task_pass。"""
+    assert llm_judge.JUDGE_CALIBRATED is True
+
+
 async def test_forbidden_tool_fails_before_judge_verdict(monkeypatch):
     monkeypatch.setattr(llm_judge, "JUDGE_CALIBRATED", True)
     _fake_judge(monkeypatch, '{"verdict": "pass", "reason": "ok"}')
@@ -97,7 +103,7 @@ def test_metric_version_changes_when_rubric_template_or_model_changes():
     variants = [
         (current[0] + "\n5. 新增规则", current[1], current[2]),
         (current[0], current[1] + "\n请简短回答理由", current[2]),
-        (current[0], current[1], "alibaba-cn:qwen3.7-flash"),
+        (current[0], current[1], "deepseek:deepseek-v4-flash"),
     ]
 
     assert llm_judge.METRIC_VERSION == f"llm-judge-{llm_judge.RUBRIC_VERSION}-{llm_judge.judge_checksum(*current)}"
