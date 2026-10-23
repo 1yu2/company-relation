@@ -66,6 +66,22 @@ def test_citation_without_type_prefix_counts_like_the_gate():
 
 
 @pytest.mark.unit
+def test_successful_fact_query_confirms_company_when_resolve_is_skipped():
+    """模型没调用 cdd_resolve_company 而直接用上下文 eid 查询：查询成功即证明 eid 已校验，身份记为已确认。"""
+    actual = build_cdd_agent_actual("注册资本为100元［F:fact:cap］。", [_call("cdd_query_facts", FACTS)], None)
+
+    assert (actual["resolution_status"], actual["company"]) == ("resolved", {"eid": "eid-1"})
+
+
+@pytest.mark.unit
+def test_failed_fact_query_does_not_confirm_company():
+    """查询失败（例如 eid 无法解析）不能当作企业已确认。"""
+    actual = build_cdd_agent_actual("未找到。", [_call("cdd_query_facts", FACTS, status="error")], None)
+
+    assert (actual["resolution_status"], actual["company"]) == (None, None)
+
+
+@pytest.mark.unit
 def test_fallback_answer_counts_as_no_facts():
     """门禁回退列出的事实清单不是确定性回答，评分时按没有事实处理。"""
     calls = [_call("cdd_resolve_company", RESOLVE), _call("cdd_query_facts", FACTS)]
