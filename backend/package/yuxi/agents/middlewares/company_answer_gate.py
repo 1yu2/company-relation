@@ -17,6 +17,7 @@ from langchain.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.constants import TAG_NOSTREAM
 
 from yuxi.company_due_diligence.answer_gate import validate_answer_citations
+from yuxi.utils import logger
 
 FALLBACK_NOTICE = "未能生成通过来源校验的回答。以下是本轮工具返回的事实，未经模型组织："
 # 兜底事实清单的字段中文名，覆盖结构化查询与 AkShare 产出的全部事实类型；
@@ -128,15 +129,29 @@ def _tool_name(tool) -> str | None:
 def _current_turn_results(messages: list) -> tuple[list[dict], set[str]]:
     """取最后一条用户消息之后、执行成功的 cdd_ 工具结果，以及其中出现的目标企业 eid。"""
     start = max((i for i, m in enumerate(messages) if isinstance(m, HumanMessage)), default=-1) + 1
-    results = [
-        json.loads(m.content)
-        for m in messages[start:]
-        if isinstance(m, ToolMessage) and (m.name or "").startswith("cdd_") and m.status != "error"
-    ]
+    results = []
+    for m in messages[start:]:
+        if not (isinstance(m, ToolMessage) and (m.name or "").startswith("cdd_") and m.status != "error"):
+            continue
+        result = _parse_tool_result(m)
+        if result is not None:
+            results.append(result)
     eids = {r["eid"] for r in results if r.get("eid")} | {
         r["company"]["eid"] for r in results if r.get("status") == "resolved" and r.get("company")
     }
     return results, eids
+
+
+def _parse_tool_result(message: ToolMessage) -> dict | None:
+    """解析一条工具结果；不是 JSON 对象时跳过并告警，它的内容不能被引用，但不让整个 Run 失败。"""
+    try:
+        result = json.loads(message.content)
+    except (TypeError, ValueError):
+        result = None
+    if isinstance(result, dict):
+        return result
+    logger.warning("company answer gate skipped non-JSON tool result tool={} id={}", message.name, message.tool_call_id)
+    return None
 
 
 def _gate_metadata(attempts: list, result, *, fallback: bool) -> dict:
@@ -149,13 +164,32 @@ def _gate_metadata(attempts: list, result, *, fallback: bool) -> dict:
     }
 
 
+FALLBACK_EMPTY = "本轮工具没有返回可列出的事实、关系、路径或证据。"
+EVIDENCE_EXCERPT_CHARS = 120
+
+
 def _fallback_answer(tool_results: list[dict]) -> str:
-    """按主体列出本轮事实与引用，字段用中文名，值转为可读文本。"""
+    """列出本轮事实、关系、路径和证据及其引用，与门禁可引用的四类结果（F/R/P/E）一一对应。"""
     names = {e["entity_id"]: e["name"] for r in tool_results for e in r.get("entities", [])}
+    names.update((n["entity_id"], n["name"]) for r in tool_results for p in r.get("paths", []) for n in p["nodes"])
     lines = [FALLBACK_NOTICE]
     for fact in (f for r in tool_results for f in r.get("facts", [])):
         subject = names.get(fact["subject_id"], fact["subject_id"])
         lines.append(f"- {subject}｜{_fact_label(fact['fact_type'])}：{_fact_value(fact)}［F:{fact['fact_id']}］")
+    for relation in (rel for r in tool_results for rel in r.get("relations", [])):
+        source = names.get(relation["source_entity_id"], relation["source_entity_id"])
+        target = names.get(relation["target_entity_id"], relation["target_entity_id"])
+        lines.append(f"- 关系｜{source} → {target}（{relation['relation_type']}）［R:{relation['relation_id']}］")
+    for path in (p for r in tool_results for p in r.get("paths", [])):
+        route = " → ".join(node["name"] for node in path["nodes"])
+        lines.append(f"- 路径｜{route}（{path['hop_count']} 跳）［P:{path['path_id']}］")
+    for item in (e for r in tool_results for e in r.get("evidence", [])):
+        text = item["text"]
+        excerpt = text[:EVIDENCE_EXCERPT_CHARS] + ("…" if len(text) > EVIDENCE_EXCERPT_CHARS else "")
+        dated = f" {item['published_at']}" if item.get("published_at") else ""
+        lines.append(f"- 证据｜{item['document_type']}{dated}：{excerpt}［E:{item['evidence_id']}］")
+    if len(lines) == 1:
+        lines.append(FALLBACK_EMPTY)
     return "\n".join(lines)
 
 

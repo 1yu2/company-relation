@@ -199,6 +199,41 @@ def aggregate_rollout_performance(rollouts: list[dict[str, Any]]) -> dict[str, A
     }
 
 
+def aggregate_answer_gate(rollouts: list[dict[str, Any]]) -> dict[str, Any]:
+    """汇总回答门禁的首轮通过率、重写次数、回退率和重写 token 占比。"""
+    outputs = [item.get("actual_output") or {} for item in rollouts]
+    gates = [output["answer_gate"] for output in outputs if output.get("answer_gate") is not None]
+    gated = len(gates)
+    if not gated:
+        return {
+            "gated": 0,
+            "first_pass_rate": None,
+            "avg_rewrites": None,
+            "fallback_rate": None,
+            "rewrite_token_share": None,
+        }
+
+    total_tokens = 0
+    rewrite_tokens = 0
+    for gate in gates:
+        # 保留原始尝试序号，缺失 usage 的首轮不能使重写被当成首轮。
+        for index, attempt in enumerate(gate["attempts"]):
+            usage = attempt.get("usage")
+            if not usage:
+                continue
+            total_tokens += usage["total_tokens"]
+            if index > 0:
+                rewrite_tokens += usage["total_tokens"]
+
+    return {
+        "gated": gated,
+        "first_pass_rate": sum(gate["rewrites"] == 0 and not gate["fallback"] for gate in gates) / gated,
+        "avg_rewrites": sum(gate["rewrites"] for gate in gates) / gated,
+        "fallback_rate": sum(gate["fallback"] for gate in gates) / gated,
+        "rewrite_token_share": rewrite_tokens / total_tokens if total_tokens else None,
+    }
+
+
 def aggregate_metric_breakdown(metrics: list[dict[str, Any]]) -> dict[str, Any]:
     """按指标名统计各状态数量；判定类给出通过率（分母为 passed+failed），测量类给出均值。"""
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)

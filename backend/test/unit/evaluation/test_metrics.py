@@ -1,6 +1,7 @@
 import pytest
 
 from yuxi.evaluation.metrics import (
+    aggregate_answer_gate,
     aggregate_metric_breakdown,
     aggregate_pass_metrics,
     aggregate_rollout_performance,
@@ -8,6 +9,68 @@ from yuxi.evaluation.metrics import (
     estimate_cost,
     evaluate_task,
 )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("rollouts", [[], [{}, {"actual_output": None}, {"actual_output": {"answer_gate": None}}]])
+def test_aggregate_answer_gate_without_gate_data(rollouts):
+    """无门禁数据时，比例与均值均不可测。"""
+    assert aggregate_answer_gate(rollouts) == {
+        "gated": 0,
+        "first_pass_rate": None,
+        "avg_rewrites": None,
+        "fallback_rate": None,
+        "rewrite_token_share": None,
+    }
+
+
+@pytest.mark.unit
+def test_aggregate_answer_gate_mixed_rollouts():
+    """仅对有门禁的 rollout 统计，重写 token 按总量加权。"""
+    rollouts = [
+        {
+            "actual_output": {
+                "answer_gate": {
+                    "rewrites": rewrites,
+                    "fallback": fallback,
+                    "attempts": [{"usage": {"total_tokens": tokens}} for tokens in attempts],
+                }
+            }
+        }
+        for rewrites, fallback, attempts in [(0, False, [100]), (1, False, [200, 50]), (2, True, [300, 100, 150])]
+    ]
+    rollouts.append({"actual_output": {"answer_gate": None}})
+
+    assert aggregate_answer_gate(rollouts) == {
+        "gated": 3,
+        "first_pass_rate": 1 / 3,
+        "avg_rewrites": 1.0,
+        "fallback_rate": 1 / 3,
+        "rewrite_token_share": 300 / 900,
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("attempts", "expected_share"),
+    [
+        ([{}, {"usage": None}, {"usage": {"total_tokens": 30}}], 1.0),
+        ([{"usage": {"total_tokens": 90}}, {}, {"usage": {"total_tokens": 30}}], 0.25),
+        ([{}, {"usage": None}], None),
+        ([{"usage": {"total_tokens": 0}}], None),
+    ],
+)
+def test_aggregate_answer_gate_missing_usage(attempts, expected_share):
+    """缺失用量不参与 token 统计，零次重写的回退也不算首轮通过。"""
+    gate = {"rewrites": 0, "fallback": True, "attempts": attempts}
+
+    result = aggregate_answer_gate([{"actual_output": {"answer_gate": gate}}])
+
+    assert result["gated"] == 1
+    assert result["first_pass_rate"] == 0.0
+    assert result["avg_rewrites"] == 0.0
+    assert result["fallback_rate"] == 1.0
+    assert result["rewrite_token_share"] == expected_share
 
 
 def test_aggregate_pass_metrics_distinguishes_at_k_and_power_k():

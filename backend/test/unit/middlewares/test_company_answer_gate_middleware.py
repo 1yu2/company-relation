@@ -10,7 +10,12 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from langgraph.constants import TAG_NOSTREAM
 
-from yuxi.agents.middlewares.company_answer_gate import FALLBACK_NOTICE, CompanyAnswerGateMiddleware, _fallback_answer
+from yuxi.agents.middlewares.company_answer_gate import (
+    FALLBACK_EMPTY,
+    FALLBACK_NOTICE,
+    CompanyAnswerGateMiddleware,
+    _fallback_answer,
+)
 
 EID = "eid-a"
 FACTS = {
@@ -127,6 +132,65 @@ def test_fallback_fact_list_uses_chinese_labels_and_readable_values():
         "- 纳睿雷达｜专利：一种雷达［F:fact:p］",
         "- 纳睿雷达｜营业收入：100［F:fact:m］",
     ]
+
+
+def test_fallback_lists_paths_relations_and_evidence():
+    """关系、路径、证据类结果也进入兜底清单；只问关系的题回退后不会只剩一句提示。"""
+    holder = "shareholder-1"
+    target = "company-b"
+    edges = [
+        {"relation_id": "rel:1", "source_entity_id": holder, "target_entity_id": EID, "relation_type": "HOLDS_SHARES"},
+        {"relation_id": "rel:2", "source_entity_id": holder, "target_entity_id": target, "relation_type": "INVESTS"},
+    ]
+    paths = {
+        "paths": [
+            {
+                "path_id": "path:1",
+                "nodes": [
+                    {"entity_id": EID, "name": "纳睿雷达"},
+                    {"entity_id": holder, "name": "某投资公司"},
+                    {"entity_id": target, "name": "某科技公司"},
+                ],
+                "edges": edges,
+                "hop_count": 2,
+            }
+        ]
+    }
+    relations = {"relations": [edges[1]]}
+    long_text = "因未按规定申报" + "，" * 200
+    evidence = {
+        "evidence": [
+            {
+                "evidence_id": "ev:1",
+                "document_type": "行政处罚",
+                "text": long_text,
+                "published_at": "2024-05-01",
+            }
+        ]
+    }
+
+    lines = _fallback_answer([paths, relations, evidence]).splitlines()[1:]
+
+    assert lines[0] == "- 关系｜某投资公司 → 某科技公司（INVESTS）［R:rel:2］"
+    assert lines[1] == "- 路径｜纳睿雷达 → 某投资公司 → 某科技公司（2 跳）［P:path:1］"
+    assert lines[2].startswith("- 证据｜行政处罚 2024-05-01：因未按规定申报")
+    assert lines[2].endswith("…［E:ev:1］")
+
+
+def test_fallback_without_any_result_says_so():
+    """本轮没有任何工具结果时，兜底说明为空，而不是只给一句提示。"""
+    assert _fallback_answer([]).splitlines() == [FALLBACK_NOTICE, FALLBACK_EMPTY]
+
+
+async def test_non_json_tool_result_is_skipped_instead_of_failing_the_run():
+    """某条工具结果不是 JSON 对象时跳过它，其余结果照常参与校验。"""
+    broken = ToolMessage(content="［结果已截断］", name="cdd_query_facts", tool_call_id="c9")
+    messages = [*_turn(FACTS), broken]
+
+    response, _ = await _run(messages, AIMessage(content=GOOD))
+
+    assert response.result[-1].content == GOOD
+    assert response.result[-1].response_metadata["answer_gate"]["passed"]
 
 
 async def test_tool_call_response_is_not_gated():

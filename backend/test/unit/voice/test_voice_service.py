@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import asyncio
+import shutil
 import wave
 from dataclasses import replace
 
@@ -311,6 +312,7 @@ def test_speech_cache_key_does_not_contain_credentials():
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="需要系统安装 ffmpeg（api 镜像与 CI 已安装）")
 async def test_qwen_audio_conversion_outputs_wav(tmp_path):
     source_path = tmp_path / "recording.webm"
     process = await asyncio.create_subprocess_exec(
