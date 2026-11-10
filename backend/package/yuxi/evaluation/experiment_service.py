@@ -30,6 +30,7 @@ from yuxi.evaluation.llm_judge import METRIC_VERSION as LLM_JUDGE_METRIC_VERSION
 from yuxi.evaluation.llm_judge import evaluate_open_answer
 from yuxi.evaluation.metrics import (
     METRIC_VERSION,
+    aggregate_answer_gate,
     aggregate_fault_recovery,
     aggregate_metric_breakdown,
     aggregate_pass_metrics,
@@ -614,6 +615,7 @@ class PlatformEvaluationService:
             "failures": [_serialize(item) for item in failures],
             "aggregate": aggregate_pass_metrics(attempts, k=experiment.max_attempts),
             "performance": performance,
+            "answer_gate": aggregate_answer_gate([_serialize(item) for item in rollouts]),
             "metric_breakdown": aggregate_metric_breakdown([_serialize(item) for item in metrics]),
             "fault_recovery": aggregate_fault_recovery([_serialize(item) for item in metrics]),
         }

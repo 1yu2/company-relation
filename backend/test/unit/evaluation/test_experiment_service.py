@@ -84,6 +84,27 @@ async def test_fixture_experiment_persists_trace_metrics_and_idempotent_rerun(ev
     assert result["aggregate"]["pass^k"] == 1.0
     assert len(rerun["rollouts"]) == 2
 
+    assert result["answer_gate"]["gated"] == 0
+    rollout = await evaluation_session.get(PlatformEvaluationRollout, result["rollouts"][0]["rollout_id"])
+    rollout.actual_output = rollout.actual_output | {
+        "answer_gate": {
+            "rewrites": 1,
+            "fallback": False,
+            "attempts": [{"usage": {"total_tokens": 10}}, {"usage": None}],
+        }
+    }
+    await evaluation_session.flush()
+
+    summary = await service.experiment_summary(db=evaluation_session, experiment_id=experiment["experiment_id"])
+
+    assert summary["answer_gate"] == {
+        "gated": 1,
+        "first_pass_rate": 0.0,
+        "avg_rewrites": 1.0,
+        "fallback_rate": 0.0,
+        "rewrite_token_share": 0.0,
+    }
+
 
 @pytest.mark.unit
 async def test_cancel_draft_experiment_is_terminal_and_rerun_is_idempotent(evaluation_session):
